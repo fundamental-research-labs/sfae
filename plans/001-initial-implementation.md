@@ -46,7 +46,7 @@ Sync-only for the MVP — single-request CLI, no need for tokio.
 
 ### Phase 4: Service configuration
 
-1. **Update `service.rs`** — add serde derives to `ServiceConfig`. Add `ServiceRegistry` that reads/writes `~/.config/sfae/services.json` (via `dirs` crate). Methods: `add`, `get`, `list`, `remove`.
+- [x] 4a. **Update `service.rs`** — add serde derives to `ServiceConfig`. Add `ServiceRegistry` that reads/writes `~/.config/sfae/services.json` (via `dirs` crate). Methods: `add`, `get`, `list`, `remove`.
 
 ### Phase 5: Proxy (the core feature)
 

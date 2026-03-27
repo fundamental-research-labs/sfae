@@ -24,7 +24,7 @@ pub trait SecretStore {
 }
 
 /// Returns the path to the SFAE config directory (`~/.config/sfae`).
-fn config_dir() -> Result<PathBuf, SfaeError> {
+pub(crate) fn config_dir() -> Result<PathBuf, SfaeError> {
     let base = dirs::config_dir()
         .ok_or_else(|| SfaeError::ConfigError("cannot determine config directory".into()))?;
     Ok(base.join("sfae"))
