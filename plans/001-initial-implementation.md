@@ -63,7 +63,7 @@ Sync-only for the MVP — single-request CLI, no need for tokio.
    - `sfae credential add|list|remove`
    - `sfae service add|list|show|remove`
    - `sfae proxy <METHOD> <URL> [-H header]... [-d body] [--service id] [--verbose]`
-- [ ] 6c. **Create `commands/` module** — `credential.rs`, `service.rs`, `proxy.rs` handlers, keeping `main.rs` thin.
+- [x] 6c. **Create `commands/` module** — `credential.rs`, `service.rs`, `proxy.rs` handlers, keeping `main.rs` thin.
    - `credential add` validates names against `[a-zA-Z0-9_-]+` before storing.
    - `service show <id>` displays a single service config (id, display name, base URL).
    - `proxy --verbose` prints the outgoing request (method, URL, headers with masked secrets) and response timing to stderr.
