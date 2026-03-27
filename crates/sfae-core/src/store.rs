@@ -166,3 +166,68 @@ impl SecretStore for InMemoryStore {
         Ok(names)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn token(value: &str) -> Credential {
+        Credential::AccessToken {
+            token: value.to_string(),
+        }
+    }
+
+    #[test]
+    fn set_and_get() {
+        let mut store = InMemoryStore::new();
+        store.set("gh", &token("abc")).unwrap();
+        let cred = store.get("gh").unwrap();
+        assert_eq!(cred.secret_value(), "abc");
+    }
+
+    #[test]
+    fn get_missing_returns_not_found() {
+        let store = InMemoryStore::new();
+        let err = store.get("nope").unwrap_err();
+        assert!(matches!(err, SfaeError::CredentialNotFound(_)));
+    }
+
+    #[test]
+    fn set_overwrites() {
+        let mut store = InMemoryStore::new();
+        store.set("gh", &token("old")).unwrap();
+        store.set("gh", &token("new")).unwrap();
+        assert_eq!(store.get("gh").unwrap().secret_value(), "new");
+    }
+
+    #[test]
+    fn delete_removes_credential() {
+        let mut store = InMemoryStore::new();
+        store.set("gh", &token("abc")).unwrap();
+        store.delete("gh").unwrap();
+        assert!(store.get("gh").is_err());
+    }
+
+    #[test]
+    fn delete_missing_returns_not_found() {
+        let mut store = InMemoryStore::new();
+        let err = store.delete("nope").unwrap_err();
+        assert!(matches!(err, SfaeError::CredentialNotFound(_)));
+    }
+
+    #[test]
+    fn list_returns_sorted_names() {
+        let mut store = InMemoryStore::new();
+        store.set("dropbox", &token("d")).unwrap();
+        store.set("aws", &token("a")).unwrap();
+        store.set("github", &token("g")).unwrap();
+        let names = store.list().unwrap();
+        assert_eq!(names, vec!["aws", "dropbox", "github"]);
+    }
+
+    #[test]
+    fn list_empty_store() {
+        let store = InMemoryStore::new();
+        assert!(store.list().unwrap().is_empty());
+    }
+}
