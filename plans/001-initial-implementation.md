@@ -24,23 +24,8 @@ Sync-only for the MVP — single-request CLI, no need for tokio.
 
 ### Phase 0: Dependencies
 
-**`crates/sfae-core/Cargo.toml`** — add:
-```toml
-thiserror = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
-ureq = "3"
-regex = "1"
-dirs = "6"
-```
-
-**`crates/sfae-cli/Cargo.toml`** — add:
-```toml
-clap = { version = "4", features = ["derive"] }
-anyhow = "1"
-rpassword = "7"
-```
+- [x] **`crates/sfae-core/Cargo.toml`** — add thiserror, serde, serde_json, keyring, ureq, regex, dirs
+- [x] **`crates/sfae-cli/Cargo.toml`** — add clap, anyhow, rpassword
 
 ### Phase 1: Error type + Credential model
 
