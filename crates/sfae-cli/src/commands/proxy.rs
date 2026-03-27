@@ -27,9 +27,9 @@ pub fn run(
     let parsed_headers: Vec<(String, String)> = headers
         .iter()
         .map(|h| {
-            let (key, value) = h
-                .split_once(':')
-                .ok_or_else(|| anyhow::anyhow!("invalid header format, expected 'Key: Value': {h}"))?;
+            let (key, value) = h.split_once(':').ok_or_else(|| {
+                anyhow::anyhow!("invalid header format, expected 'Key: Value': {h}")
+            })?;
             Ok((key.trim().to_string(), value.trim().to_string()))
         })
         .collect::<anyhow::Result<_>>()?;

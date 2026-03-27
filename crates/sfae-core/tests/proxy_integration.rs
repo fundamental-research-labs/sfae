@@ -156,7 +156,6 @@ fn store_crud_lifecycle() {
     assert_eq!(store.list().unwrap(), vec!["token_a"]);
 
     // Resolve using the updated store
-    let resolved =
-        proxy::resolve_placeholders("val={{sfae:token_a}}", &store).unwrap();
+    let resolved = proxy::resolve_placeholders("val={{sfae:token_a}}", &store).unwrap();
     assert_eq!(resolved, "val=aaa_updated");
 }

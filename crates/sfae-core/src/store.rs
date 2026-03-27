@@ -75,8 +75,7 @@ impl KeyringStore {
     }
 
     fn entry(name: &str) -> Result<keyring::Entry, SfaeError> {
-        keyring::Entry::new(KEYRING_SERVICE, name)
-            .map_err(|e| SfaeError::StoreError(e.to_string()))
+        keyring::Entry::new(KEYRING_SERVICE, name).map_err(|e| SfaeError::StoreError(e.to_string()))
     }
 }
 
@@ -100,12 +99,10 @@ impl SecretStore for KeyringStore {
 
     fn get(&self, name: &str) -> Result<Credential, SfaeError> {
         let entry = Self::entry(name)?;
-        let json = entry
-            .get_password()
-            .map_err(|e| match e {
-                keyring::Error::NoEntry => SfaeError::CredentialNotFound(name.to_string()),
-                other => SfaeError::StoreError(other.to_string()),
-            })?;
+        let json = entry.get_password().map_err(|e| match e {
+            keyring::Error::NoEntry => SfaeError::CredentialNotFound(name.to_string()),
+            other => SfaeError::StoreError(other.to_string()),
+        })?;
         let credential: Credential = serde_json::from_str(&json)?;
         Ok(credential)
     }

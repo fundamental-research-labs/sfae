@@ -116,7 +116,15 @@ fn main() -> anyhow::Result<()> {
             service,
             dry_run,
             verbose,
-        } => commands::proxy::run(&method, &url, &headers, body.as_deref(), service.as_deref(), dry_run, verbose)?,
+        } => commands::proxy::run(
+            &method,
+            &url,
+            &headers,
+            body.as_deref(),
+            service.as_deref(),
+            dry_run,
+            verbose,
+        )?,
     }
     Ok(())
 }

@@ -71,7 +71,10 @@ pub fn resolve_and_mask(text: &str, store: &dyn SecretStore) -> Result<String, S
 }
 
 /// Resolve all placeholders in the request and execute the HTTP call via ureq.
-pub fn execute(request: &ProxyRequest, store: &dyn SecretStore) -> Result<ProxyResponse, SfaeError> {
+pub fn execute(
+    request: &ProxyRequest,
+    store: &dyn SecretStore,
+) -> Result<ProxyResponse, SfaeError> {
     // Resolve placeholders in URL, headers, and body.
     let url = resolve_placeholders(&request.url, store)?;
     let headers: Vec<(String, String)> = request

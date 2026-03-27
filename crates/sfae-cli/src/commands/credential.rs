@@ -10,9 +10,7 @@ use crate::prompt::TerminalPrompt;
 fn validate_name(name: &str) -> anyhow::Result<()> {
     let re = Regex::new(r"^[a-zA-Z0-9_-]+$").expect("valid regex");
     if !re.is_match(name) {
-        anyhow::bail!(
-            "invalid credential name '{name}': must match [a-zA-Z0-9_-]+"
-        );
+        anyhow::bail!("invalid credential name '{name}': must match [a-zA-Z0-9_-]+");
     }
     Ok(())
 }
