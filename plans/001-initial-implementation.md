@@ -30,7 +30,7 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
-reqwest = { version = "0.12", features = ["blocking"] }
+ureq = "3"
 regex = "1"
 dirs = "6"
 ```
@@ -51,7 +51,7 @@ rpassword = "7"
 ### Phase 2: Secret store
 
 1. **Create `store.rs`** — define `SecretStore` trait (`set`, `get`, `delete`, `list`).
-2. **Implement `KeyringStore`** — uses `keyring::Entry::new("sfae", name)`, stores JSON-serialized credentials. Maintains an index entry (`__sfae_index__`) for enumeration since keychains don't support listing.
+2. **Implement `KeyringStore`** — uses `keyring::Entry::new("sfae", name)`, stores JSON-serialized credentials. Credential names are tracked in a local index file (`~/.config/sfae/credentials.json`) — a JSON array of strings. Only names are stored in the index; actual secret values stay exclusively in the keychain. This avoids the fragility of storing an index inside the keychain itself.
 3. **Implement `InMemoryStore`** — `HashMap`-based, for tests.
 4. **Unit tests** with `InMemoryStore`.
 
@@ -66,9 +66,9 @@ rpassword = "7"
 ### Phase 5: Proxy (the core feature)
 
 1. **Rewrite `proxy.rs`** — `ProxyRequest`/`ProxyResponse` structs.
-2. **`find_placeholders()`** — regex `\{\{sfae:([a-zA-Z0-9_]+)\}\}`, returns `Vec<SecretHandle>`.
+2. **`find_placeholders()`** — regex `\{\{sfae:([a-zA-Z0-9_-]+)\}\}`, returns `Vec<SecretHandle>`. Credential names allow alphanumerics, underscores, and hyphens. Names are validated on `credential add` to enforce this character set.
 3. **`resolve_placeholders()`** — replaces all placeholders using `SecretStore::get()`, fails fast on missing credentials.
-4. **`execute()`** — resolves placeholders in URL, headers, body, sends via `reqwest::blocking::Client`, returns `ProxyResponse`.
+4. **`execute()`** — resolves placeholders in URL, headers, body, sends via `ureq::Agent`, returns `ProxyResponse`.
 5. **Tests** with `InMemoryStore`.
 
 ### Phase 6: CLI
@@ -76,24 +76,42 @@ rpassword = "7"
 1. **Create `prompt.rs`** — `TerminalPrompt` implementing `UserPrompt` (uses `rpassword` for secrets).
 2. **Rewrite `main.rs`** — clap `#[derive(Parser)]` with subcommands:
    - `sfae credential add|list|remove`
-   - `sfae service add|list|remove`
-   - `sfae proxy <METHOD> <URL> [-H header]... [-d body] [--service id]`
+   - `sfae service add|list|show|remove`
+   - `sfae proxy <METHOD> <URL> [-H header]... [-d body] [--service id] [--verbose]`
 3. **Create `commands/` module** — `credential.rs`, `service.rs`, `proxy.rs` handlers, keeping `main.rs` thin.
+   - `credential add` validates names against `[a-zA-Z0-9_-]+` before storing.
+   - `service show <id>` displays a single service config (id, display name, base URL).
+   - `proxy --verbose` prints the outgoing request (method, URL, headers with masked secrets) and response timing to stderr.
 
 ### Phase 7: Polish
 
 - Integration test: full proxy flow with `InMemoryStore`.
 - `--dry-run` flag on proxy (shows resolved request with masked credentials).
+- `--verbose` flag on proxy (logs outgoing request summary and response timing to stderr).
 
 ## Key Design Decisions
 
 | Decision | Choice | Why |
 |---|---|---|
-| Sync vs async | Sync | Single-request CLI, keyring is sync, avoids tokio |
+| Sync vs async | Sync (`ureq`) | Single-request CLI, keyring is sync, truly sync HTTP (no hidden tokio) |
 | Errors | `thiserror` (core) + `anyhow` (cli) | Typed for lib consumers, ergonomic in binary |
-| Secret enumeration | Index entry in keychain | No config file; all secret data stays in secure store |
+| Secret enumeration | Index file in config dir | Names in `~/.config/sfae/credentials.json`, values in keychain only |
 | Service config | JSON file in config dir | Non-secret, human-editable, survives keychain resets |
 | Placeholder syntax | `{{sfae:name}}` | Unambiguous, won't clash with other templates |
+| Credential names | `[a-zA-Z0-9_-]+` | Validated on add; keeps regex simple, avoids injection |
+
+## Agent Integration
+
+An LLM agent uses SFAE as a proxy for HTTP requests to external services. The agent never sees raw credentials — it constructs a normal HTTP request but uses `{{sfae:name}}` placeholders wherever a secret is needed. SFAE resolves the placeholders from the keychain and forwards the request.
+
+Typical agent flow:
+1. Agent decides it needs to call the Dropbox API.
+2. Agent invokes: `sfae proxy POST https://api.dropboxapi.com/2/files/list_folder -H "Authorization: Bearer {{sfae:dropbox_token}}" -d '{"path": ""}'`
+3. SFAE resolves `{{sfae:dropbox_token}}` → real token from keychain.
+4. SFAE sends the actual HTTP request and returns the response (status, headers, body) to stdout.
+5. Agent reads the response and continues its workflow.
+
+The `--service` flag is a convenience: `--service dropbox` prepends the service's `base_url` to the request path, so the agent can use relative URLs.
 
 ## Verification
 
