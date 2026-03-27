@@ -22,3 +22,16 @@ pub struct ProxyResponse {
     pub headers: HashMap<String, String>,
     pub body: String,
 }
+
+/// Regex pattern matching `{{sfae:name}}` placeholders.
+const PLACEHOLDER_PATTERN: &str = r"\{\{sfae:([a-zA-Z0-9_-]+)\}\}";
+
+/// Find all `{{sfae:name}}` placeholders in a string.
+pub fn find_placeholders(text: &str) -> Vec<SecretHandle> {
+    let re = Regex::new(PLACEHOLDER_PATTERN).expect("valid regex");
+    re.captures_iter(text)
+        .map(|cap| SecretHandle {
+            name: cap[1].to_string(),
+        })
+        .collect()
+}
