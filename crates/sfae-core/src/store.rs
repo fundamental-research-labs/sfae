@@ -1,3 +1,6 @@
+use std::fs;
+use std::path::PathBuf;
+
 use crate::credential::Credential;
 use crate::error::SfaeError;
 
@@ -17,4 +20,109 @@ pub trait SecretStore {
 
     /// List all stored credential names.
     fn list(&self) -> Result<Vec<String>, SfaeError>;
+}
+
+/// Returns the path to the SFAE config directory (`~/.config/sfae`).
+fn config_dir() -> Result<PathBuf, SfaeError> {
+    let base = dirs::config_dir()
+        .ok_or_else(|| SfaeError::ConfigError("cannot determine config directory".into()))?;
+    Ok(base.join("sfae"))
+}
+
+/// Returns the path to the credential index file.
+fn index_path() -> Result<PathBuf, SfaeError> {
+    Ok(config_dir()?.join("credentials.json"))
+}
+
+/// Reads the credential name index from disk. Returns an empty vec if the file
+/// does not exist yet.
+fn read_index() -> Result<Vec<String>, SfaeError> {
+    let path = index_path()?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let data = fs::read_to_string(&path)?;
+    let names: Vec<String> = serde_json::from_str(&data)?;
+    Ok(names)
+}
+
+/// Writes the credential name index to disk, creating the config directory if
+/// needed.
+fn write_index(names: &[String]) -> Result<(), SfaeError> {
+    let path = index_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let data = serde_json::to_string_pretty(names)?;
+    fs::write(&path, data)?;
+    Ok(())
+}
+
+const KEYRING_SERVICE: &str = "sfae";
+
+/// Secret store backed by the OS keychain via the `keyring` crate.
+///
+/// Credential names are tracked in a local index file
+/// (`~/.config/sfae/credentials.json`). Only names live in the index; actual
+/// secret values stay exclusively in the keychain.
+pub struct KeyringStore;
+
+impl KeyringStore {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn entry(name: &str) -> Result<keyring::Entry, SfaeError> {
+        keyring::Entry::new(KEYRING_SERVICE, name)
+            .map_err(|e| SfaeError::StoreError(e.to_string()))
+    }
+}
+
+impl SecretStore for KeyringStore {
+    fn set(&mut self, name: &str, credential: &Credential) -> Result<(), SfaeError> {
+        let entry = Self::entry(name)?;
+        let json = serde_json::to_string(credential)?;
+        entry
+            .set_password(&json)
+            .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+
+        // Update the index
+        let mut names = read_index()?;
+        if !names.contains(&name.to_string()) {
+            names.push(name.to_string());
+            names.sort();
+            write_index(&names)?;
+        }
+        Ok(())
+    }
+
+    fn get(&self, name: &str) -> Result<Credential, SfaeError> {
+        let entry = Self::entry(name)?;
+        let json = entry
+            .get_password()
+            .map_err(|e| match e {
+                keyring::Error::NoEntry => SfaeError::CredentialNotFound(name.to_string()),
+                other => SfaeError::StoreError(other.to_string()),
+            })?;
+        let credential: Credential = serde_json::from_str(&json)?;
+        Ok(credential)
+    }
+
+    fn delete(&mut self, name: &str) -> Result<(), SfaeError> {
+        let entry = Self::entry(name)?;
+        entry.delete_credential().map_err(|e| match e {
+            keyring::Error::NoEntry => SfaeError::CredentialNotFound(name.to_string()),
+            other => SfaeError::StoreError(other.to_string()),
+        })?;
+
+        // Update the index
+        let mut names = read_index()?;
+        names.retain(|n| n != name);
+        write_index(&names)?;
+        Ok(())
+    }
+
+    fn list(&self) -> Result<Vec<String>, SfaeError> {
+        read_index()
+    }
 }
