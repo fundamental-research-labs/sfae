@@ -111,3 +111,100 @@ pub fn execute(request: &ProxyRequest, store: &dyn SecretStore) -> Result<ProxyR
         body: resp_body,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credential::Credential;
+    use crate::store::InMemoryStore;
+
+    fn store_with_token(name: &str, value: &str) -> InMemoryStore {
+        let mut store = InMemoryStore::new();
+        store
+            .set(
+                name,
+                &Credential::AccessToken {
+                    token: value.to_string(),
+                },
+            )
+            .unwrap();
+        store
+    }
+
+    // -- find_placeholders tests --
+
+    #[test]
+    fn find_no_placeholders() {
+        let handles = find_placeholders("no placeholders here");
+        assert!(handles.is_empty());
+    }
+
+    #[test]
+    fn find_single_placeholder() {
+        let handles = find_placeholders("Bearer {{sfae:github_token}}");
+        assert_eq!(handles.len(), 1);
+        assert_eq!(handles[0].name, "github_token");
+    }
+
+    #[test]
+    fn find_multiple_placeholders() {
+        let text = "{{sfae:a}} and {{sfae:b-c}} and {{sfae:d_1}}";
+        let handles = find_placeholders(text);
+        assert_eq!(handles.len(), 3);
+        assert_eq!(handles[0].name, "a");
+        assert_eq!(handles[1].name, "b-c");
+        assert_eq!(handles[2].name, "d_1");
+    }
+
+    #[test]
+    fn find_ignores_malformed_placeholders() {
+        let handles = find_placeholders("{{sfae:}} and {{sfae: space}} and {{other:foo}}");
+        assert!(handles.is_empty());
+    }
+
+    // -- resolve_placeholders tests --
+
+    #[test]
+    fn resolve_single() {
+        let store = store_with_token("tok", "secret123");
+        let result = resolve_placeholders("Bearer {{sfae:tok}}", &store).unwrap();
+        assert_eq!(result, "Bearer secret123");
+    }
+
+    #[test]
+    fn resolve_multiple() {
+        let mut store = InMemoryStore::new();
+        store
+            .set(
+                "a",
+                &Credential::AccessToken {
+                    token: "AAA".to_string(),
+                },
+            )
+            .unwrap();
+        store
+            .set(
+                "b",
+                &Credential::AccessToken {
+                    token: "BBB".to_string(),
+                },
+            )
+            .unwrap();
+        let result = resolve_placeholders("{{sfae:a}}/{{sfae:b}}", &store).unwrap();
+        assert_eq!(result, "AAA/BBB");
+    }
+
+    #[test]
+    fn resolve_missing_credential_fails() {
+        let store = InMemoryStore::new();
+        let err = resolve_placeholders("{{sfae:missing}}", &store).unwrap_err();
+        assert!(matches!(err, SfaeError::CredentialNotFound(_)));
+    }
+
+    #[test]
+    fn resolve_no_placeholders_passes_through() {
+        let store = InMemoryStore::new();
+        let result = resolve_placeholders("plain text", &store).unwrap();
+        assert_eq!(result, "plain text");
+    }
+}

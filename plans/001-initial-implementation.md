@@ -54,7 +54,7 @@ Sync-only for the MVP — single-request CLI, no need for tokio.
 - [x] 5b. **`find_placeholders()`** — regex `\{\{sfae:([a-zA-Z0-9_-]+)\}\}`, returns `Vec<SecretHandle>`. Credential names allow alphanumerics, underscores, and hyphens. Names are validated on `credential add` to enforce this character set.
 - [x] 5c. **`resolve_placeholders()`** — replaces all placeholders using `SecretStore::get()`, fails fast on missing credentials.
 - [x] 5d. **`execute()`** — resolves placeholders in URL, headers, body, sends via `ureq::Agent`, returns `ProxyResponse`.
-- [ ] 5e. **Tests** with `InMemoryStore`.
+- [x] 5e. **Tests** with `InMemoryStore`.
 
 ### Phase 6: CLI
 
