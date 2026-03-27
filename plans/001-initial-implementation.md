@@ -58,12 +58,12 @@ Sync-only for the MVP — single-request CLI, no need for tokio.
 
 ### Phase 6: CLI
 
-1. **Create `prompt.rs`** — `TerminalPrompt` implementing `UserPrompt` (uses `rpassword` for secrets).
-2. **Rewrite `main.rs`** — clap `#[derive(Parser)]` with subcommands:
+- [x] 6a. **Create `prompt.rs`** — `TerminalPrompt` implementing `UserPrompt` (uses `rpassword` for secrets).
+- [ ] 6b. **Rewrite `main.rs`** — clap `#[derive(Parser)]` with subcommands:
    - `sfae credential add|list|remove`
    - `sfae service add|list|show|remove`
    - `sfae proxy <METHOD> <URL> [-H header]... [-d body] [--service id] [--verbose]`
-3. **Create `commands/` module** — `credential.rs`, `service.rs`, `proxy.rs` handlers, keeping `main.rs` thin.
+- [ ] 6c. **Create `commands/` module** — `credential.rs`, `service.rs`, `proxy.rs` handlers, keeping `main.rs` thin.
    - `credential add` validates names against `[a-zA-Z0-9_-]+` before storing.
    - `service show <id>` displays a single service config (id, display name, base URL).
    - `proxy --verbose` prints the outgoing request (method, URL, headers with masked secrets) and response timing to stderr.
