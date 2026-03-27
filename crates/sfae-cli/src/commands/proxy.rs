@@ -10,6 +10,7 @@ pub fn run(
     headers: &[String],
     body: Option<&str>,
     service: Option<&str>,
+    dry_run: bool,
     verbose: bool,
 ) -> anyhow::Result<()> {
     // Resolve full URL, prepending service base_url if --service is given.
@@ -52,6 +53,23 @@ pub fn run(
     }
 
     let store = KeyringStore::new();
+
+    if dry_run {
+        // Resolve and mask — validates credentials exist, shows masked output.
+        let masked_url = proxy::resolve_and_mask(&request.url, &store)?;
+        println!("{} {}", request.method, masked_url);
+        for (k, v) in &request.headers {
+            let masked_v = proxy::resolve_and_mask(v, &store)?;
+            println!("{k}: {masked_v}");
+        }
+        if let Some(b) = &request.body {
+            let masked_body = proxy::resolve_and_mask(b, &store)?;
+            println!();
+            println!("{masked_body}");
+        }
+        return Ok(());
+    }
+
     let start = Instant::now();
     let response = proxy::execute(&request, &store)?;
     let elapsed = start.elapsed();

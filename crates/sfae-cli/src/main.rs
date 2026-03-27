@@ -40,6 +40,9 @@ enum Command {
         /// Prepend service base URL to the request path
         #[arg(long)]
         service: Option<String>,
+        /// Show resolved request with masked credentials, without sending
+        #[arg(long)]
+        dry_run: bool,
         /// Print request summary and response timing to stderr
         #[arg(long)]
         verbose: bool,
@@ -111,8 +114,9 @@ fn main() -> anyhow::Result<()> {
             headers,
             body,
             service,
+            dry_run,
             verbose,
-        } => commands::proxy::run(&method, &url, &headers, body.as_deref(), service.as_deref(), verbose)?,
+        } => commands::proxy::run(&method, &url, &headers, body.as_deref(), service.as_deref(), dry_run, verbose)?,
     }
     Ok(())
 }

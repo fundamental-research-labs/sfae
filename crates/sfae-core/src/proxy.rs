@@ -53,6 +53,23 @@ pub fn resolve_placeholders(text: &str, store: &dyn SecretStore) -> Result<Strin
     Ok(result)
 }
 
+/// Replace all `{{sfae:name}}` placeholders with `***`, verifying each
+/// credential exists in the store. For `--dry-run` display.
+pub fn resolve_and_mask(text: &str, store: &dyn SecretStore) -> Result<String, SfaeError> {
+    let re = Regex::new(PLACEHOLDER_PATTERN).expect("valid regex");
+    let mut result = text.to_string();
+    let matches: Vec<(String, String)> = re
+        .captures_iter(text)
+        .map(|cap| (cap[0].to_string(), cap[1].to_string()))
+        .collect();
+    for (full_match, name) in matches {
+        // Verify the credential exists (fail fast if missing).
+        store.get(&name)?;
+        result = result.replace(&full_match, "***");
+    }
+    Ok(result)
+}
+
 /// Resolve all placeholders in the request and execute the HTTP call via ureq.
 pub fn execute(request: &ProxyRequest, store: &dyn SecretStore) -> Result<ProxyResponse, SfaeError> {
     // Resolve placeholders in URL, headers, and body.
