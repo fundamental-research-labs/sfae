@@ -4,7 +4,7 @@ use sfae_core::ui::UserPrompt;
 
 use crate::prompt::TerminalPrompt;
 
-pub fn run(domain: &str, cred_type_str: &str, username: Option<&str>) -> anyhow::Result<()> {
+pub fn run(domain: &str, cred_type_str: &str, url: &str, username: Option<&str>) -> anyhow::Result<()> {
     let cred_type: CredentialType = cred_type_str
         .parse()
         .map_err(|e: String| anyhow::anyhow!(e))?;
@@ -17,6 +17,7 @@ pub fn run(domain: &str, cred_type_str: &str, username: Option<&str>) -> anyhow:
         None => format!("{cred_type} for {domain}"),
     };
 
+    eprintln!("Obtain your credential here: {url}");
     let value = prompt.prompt_secret(&format!("Enter {label}"))?;
     if value.is_empty() {
         anyhow::bail!("credential value cannot be empty");

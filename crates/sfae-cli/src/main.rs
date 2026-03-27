@@ -54,6 +54,9 @@ enum Command {
         /// Credential type (ACCESS_TOKEN, REFRESH_TOKEN, API_KEY, PASSWORD)
         #[arg(name = "type")]
         cred_type: String,
+        /// URL where the user can obtain the credential (e.g. settings page, OAuth login)
+        #[arg(long)]
+        url: String,
         /// Username (optional)
         #[arg(long)]
         user: Option<String>,
@@ -101,9 +104,10 @@ fn main() -> anyhow::Result<()> {
         Command::Prompt {
             domain,
             cred_type,
+            url,
             user,
         } => {
-            commands::prompt::run(&domain, &cred_type, user.as_deref())?;
+            commands::prompt::run(&domain, &cred_type, &url, user.as_deref())?;
         }
         Command::Delete {
             domain,
