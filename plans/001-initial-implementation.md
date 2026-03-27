@@ -59,7 +59,7 @@ Sync-only for the MVP — single-request CLI, no need for tokio.
 ### Phase 6: CLI
 
 - [x] 6a. **Create `prompt.rs`** — `TerminalPrompt` implementing `UserPrompt` (uses `rpassword` for secrets).
-- [ ] 6b. **Rewrite `main.rs`** — clap `#[derive(Parser)]` with subcommands:
+- [x] 6b. **Rewrite `main.rs`** — clap `#[derive(Parser)]` with subcommands:
    - `sfae credential add|list|remove`
    - `sfae service add|list|show|remove`
    - `sfae proxy <METHOD> <URL> [-H header]... [-d body] [--service id] [--verbose]`
