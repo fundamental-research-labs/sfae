@@ -1,0 +1,8 @@
+[package]
+name = "sfae-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core library for SFAE — secrets management and API proxying for LLM agents"
+
+[dependencies]

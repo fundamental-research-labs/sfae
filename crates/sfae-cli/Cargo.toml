@@ -1,0 +1,13 @@
+[package]
+name = "sfae-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI interface for SFAE — Speak Friend, and Enter"
+
+[[bin]]
+name = "sfae"
+path = "src/main.rs"
+
+[dependencies]
+sfae-core = { path = "../sfae-core" }
