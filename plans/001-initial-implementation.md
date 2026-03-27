@@ -70,9 +70,9 @@ Sync-only for the MVP — single-request CLI, no need for tokio.
 
 ### Phase 7: Polish
 
-- Integration test: full proxy flow with `InMemoryStore`.
-- `--dry-run` flag on proxy (shows resolved request with masked credentials).
-- `--verbose` flag on proxy (logs outgoing request summary and response timing to stderr).
+- [x] 7a. Integration test: full proxy flow with `InMemoryStore`.
+- [ ] 7b. `--dry-run` flag on proxy (shows resolved request with masked credentials).
+- [x] 7c. `--verbose` flag on proxy (logs outgoing request summary and response timing to stderr).
 
 ## Key Design Decisions
 
