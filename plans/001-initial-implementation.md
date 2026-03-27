@@ -42,7 +42,7 @@ Sync-only for the MVP — single-request CLI, no need for tokio.
 
 ### Phase 3: User prompt trait
 
-1. **Create `ui.rs`** — `UserPrompt` trait with `prompt()`, `prompt_secret()`, `confirm()`.
+- [x] 3a. **Create `ui.rs`** — `UserPrompt` trait with `prompt()`, `prompt_secret()`, `confirm()`.
 
 ### Phase 4: Service configuration
 
