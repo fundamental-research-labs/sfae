@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -124,5 +125,44 @@ impl SecretStore for KeyringStore {
 
     fn list(&self) -> Result<Vec<String>, SfaeError> {
         read_index()
+    }
+}
+
+/// In-memory secret store for testing. Not backed by any persistent storage.
+#[derive(Default)]
+pub struct InMemoryStore {
+    entries: HashMap<String, Credential>,
+}
+
+impl InMemoryStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl SecretStore for InMemoryStore {
+    fn set(&mut self, name: &str, credential: &Credential) -> Result<(), SfaeError> {
+        self.entries.insert(name.to_string(), credential.clone());
+        Ok(())
+    }
+
+    fn get(&self, name: &str) -> Result<Credential, SfaeError> {
+        self.entries
+            .get(name)
+            .cloned()
+            .ok_or_else(|| SfaeError::CredentialNotFound(name.to_string()))
+    }
+
+    fn delete(&mut self, name: &str) -> Result<(), SfaeError> {
+        self.entries
+            .remove(name)
+            .ok_or_else(|| SfaeError::CredentialNotFound(name.to_string()))?;
+        Ok(())
+    }
+
+    fn list(&self) -> Result<Vec<String>, SfaeError> {
+        let mut names: Vec<String> = self.entries.keys().cloned().collect();
+        names.sort();
+        Ok(names)
     }
 }

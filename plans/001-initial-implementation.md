@@ -37,7 +37,7 @@ Sync-only for the MVP — single-request CLI, no need for tokio.
 
 - [x] 2a. **Create `store.rs`** — define `SecretStore` trait (`set`, `get`, `delete`, `list`).
 - [x] 2b. **Implement `KeyringStore`** — uses `keyring::Entry::new("sfae", name)`, stores JSON-serialized credentials. Credential names are tracked in a local index file (`~/.config/sfae/credentials.json`) — a JSON array of strings. Only names are stored in the index; actual secret values stay exclusively in the keychain. This avoids the fragility of storing an index inside the keychain itself.
-- [ ] 2c. **Implement `InMemoryStore`** — `HashMap`-based, for tests.
+- [x] 2c. **Implement `InMemoryStore`** — `HashMap`-based, for tests.
 - [ ] 2d. **Unit tests** with `InMemoryStore`.
 
 ### Phase 3: User prompt trait
