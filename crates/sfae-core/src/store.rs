@@ -66,6 +66,7 @@ const KEYRING_SERVICE: &str = "sfae";
 /// Credential names are tracked in a local index file
 /// (`~/.config/sfae/credentials.json`). Only names live in the index; actual
 /// secret values stay exclusively in the keychain.
+#[derive(Default)]
 pub struct KeyringStore;
 
 impl KeyringStore {
