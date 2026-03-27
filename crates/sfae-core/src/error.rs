@@ -12,12 +12,6 @@ pub enum SfaeError {
     #[error("HTTP error: {0}")]
     HttpError(String),
 
-    #[error("placeholder error: {0}")]
-    PlaceholderError(String),
-
-    #[error("service not found: {0}")]
-    ServiceNotFound(String),
-
     #[error("configuration error: {0}")]
     ConfigError(String),
 

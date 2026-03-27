@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
-use regex::Regex;
-
+use crate::credential::{credential_key, CredentialType};
 use crate::error::SfaeError;
-use crate::secret::SecretHandle;
 use crate::store::SecretStore;
 
-/// An HTTP request to be proxied, with possible `{{sfae:name}}` placeholders.
+/// An HTTP request with possible `-TYPE-` placeholders.
 #[derive(Debug, Clone)]
 pub struct ProxyRequest {
     pub method: String,
@@ -23,71 +21,95 @@ pub struct ProxyResponse {
     pub body: String,
 }
 
-/// Regex pattern matching `{{sfae:name}}` placeholders.
-const PLACEHOLDER_PATTERN: &str = r"\{\{sfae:([a-zA-Z0-9_-]+)\}\}";
+/// Known placeholder patterns mapped to their credential types.
+const PLACEHOLDERS: &[(&str, CredentialType)] = &[
+    ("-ACCESS_TOKEN-", CredentialType::AccessToken),
+    ("-REFRESH_TOKEN-", CredentialType::RefreshToken),
+    ("-API_KEY-", CredentialType::ApiKey),
+    ("-PASSWORD-", CredentialType::Password),
+];
 
-/// Find all `{{sfae:name}}` placeholders in a string.
-pub fn find_placeholders(text: &str) -> Vec<SecretHandle> {
-    let re = Regex::new(PLACEHOLDER_PATTERN).expect("valid regex");
-    re.captures_iter(text)
-        .map(|cap| SecretHandle {
-            name: cap[1].to_string(),
-        })
-        .collect()
+/// Find all credential type placeholders present in a string.
+pub fn find_placeholders(text: &str) -> Vec<CredentialType> {
+    let mut found = Vec::new();
+    for (pattern, cred_type) in PLACEHOLDERS {
+        if text.contains(pattern) {
+            found.push(*cred_type);
+        }
+    }
+    found
 }
 
-/// Replace all `{{sfae:name}}` placeholders in `text` with credential values
-/// from `store`. Fails fast on the first missing credential.
-pub fn resolve_placeholders(text: &str, store: &dyn SecretStore) -> Result<String, SfaeError> {
-    let re = Regex::new(PLACEHOLDER_PATTERN).expect("valid regex");
+/// Replace all `-TYPE-` placeholders in `text` with credential values from the store.
+pub fn resolve_placeholders(
+    text: &str,
+    store: &dyn SecretStore,
+    domain: &str,
+    username: Option<&str>,
+) -> Result<String, SfaeError> {
     let mut result = text.to_string();
-    // Collect matches first to avoid borrow issues during replacement.
-    let matches: Vec<(String, String)> = re
-        .captures_iter(text)
-        .map(|cap| (cap[0].to_string(), cap[1].to_string()))
-        .collect();
-    for (full_match, name) in matches {
-        let credential = store.get(&name)?;
-        result = result.replace(&full_match, credential.secret_value());
+    for (pattern, cred_type) in PLACEHOLDERS {
+        if result.contains(pattern) {
+            let key = credential_key(domain, username, *cred_type);
+            let value = store.get(&key)?;
+            result = result.replace(pattern, &value);
+        }
     }
     Ok(result)
 }
 
-/// Replace all `{{sfae:name}}` placeholders with `***`, verifying each
-/// credential exists in the store. For `--dry-run` display.
-pub fn resolve_and_mask(text: &str, store: &dyn SecretStore) -> Result<String, SfaeError> {
-    let re = Regex::new(PLACEHOLDER_PATTERN).expect("valid regex");
+/// Replace all `-TYPE-` placeholders with `***`, verifying each credential exists.
+pub fn resolve_and_mask(
+    text: &str,
+    store: &dyn SecretStore,
+    domain: &str,
+    username: Option<&str>,
+) -> Result<String, SfaeError> {
     let mut result = text.to_string();
-    let matches: Vec<(String, String)> = re
-        .captures_iter(text)
-        .map(|cap| (cap[0].to_string(), cap[1].to_string()))
-        .collect();
-    for (full_match, name) in matches {
-        // Verify the credential exists (fail fast if missing).
-        store.get(&name)?;
-        result = result.replace(&full_match, "***");
+    for (pattern, cred_type) in PLACEHOLDERS {
+        if result.contains(pattern) {
+            let key = credential_key(domain, username, *cred_type);
+            store.get(&key)?;
+            result = result.replace(pattern, "***");
+        }
     }
     Ok(result)
 }
 
-/// Resolve all placeholders in the request and execute the HTTP call via ureq.
+/// Extract the host from a URL string.
+///
+/// E.g., `"https://api.github.com/repos"` → `"api.github.com"`
+pub fn extract_host(url: &str) -> Option<String> {
+    let without_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let host = without_scheme.split('/').next()?;
+    let host = host.split(':').next()?;
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
+/// Resolve all placeholders in the request and execute the HTTP call.
 pub fn execute(
     request: &ProxyRequest,
     store: &dyn SecretStore,
+    domain: &str,
+    username: Option<&str>,
 ) -> Result<ProxyResponse, SfaeError> {
-    // Resolve placeholders in URL, headers, and body.
-    let url = resolve_placeholders(&request.url, store)?;
+    let url = resolve_placeholders(&request.url, store, domain, username)?;
     let headers: Vec<(String, String)> = request
         .headers
         .iter()
-        .map(|(k, v)| Ok((k.clone(), resolve_placeholders(v, store)?)))
+        .map(|(k, v)| Ok((k.clone(), resolve_placeholders(v, store, domain, username)?)))
         .collect::<Result<_, SfaeError>>()?;
     let body = match &request.body {
-        Some(b) => Some(resolve_placeholders(b, store)?),
+        Some(b) => Some(resolve_placeholders(b, store, domain, username)?),
         None => None,
     };
 
-    // Build the HTTP request.
     let mut builder = ureq::http::Request::builder()
         .method(request.method.as_str())
         .uri(&url);
@@ -112,7 +134,6 @@ pub fn execute(
             .map_err(|e| SfaeError::HttpError(e.to_string()))?
     };
 
-    // Read response.
     let status = response.status().as_u16();
     let mut resp_headers = HashMap::new();
     for (name, value) in response.headers() {
@@ -135,96 +156,105 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credential::Credential;
     use crate::store::InMemoryStore;
 
-    fn store_with_token(name: &str, value: &str) -> InMemoryStore {
+    fn test_store() -> InMemoryStore {
         let mut store = InMemoryStore::new();
+        store.set("github.com_API_KEY", "ghk_abc123").unwrap();
         store
-            .set(
-                name,
-                &Credential::AccessToken {
-                    token: value.to_string(),
-                },
-            )
+            .set("github.com_ACCESS_TOKEN", "ght_xyz789")
+            .unwrap();
+        store
+            .set("github.com_user1_PASSWORD", "secret")
             .unwrap();
         store
     }
 
-    // -- find_placeholders tests --
-
     #[test]
     fn find_no_placeholders() {
-        let handles = find_placeholders("no placeholders here");
-        assert!(handles.is_empty());
+        assert!(find_placeholders("no placeholders here").is_empty());
     }
 
     #[test]
     fn find_single_placeholder() {
-        let handles = find_placeholders("Bearer {{sfae:github_token}}");
-        assert_eq!(handles.len(), 1);
-        assert_eq!(handles[0].name, "github_token");
+        let found = find_placeholders("Bearer -ACCESS_TOKEN-");
+        assert_eq!(found, vec![CredentialType::AccessToken]);
     }
 
     #[test]
     fn find_multiple_placeholders() {
-        let text = "{{sfae:a}} and {{sfae:b-c}} and {{sfae:d_1}}";
-        let handles = find_placeholders(text);
-        assert_eq!(handles.len(), 3);
-        assert_eq!(handles[0].name, "a");
-        assert_eq!(handles[1].name, "b-c");
-        assert_eq!(handles[2].name, "d_1");
+        let found = find_placeholders("-API_KEY- and -PASSWORD-");
+        assert_eq!(found, vec![CredentialType::ApiKey, CredentialType::Password]);
     }
-
-    #[test]
-    fn find_ignores_malformed_placeholders() {
-        let handles = find_placeholders("{{sfae:}} and {{sfae: space}} and {{other:foo}}");
-        assert!(handles.is_empty());
-    }
-
-    // -- resolve_placeholders tests --
 
     #[test]
     fn resolve_single() {
-        let store = store_with_token("tok", "secret123");
-        let result = resolve_placeholders("Bearer {{sfae:tok}}", &store).unwrap();
-        assert_eq!(result, "Bearer secret123");
+        let store = test_store();
+        let result =
+            resolve_placeholders("Bearer -API_KEY-", &store, "github.com", None).unwrap();
+        assert_eq!(result, "Bearer ghk_abc123");
     }
 
     #[test]
-    fn resolve_multiple() {
-        let mut store = InMemoryStore::new();
-        store
-            .set(
-                "a",
-                &Credential::AccessToken {
-                    token: "AAA".to_string(),
-                },
-            )
-            .unwrap();
-        store
-            .set(
-                "b",
-                &Credential::AccessToken {
-                    token: "BBB".to_string(),
-                },
-            )
-            .unwrap();
-        let result = resolve_placeholders("{{sfae:a}}/{{sfae:b}}", &store).unwrap();
-        assert_eq!(result, "AAA/BBB");
+    fn resolve_with_username() {
+        let store = test_store();
+        let result = resolve_placeholders(
+            "pw=-PASSWORD-",
+            &store,
+            "github.com",
+            Some("user1"),
+        )
+        .unwrap();
+        assert_eq!(result, "pw=secret");
     }
 
     #[test]
     fn resolve_missing_credential_fails() {
         let store = InMemoryStore::new();
-        let err = resolve_placeholders("{{sfae:missing}}", &store).unwrap_err();
+        let err = resolve_placeholders("-API_KEY-", &store, "github.com", None).unwrap_err();
         assert!(matches!(err, SfaeError::CredentialNotFound(_)));
     }
 
     #[test]
     fn resolve_no_placeholders_passes_through() {
         let store = InMemoryStore::new();
-        let result = resolve_placeholders("plain text", &store).unwrap();
+        let result = resolve_placeholders("plain text", &store, "github.com", None).unwrap();
         assert_eq!(result, "plain text");
+    }
+
+    #[test]
+    fn mask_replaces_with_stars() {
+        let store = test_store();
+        let result = resolve_and_mask("key=-API_KEY-", &store, "github.com", None).unwrap();
+        assert_eq!(result, "key=***");
+    }
+
+    #[test]
+    fn extract_host_https() {
+        assert_eq!(
+            extract_host("https://api.github.com/repos"),
+            Some("api.github.com".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_host_with_port() {
+        assert_eq!(
+            extract_host("http://localhost:8080/api"),
+            Some("localhost".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_host_no_scheme() {
+        assert_eq!(extract_host("not-a-url"), None);
+    }
+
+    #[test]
+    fn extract_host_bare_domain() {
+        assert_eq!(
+            extract_host("https://example.com"),
+            Some("example.com".to_string())
+        );
     }
 }

@@ -1,3 +1,4 @@
-pub mod credential;
-pub mod proxy;
-pub mod service;
+pub mod credentials;
+pub mod delete;
+pub mod prompt;
+pub mod request;
