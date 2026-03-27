@@ -52,3 +52,62 @@ pub fn resolve_placeholders(text: &str, store: &dyn SecretStore) -> Result<Strin
     }
     Ok(result)
 }
+
+/// Resolve all placeholders in the request and execute the HTTP call via ureq.
+pub fn execute(request: &ProxyRequest, store: &dyn SecretStore) -> Result<ProxyResponse, SfaeError> {
+    // Resolve placeholders in URL, headers, and body.
+    let url = resolve_placeholders(&request.url, store)?;
+    let headers: Vec<(String, String)> = request
+        .headers
+        .iter()
+        .map(|(k, v)| Ok((k.clone(), resolve_placeholders(v, store)?)))
+        .collect::<Result<_, SfaeError>>()?;
+    let body = match &request.body {
+        Some(b) => Some(resolve_placeholders(b, store)?),
+        None => None,
+    };
+
+    // Build the HTTP request.
+    let mut builder = ureq::http::Request::builder()
+        .method(request.method.as_str())
+        .uri(&url);
+    for (key, value) in &headers {
+        builder = builder.header(key.as_str(), value.as_str());
+    }
+
+    let agent = ureq::Agent::new_with_defaults();
+    let mut response = if let Some(body) = body {
+        let req = builder
+            .body(body)
+            .map_err(|e| SfaeError::HttpError(e.to_string()))?;
+        agent
+            .run(req)
+            .map_err(|e| SfaeError::HttpError(e.to_string()))?
+    } else {
+        let req = builder
+            .body(())
+            .map_err(|e| SfaeError::HttpError(e.to_string()))?;
+        agent
+            .run(req)
+            .map_err(|e| SfaeError::HttpError(e.to_string()))?
+    };
+
+    // Read response.
+    let status = response.status().as_u16();
+    let mut resp_headers = HashMap::new();
+    for (name, value) in response.headers() {
+        if let Ok(v) = value.to_str() {
+            resp_headers.insert(name.to_string(), v.to_string());
+        }
+    }
+    let resp_body = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| SfaeError::HttpError(e.to_string()))?;
+
+    Ok(ProxyResponse {
+        status,
+        headers: resp_headers,
+        body: resp_body,
+    })
+}
