@@ -29,9 +29,9 @@ Sync-only for the MVP — single-request CLI, no need for tokio.
 
 ### Phase 1: Error type + Credential model
 
-1. **Create `error.rs`** — `SfaeError` enum with `thiserror`: `CredentialNotFound`, `StoreError`, `HttpError`, `PlaceholderError`, `ServiceNotFound`, `ConfigError`, `Cancelled`, `Other`.
-2. **Update `credential.rs`** — add `Serialize`/`Deserialize`, tagged enum with `secret_value()` method.
-3. **Update `lib.rs`** — add `pub mod error`, `pub mod store`, `pub mod ui`, re-export key types.
+- [x] 1a. **Create `error.rs`** — `SfaeError` enum with `thiserror`: `CredentialNotFound`, `StoreError`, `HttpError`, `PlaceholderError`, `ServiceNotFound`, `ConfigError`, `Cancelled`, `Other`.
+- [ ] 1b. **Update `credential.rs`** — add `Serialize`/`Deserialize`, tagged enum with `secret_value()` method.
+- [ ] 1c. **Update `lib.rs`** — add `pub mod error`, `pub mod store`, `pub mod ui`, re-export key types.
 
 ### Phase 2: Secret store
 
