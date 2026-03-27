@@ -3,16 +3,5 @@
 version = 4
 
 [[package]]
-name = "sfae-cli"
-version = "0.1.0"
-dependencies = [
- "sfae-core",
-]
-
-[[package]]
-name = "sfae-core"
-version = "0.1.0"
-
-[[package]]
 name = "xtask"
 version = "0.0.0"
