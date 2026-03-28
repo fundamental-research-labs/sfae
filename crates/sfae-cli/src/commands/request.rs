@@ -3,17 +3,21 @@ use std::time::Instant;
 use sfae_core::proxy::{self, ProxyRequest, extract_host};
 use sfae_core::store::KeyringStore;
 
+pub struct RequestOpts<'a> {
+    pub dry_run: bool,
+    pub verbose: bool,
+    pub domain: Option<&'a str>,
+    pub user: Option<&'a str>,
+}
+
 pub fn run(
     method: &str,
     url: &str,
     headers: &[String],
     body: Option<&str>,
-    domain: Option<&str>,
-    user: Option<&str>,
-    dry_run: bool,
-    verbose: bool,
+    opts: &RequestOpts,
 ) -> anyhow::Result<()> {
-    let domain = match domain {
+    let domain = match opts.domain {
         Some(d) => d.to_string(),
         None => extract_host(url)
             .ok_or_else(|| anyhow::anyhow!("cannot extract host from URL; use --domain"))?,
@@ -36,7 +40,7 @@ pub fn run(
         body: body.map(String::from),
     };
 
-    if verbose {
+    if opts.verbose {
         eprintln!("> {} {}", request.method, mask_placeholders(&request.url));
         for (k, v) in &request.headers {
             eprintln!("> {k}: {}", mask_placeholders(v));
@@ -49,15 +53,15 @@ pub fn run(
 
     let store = KeyringStore::new();
 
-    if dry_run {
-        let masked_url = proxy::resolve_and_mask(&request.url, &store, &domain, user)?;
+    if opts.dry_run {
+        let masked_url = proxy::resolve_and_mask(&request.url, &store, &domain, opts.user)?;
         println!("{} {}", request.method, masked_url);
         for (k, v) in &request.headers {
-            let masked_v = proxy::resolve_and_mask(v, &store, &domain, user)?;
+            let masked_v = proxy::resolve_and_mask(v, &store, &domain, opts.user)?;
             println!("{k}: {masked_v}");
         }
         if let Some(b) = &request.body {
-            let masked_body = proxy::resolve_and_mask(b, &store, &domain, user)?;
+            let masked_body = proxy::resolve_and_mask(b, &store, &domain, opts.user)?;
             println!();
             println!("{masked_body}");
         }
@@ -65,10 +69,10 @@ pub fn run(
     }
 
     let start = Instant::now();
-    let response = proxy::execute(&request, &store, &domain, user)?;
+    let response = proxy::execute(&request, &store, &domain, opts.user)?;
     let elapsed = start.elapsed();
 
-    if verbose {
+    if opts.verbose {
         eprintln!("< {} ({:.1?})", response.status, elapsed);
     }
 

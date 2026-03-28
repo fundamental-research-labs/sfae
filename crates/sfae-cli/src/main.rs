@@ -95,10 +95,12 @@ fn main() -> anyhow::Result<()> {
                 &url,
                 &headers,
                 body.as_deref(),
-                domain.as_deref(),
-                user.as_deref(),
-                dry_run,
-                verbose,
+                &commands::request::RequestOpts {
+                    dry_run,
+                    verbose,
+                    domain: domain.as_deref(),
+                    user: user.as_deref(),
+                },
             )?;
         }
         Command::Prompt {
