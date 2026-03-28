@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   ci:
@@ -21,7 +20,7 @@ jobs:
           toolchain: "1.92.0"
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2.8.1
+      - uses: Swatinem/rust-cache@v2.9.1
 
       - name: Run CI checks
         run: cargo xtask ci
