@@ -4,7 +4,9 @@ use sfae_core::store::{InMemoryStore, SecretStore};
 
 fn populated_store() -> InMemoryStore {
     let mut store = InMemoryStore::new();
-    store.set("api.example.com_ACCESS_TOKEN", "ghp_abc123").unwrap();
+    store
+        .set("api.example.com_ACCESS_TOKEN", "ghp_abc123")
+        .unwrap();
     store.set("api.example.com_API_KEY", "key-xyz-789").unwrap();
     store
 }
@@ -36,8 +38,7 @@ fn full_request_resolution() {
 
     // Resolve headers
     for (key, value) in &request.headers {
-        let resolved =
-            proxy::resolve_placeholders(value, &store, "api.example.com", None).unwrap();
+        let resolved = proxy::resolve_placeholders(value, &store, "api.example.com", None).unwrap();
         if key == "Authorization" {
             assert_eq!(resolved, "Bearer ghp_abc123");
         } else {
@@ -140,17 +141,11 @@ fn username_scoped_credentials() {
         .unwrap();
 
     // Resolve without username — uses domain-level credential
-    let result =
-        proxy::resolve_placeholders("-API_KEY-", &store, "github.com", None).unwrap();
+    let result = proxy::resolve_placeholders("-API_KEY-", &store, "github.com", None).unwrap();
     assert_eq!(result, "shared_key");
 
     // Resolve with username — uses user-scoped credential
-    let result = proxy::resolve_placeholders(
-        "-PASSWORD-",
-        &store,
-        "github.com",
-        Some("aduermael"),
-    )
-    .unwrap();
+    let result =
+        proxy::resolve_placeholders("-PASSWORD-", &store, "github.com", Some("aduermael")).unwrap();
     assert_eq!(result, "user_pw");
 }

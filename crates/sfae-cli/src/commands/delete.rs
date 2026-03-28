@@ -1,13 +1,15 @@
-use sfae_core::credential::{credential_key, CredentialType};
+use sfae_core::credential::{CredentialType, credential_key};
 use sfae_core::store::{KeyringStore, SecretStore};
 
-pub fn run(domain: &str, cred_type_str: Option<&str>, username: Option<&str>) -> anyhow::Result<()> {
+pub fn run(
+    domain: &str,
+    cred_type_str: Option<&str>,
+    username: Option<&str>,
+) -> anyhow::Result<()> {
     let mut store = KeyringStore::new();
 
     if let Some(ct_str) = cred_type_str {
-        let cred_type: CredentialType = ct_str
-            .parse()
-            .map_err(|e: String| anyhow::anyhow!(e))?;
+        let cred_type: CredentialType = ct_str.parse().map_err(|e: String| anyhow::anyhow!(e))?;
         let key = credential_key(domain, username, cred_type);
         store.delete(&key)?;
         eprintln!("Deleted: {key}");

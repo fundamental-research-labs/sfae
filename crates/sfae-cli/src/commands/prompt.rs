@@ -1,10 +1,15 @@
-use sfae_core::credential::{credential_key, CredentialType};
+use sfae_core::credential::{CredentialType, credential_key};
 use sfae_core::store::{KeyringStore, SecretStore};
 use sfae_core::ui::UserPrompt;
 
 use crate::prompt::TerminalPrompt;
 
-pub fn run(domain: &str, cred_type_str: &str, url: &str, username: Option<&str>) -> anyhow::Result<()> {
+pub fn run(
+    domain: &str,
+    cred_type_str: &str,
+    url: &str,
+    username: Option<&str>,
+) -> anyhow::Result<()> {
     let cred_type: CredentialType = cred_type_str
         .parse()
         .map_err(|e: String| anyhow::anyhow!(e))?;

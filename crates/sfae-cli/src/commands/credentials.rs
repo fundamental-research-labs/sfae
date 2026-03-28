@@ -1,4 +1,4 @@
-use sfae_core::store::{list_credential_types, KeyringStore};
+use sfae_core::store::{KeyringStore, list_credential_types};
 
 pub fn run(domain: &str, username: Option<&str>) -> anyhow::Result<()> {
     let store = KeyringStore::new();

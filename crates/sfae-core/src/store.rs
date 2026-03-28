@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::credential::{credential_key, CredentialType};
+use crate::credential::{CredentialType, credential_key};
 use crate::error::SfaeError;
 
 /// Abstraction over secret storage backends.
@@ -85,8 +85,7 @@ impl KeyringStore {
     }
 
     fn entry(key: &str) -> Result<keyring::Entry, SfaeError> {
-        keyring::Entry::new(KEYRING_SERVICE, key)
-            .map_err(|e| SfaeError::StoreError(e.to_string()))
+        keyring::Entry::new(KEYRING_SERVICE, key).map_err(|e| SfaeError::StoreError(e.to_string()))
     }
 }
 
@@ -220,10 +219,7 @@ mod tests {
         store.set("z_KEY", "1").unwrap();
         store.set("a_KEY", "2").unwrap();
         store.set("m_KEY", "3").unwrap();
-        assert_eq!(
-            store.list_keys().unwrap(),
-            vec!["a_KEY", "m_KEY", "z_KEY"]
-        );
+        assert_eq!(store.list_keys().unwrap(), vec!["a_KEY", "m_KEY", "z_KEY"]);
     }
 
     #[test]
@@ -250,9 +246,7 @@ mod tests {
     fn list_credential_types_with_username() {
         let mut store = InMemoryStore::new();
         store.set("github.com_API_KEY", "key1").unwrap();
-        store
-            .set("github.com_aduermael_PASSWORD", "pw")
-            .unwrap();
+        store.set("github.com_aduermael_PASSWORD", "pw").unwrap();
 
         // Without username: only API_KEY
         let types = list_credential_types(&store, "github.com", None).unwrap();

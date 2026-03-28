@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::credential::{credential_key, CredentialType};
+use crate::credential::{CredentialType, credential_key};
 use crate::error::SfaeError;
 use crate::store::SecretStore;
 
@@ -161,12 +161,8 @@ mod tests {
     fn test_store() -> InMemoryStore {
         let mut store = InMemoryStore::new();
         store.set("github.com_API_KEY", "ghk_abc123").unwrap();
-        store
-            .set("github.com_ACCESS_TOKEN", "ght_xyz789")
-            .unwrap();
-        store
-            .set("github.com_user1_PASSWORD", "secret")
-            .unwrap();
+        store.set("github.com_ACCESS_TOKEN", "ght_xyz789").unwrap();
+        store.set("github.com_user1_PASSWORD", "secret").unwrap();
         store
     }
 
@@ -184,27 +180,24 @@ mod tests {
     #[test]
     fn find_multiple_placeholders() {
         let found = find_placeholders("-API_KEY- and -PASSWORD-");
-        assert_eq!(found, vec![CredentialType::ApiKey, CredentialType::Password]);
+        assert_eq!(
+            found,
+            vec![CredentialType::ApiKey, CredentialType::Password]
+        );
     }
 
     #[test]
     fn resolve_single() {
         let store = test_store();
-        let result =
-            resolve_placeholders("Bearer -API_KEY-", &store, "github.com", None).unwrap();
+        let result = resolve_placeholders("Bearer -API_KEY-", &store, "github.com", None).unwrap();
         assert_eq!(result, "Bearer ghk_abc123");
     }
 
     #[test]
     fn resolve_with_username() {
         let store = test_store();
-        let result = resolve_placeholders(
-            "pw=-PASSWORD-",
-            &store,
-            "github.com",
-            Some("user1"),
-        )
-        .unwrap();
+        let result =
+            resolve_placeholders("pw=-PASSWORD-", &store, "github.com", Some("user1")).unwrap();
         assert_eq!(result, "pw=secret");
     }
 
