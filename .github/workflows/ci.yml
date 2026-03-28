@@ -20,7 +20,7 @@ jobs:
           toolchain: "1.92.0"
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2.7.8
+      - uses: Swatinem/rust-cache@v2.8.1
 
       - name: Run CI checks
         run: cargo xtask ci
