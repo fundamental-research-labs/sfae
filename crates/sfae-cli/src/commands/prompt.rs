@@ -76,6 +76,24 @@ pub fn run_oauth(
         eprintln!("Credential stored: {refresh_key}");
     }
 
+    // Store client secret if present.
+    if let Some(secret) = client_secret {
+        let secret_key = credential_key(domain, username, CredentialType::ClientSecret);
+        store.set(&secret_key, secret)?;
+        eprintln!("Credential stored: {secret_key}");
+    }
+
+    // Save OAuth metadata for token refresh.
+    oauth::save_oauth_metadata(
+        domain,
+        username,
+        oauth::OAuthMetadata {
+            token_url: token_url.to_string(),
+            client_id: client_id.to_string(),
+        },
+    )?;
+    eprintln!("OAuth metadata saved for {domain}");
+
     Ok(())
 }
 

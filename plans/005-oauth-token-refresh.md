@@ -95,7 +95,7 @@ In `crates/sfae-cli/src/commands/prompt.rs` `run_oauth()`, after a successful to
 1. Save `OAuthMetadata { token_url, client_id }` via `save_oauth_metadata()`.
 2. If `client_secret` was provided, store it in the keychain via `store.set(credential_key(domain, username, ClientSecret), client_secret)`.
 
-- [ ] 1c: Save `OAuthMetadata` and optionally `ClientSecret` after successful OAuth flow in `run_oauth()`
+- [x] 1c: Save `OAuthMetadata` and optionally `ClientSecret` after successful OAuth flow in `run_oauth()`
 
 ---
 
