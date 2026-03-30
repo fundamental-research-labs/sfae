@@ -40,6 +40,45 @@ pub fn find_placeholders(text: &str) -> Vec<CredentialType> {
     found
 }
 
+/// Look up a credential, falling back to parent domains when not found.
+///
+/// For example, if `domain` is `api.github.com` and no credential exists for
+/// that exact domain, this will try `github.com` before giving up. Stops when
+/// the domain has fewer than 2 labels (never tries bare TLDs).
+fn get_credential_with_fallback(
+    store: &dyn SecretStore,
+    domain: &str,
+    username: Option<&str>,
+    cred_type: CredentialType,
+) -> Result<String, SfaeError> {
+    let key = credential_key(domain, username, cred_type);
+    match store.get(&key) {
+        Ok(value) => return Ok(value),
+        Err(SfaeError::CredentialNotFound(_)) => {}
+        Err(e) => return Err(e),
+    }
+
+    // Walk up parent domains: api.github.com → github.com
+    let parts: Vec<&str> = domain.split('.').collect();
+    for i in 1..parts.len() {
+        let parent: Vec<&str> = parts[i..].to_vec();
+        if parent.len() < 2 {
+            break;
+        }
+        let parent_domain = parent.join(".");
+        let key = credential_key(&parent_domain, username, cred_type);
+        match store.get(&key) {
+            Ok(value) => return Ok(value),
+            Err(SfaeError::CredentialNotFound(_)) => continue,
+            Err(e) => return Err(e),
+        }
+    }
+
+    Err(SfaeError::CredentialNotFound(credential_key(
+        domain, username, cred_type,
+    )))
+}
+
 /// Replace all `-TYPE-` placeholders in `text` with credential values from the store.
 pub fn resolve_placeholders(
     text: &str,
@@ -50,8 +89,7 @@ pub fn resolve_placeholders(
     let mut result = text.to_string();
     for (pattern, cred_type) in PLACEHOLDERS {
         if result.contains(pattern) {
-            let key = credential_key(domain, username, *cred_type);
-            let value = store.get(&key)?;
+            let value = get_credential_with_fallback(store, domain, username, *cred_type)?;
             result = result.replace(pattern, &value);
         }
     }
@@ -68,8 +106,7 @@ pub fn resolve_and_mask(
     let mut result = text.to_string();
     for (pattern, cred_type) in PLACEHOLDERS {
         if result.contains(pattern) {
-            let key = credential_key(domain, username, *cred_type);
-            store.get(&key)?;
+            get_credential_with_fallback(store, domain, username, *cred_type)?;
             result = result.replace(pattern, "***");
         }
     }
@@ -249,5 +286,106 @@ mod tests {
             extract_host("https://example.com"),
             Some("example.com".to_string())
         );
+    }
+
+    // --- Domain fallback tests ---
+
+    #[test]
+    fn fallback_exact_domain_match() {
+        let store = test_store();
+        let val = get_credential_with_fallback(&store, "github.com", None, CredentialType::ApiKey)
+            .unwrap();
+        assert_eq!(val, "ghk_abc123");
+    }
+
+    #[test]
+    fn fallback_subdomain_to_parent() {
+        let store = test_store();
+        let val = get_credential_with_fallback(
+            &store,
+            "api.github.com",
+            None,
+            CredentialType::AccessToken,
+        )
+        .unwrap();
+        assert_eq!(val, "ght_xyz789");
+    }
+
+    #[test]
+    fn fallback_multi_level_subdomain() {
+        let mut store = InMemoryStore::new();
+        store.set("example.com_API_KEY", "deep_key").unwrap();
+        let val =
+            get_credential_with_fallback(&store, "a.b.example.com", None, CredentialType::ApiKey)
+                .unwrap();
+        assert_eq!(val, "deep_key");
+    }
+
+    #[test]
+    fn fallback_stops_at_two_labels() {
+        // Credential stored under "com" should NOT be found via fallback
+        let mut store = InMemoryStore::new();
+        store.set("com_API_KEY", "bad").unwrap();
+        let err =
+            get_credential_with_fallback(&store, "api.github.com", None, CredentialType::ApiKey)
+                .unwrap_err();
+        assert!(matches!(err, SfaeError::CredentialNotFound(_)));
+    }
+
+    #[test]
+    fn fallback_not_found_on_any_level() {
+        let store = InMemoryStore::new();
+        let err = get_credential_with_fallback(
+            &store,
+            "api.github.com",
+            None,
+            CredentialType::AccessToken,
+        )
+        .unwrap_err();
+        match err {
+            SfaeError::CredentialNotFound(key) => {
+                assert_eq!(key, "api.github.com_ACCESS_TOKEN");
+            }
+            _ => panic!("expected CredentialNotFound"),
+        }
+    }
+
+    #[test]
+    fn fallback_with_username() {
+        let store = test_store();
+        let val = get_credential_with_fallback(
+            &store,
+            "api.github.com",
+            Some("user1"),
+            CredentialType::Password,
+        )
+        .unwrap();
+        assert_eq!(val, "secret");
+    }
+
+    #[test]
+    fn resolve_subdomain_placeholders() {
+        let store = test_store();
+        let result =
+            resolve_placeholders("Bearer -ACCESS_TOKEN-", &store, "api.github.com", None).unwrap();
+        assert_eq!(result, "Bearer ght_xyz789");
+    }
+
+    #[test]
+    fn mask_subdomain_placeholders() {
+        let store = test_store();
+        let result = resolve_and_mask("key=-API_KEY-", &store, "api.github.com", None).unwrap();
+        assert_eq!(result, "key=***");
+    }
+
+    #[test]
+    fn fallback_prefers_exact_match() {
+        let mut store = InMemoryStore::new();
+        store.set("api.github.com_API_KEY", "exact").unwrap();
+        store.set("github.com_API_KEY", "parent").unwrap();
+        let val =
+            get_credential_with_fallback(&store, "api.github.com", None, CredentialType::ApiKey)
+                .unwrap();
+        assert_eq!(val, "exact");
     }
 }

@@ -23,7 +23,7 @@
 
 **Scope:** `resolve_placeholders` and `resolve_and_mask` both switch from `store.get(&key)` to the new helper. No changes to `store.rs`, `credential.rs`, or any CLI commands.
 
-- [ ] 1a: Add `get_credential_with_fallback` helper in `proxy.rs`, update `resolve_placeholders` and `resolve_and_mask` to use it, and add unit tests
+- [x] 1a: Add `get_credential_with_fallback` helper in `proxy.rs`, update `resolve_placeholders` and `resolve_and_mask` to use it, and add unit tests
 
 **Tests to add:**
 - Exact domain match still works (no regression)
