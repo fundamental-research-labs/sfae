@@ -188,13 +188,13 @@ Clean up OAuth metadata and client secret based on what's being deleted:
 - `sfae delete domain --type ACCESS_TOKEN` — the refresh flow is useless without an access token placeholder to trigger it, so also remove OAuth metadata and `ClientSecret`.
 - `sfae delete domain --type REFRESH_TOKEN` or `--type CLIENT_SECRET` — do NOT remove metadata. The access token may still be valid; metadata becomes unused until the next OAuth flow.
 
-- [ ] 4a: Remove OAuth metadata and client secret in delete command (only on ACCESS_TOKEN or full-domain deletion)
+- [x] 4a: Remove OAuth metadata and client secret in delete command (only on ACCESS_TOKEN or full-domain deletion)
 
 ### 4b. Clean up metadata on `sfae flush`
 
 When `sfae flush` deletes all credentials (which already deletes all keychain entries including `ClientSecret`), also delete the `oauth.json` file entirely.
 
-- [ ] 4b: Delete `oauth.json` in flush command
+- [x] 4b: Delete `oauth.json` in flush command
 
 ---
 

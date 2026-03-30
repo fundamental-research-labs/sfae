@@ -94,9 +94,7 @@ pub fn read_all_oauth_metadata() -> Result<HashMap<String, OAuthMetadata>, SfaeE
 }
 
 /// Write all OAuth metadata to disk.
-pub fn write_all_oauth_metadata(
-    map: &HashMap<String, OAuthMetadata>,
-) -> Result<(), SfaeError> {
+pub fn write_all_oauth_metadata(map: &HashMap<String, OAuthMetadata>) -> Result<(), SfaeError> {
     write_all_to(&oauth_metadata_path()?, map)
 }
 
@@ -124,10 +122,7 @@ pub fn get_oauth_metadata(
 }
 
 /// Remove OAuth metadata for a domain (and optional username).
-pub fn remove_oauth_metadata(
-    domain: &str,
-    username: Option<&str>,
-) -> Result<(), SfaeError> {
+pub fn remove_oauth_metadata(domain: &str, username: Option<&str>) -> Result<(), SfaeError> {
     let path = oauth_metadata_path()?;
     let mut map = read_all_from(&path)?;
     map.remove(&metadata_key(domain, username));
@@ -239,11 +234,7 @@ pub fn exchange_code(
 }
 
 /// Build the form body for a token refresh request.
-fn build_refresh_body(
-    refresh_token: &str,
-    client_id: &str,
-    client_secret: Option<&str>,
-) -> String {
+fn build_refresh_body(refresh_token: &str, client_id: &str, client_secret: Option<&str>) -> String {
     let mut body = format!(
         "grant_type=refresh_token&refresh_token={}&client_id={}",
         url_encode(refresh_token),

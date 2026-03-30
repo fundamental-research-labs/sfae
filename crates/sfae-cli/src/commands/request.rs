@@ -80,7 +80,14 @@ pub fn run(
     }
 
     let response = if response.status == 401 && request_has_access_token_placeholder(&request) {
-        try_refresh_and_retry(&request, &mut store, &domain, opts.user, opts.verbose, response)?
+        try_refresh_and_retry(
+            &request,
+            &mut store,
+            &domain,
+            opts.user,
+            opts.verbose,
+            response,
+        )?
     } else {
         response
     };
