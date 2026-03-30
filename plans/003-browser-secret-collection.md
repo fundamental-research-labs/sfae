@@ -155,7 +155,7 @@ New dependencies to add to `sfae-core/Cargo.toml`: `sha2`, `base64`.
 
 Use `ureq` (already a dependency) for the token exchange HTTP POST.
 
-#### 2c. OAuth flow in the prompt command
+#### 2c. OAuth flow in the prompt command ✅
 
 In `sfae-cli/src/commands/prompt.rs`, when `--oauth` is set:
 

@@ -5,6 +5,145 @@ use std::time::Duration;
 
 use crate::error::SfaeError;
 
+/// A temporary local HTTP server bound to `127.0.0.1` on a random port.
+///
+/// Shared infrastructure used by both the browser-based secret prompt
+/// and the OAuth2 callback flow.
+pub struct LocalServer {
+    listener: TcpListener,
+    port: u16,
+}
+
+impl LocalServer {
+    /// Bind a new server to `127.0.0.1:0` with a 120-second accept timeout.
+    pub fn new() -> Result<Self, SfaeError> {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| SfaeError::Other(format!("failed to bind local server: {e}")))?;
+
+        let port = listener
+            .local_addr()
+            .map_err(|e| SfaeError::Other(format!("failed to get local address: {e}")))?
+            .port();
+
+        listener
+            .set_nonblocking(false)
+            .map_err(|e| SfaeError::Other(format!("failed to configure listener: {e}")))?;
+        set_accept_timeout(&listener, Duration::from_secs(120))?;
+
+        Ok(Self { listener, port })
+    }
+
+    /// The port the server is listening on.
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Open the given URL in the default browser (macOS-only for now).
+    pub fn open_browser(&self, url: &str) -> Result<(), SfaeError> {
+        let status = Command::new("open")
+            .arg(url)
+            .status()
+            .map_err(|e| SfaeError::Other(format!("failed to open browser: {e}")))?;
+        if !status.success() {
+            return Err(SfaeError::Other(
+                "failed to open browser: non-zero exit code".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Accept one HTTP request. Returns (method, path, headers, body).
+    ///
+    /// On timeout returns `SfaeError::Cancelled`.
+    /// The caller is responsible for sending a response via `send_response`.
+    pub fn accept_request(&self) -> Result<HttpRequest, SfaeError> {
+        let (stream, _addr) = self.listener.accept().map_err(|e| match e.kind() {
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => SfaeError::Cancelled,
+            _ => SfaeError::Other(format!("accept error: {e}")),
+        })?;
+
+        let mut reader = BufReader::new(&stream);
+
+        // Read request line.
+        let mut request_line = String::new();
+        if reader.read_line(&mut request_line).is_err() {
+            return Ok(HttpRequest {
+                method: String::new(),
+                path: String::new(),
+                body: String::new(),
+                stream,
+            });
+        }
+
+        let parts: Vec<&str> = request_line.trim().splitn(3, ' ').collect();
+        let (method, path) = if parts.len() >= 2 {
+            (parts[0].to_string(), parts[1].to_string())
+        } else {
+            (String::new(), String::new())
+        };
+
+        // Read headers.
+        let mut content_length: usize = 0;
+        loop {
+            let mut header_line = String::new();
+            if reader.read_line(&mut header_line).is_err() {
+                break;
+            }
+            let trimmed = header_line.trim();
+            if trimmed.is_empty() {
+                break;
+            }
+            let lower = trimmed.to_ascii_lowercase();
+            if let Some(val) = lower.strip_prefix("content-length:")
+                && let Ok(len) = val.trim().parse::<usize>()
+            {
+                content_length = len;
+            }
+        }
+
+        // Read body if present.
+        let mut body = String::new();
+        if content_length > 0 {
+            let mut buf = vec![0u8; content_length];
+            if reader.read_exact(&mut buf).is_ok() {
+                body = String::from_utf8_lossy(&buf).into_owned();
+            }
+        }
+
+        Ok(HttpRequest {
+            method,
+            path,
+            body,
+            stream,
+        })
+    }
+}
+
+/// An incoming HTTP request with its underlying TCP stream for sending the response.
+pub struct HttpRequest {
+    pub method: String,
+    pub path: String,
+    pub body: String,
+    stream: std::net::TcpStream,
+}
+
+impl HttpRequest {
+    /// Send an HTTP response with the given status code and HTML body.
+    pub fn respond(&mut self, status: u16, html: &str) {
+        let status_text = match status {
+            200 => "OK",
+            404 => "Not Found",
+            _ => "OK",
+        };
+        let response = format!(
+            "HTTP/1.1 {status} {status_text}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}",
+            html.len(),
+        );
+        let _ = self.stream.write_all(response.as_bytes());
+        let _ = self.stream.flush();
+    }
+}
+
 /// Collect a secret from the user via a local web page opened in the default browser.
 ///
 /// - `label` — heading shown on the page (e.g., "Enter API_KEY for github.com").
@@ -14,122 +153,73 @@ use crate::error::SfaeError;
 /// waits for the user to submit the form, then returns the secret.
 /// Times out after 120 seconds with `SfaeError::Cancelled`.
 pub fn browser_prompt(label: &str, url: Option<&str>) -> Result<String, SfaeError> {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| SfaeError::Other(format!("failed to bind local server: {e}")))?;
+    let server = LocalServer::new()?;
+    let local_url = format!("http://127.0.0.1:{}/", server.port());
+    server.open_browser(&local_url)?;
 
-    let port = listener
-        .local_addr()
-        .map_err(|e| SfaeError::Other(format!("failed to get local address: {e}")))?
-        .port();
-
-    // 120-second timeout so the CLI doesn't hang forever.
-    listener
-        .set_nonblocking(false)
-        .map_err(|e| SfaeError::Other(format!("failed to configure listener: {e}")))?;
-    let timeout = Duration::from_secs(120);
-    set_accept_timeout(&listener, timeout)?;
-
-    // Open the default browser (macOS-only for now).
-    let local_url = format!("http://127.0.0.1:{port}/");
-    let status = Command::new("open")
-        .arg(&local_url)
-        .status()
-        .map_err(|e| SfaeError::Other(format!("failed to open browser: {e}")))?;
-    if !status.success() {
-        return Err(SfaeError::Other(
-            "failed to open browser: non-zero exit code".into(),
-        ));
-    }
-
-    // Serve requests until we receive the secret via POST.
     loop {
-        let (mut stream, _addr) = listener.accept().map_err(|e| match e.kind() {
-            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => SfaeError::Cancelled,
-            _ => SfaeError::Other(format!("accept error: {e}")),
-        })?;
+        let mut req = server.accept_request()?;
 
-        let mut reader = BufReader::new(&stream);
-
-        // Read the request line.
-        let mut request_line = String::new();
-        if reader.read_line(&mut request_line).is_err() {
-            continue;
-        }
-
-        let parts: Vec<&str> = request_line.trim().splitn(3, ' ').collect();
-        if parts.len() < 2 {
-            continue;
-        }
-        let method = parts[0];
-        let path = parts[1];
-
-        // Read headers to find Content-Length (needed for POST body).
-        let mut content_length: usize = 0;
-        loop {
-            let mut header_line = String::new();
-            if reader.read_line(&mut header_line).is_err() {
-                break;
-            }
-            let trimmed = header_line.trim();
-            if trimmed.is_empty() {
-                break; // End of headers.
-            }
-            // Case-insensitive Content-Length check.
-            let lower = trimmed.to_ascii_lowercase();
-            if let Some(val) = lower.strip_prefix("content-length:")
-                && let Ok(len) = val.trim().parse::<usize>()
-            {
-                content_length = len;
-            }
-        }
-
-        match (method, path) {
+        match (req.method.as_str(), req.path.as_str()) {
             ("GET", "/") => {
                 let html = build_form_page(label, url);
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    html.len(),
-                    html
-                );
-                let _ = stream.write_all(response.as_bytes());
-                let _ = stream.flush();
+                req.respond(200, &html);
             }
             ("POST", "/") => {
-                // Read the POST body.
-                let mut body = vec![0u8; content_length];
-                if reader.read_exact(&mut body).is_err() {
-                    continue;
-                }
-                let body_str = String::from_utf8_lossy(&body);
-
-                // Parse form-urlencoded body: "secret=<value>"
-                let secret = parse_form_secret(&body_str).unwrap_or_default();
-
-                // Send the confirmation page.
-                let html = build_done_page();
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    html.len(),
-                    html
-                );
-                let _ = stream.write_all(response.as_bytes());
-                let _ = stream.flush();
+                let secret = parse_form_secret(&req.body).unwrap_or_default();
+                req.respond(200, &build_done_page());
 
                 if secret.is_empty() {
                     return Err(SfaeError::Other("credential value cannot be empty".into()));
                 }
-
                 return Ok(secret);
             }
             _ => {
-                // Ignore other requests (favicon, etc.).
-                let response =
-                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                let _ = stream.write_all(response.as_bytes());
-                let _ = stream.flush();
+                req.respond(404, "");
             }
         }
     }
+}
+
+/// Run the OAuth2 callback server: wait for the provider to redirect back with an auth code.
+///
+/// Returns `(code, state)` extracted from the callback query parameters.
+/// The server shows a "Done" page to the user and shuts down.
+pub fn oauth_callback(server: &LocalServer) -> Result<(String, String), SfaeError> {
+    loop {
+        let mut req = server.accept_request()?;
+
+        // We only care about GET /callback?code=...&state=...
+        if req.method == "GET" && req.path.starts_with("/callback") {
+            let code = extract_query_param(&req.path, "code");
+            let state = extract_query_param(&req.path, "state");
+
+            req.respond(200, &build_done_page());
+
+            let code = code.ok_or_else(|| {
+                SfaeError::Other("OAuth callback missing 'code' parameter".into())
+            })?;
+            let state = state.ok_or_else(|| {
+                SfaeError::Other("OAuth callback missing 'state' parameter".into())
+            })?;
+
+            return Ok((code, state));
+        }
+
+        // Ignore other requests (favicon, etc.).
+        req.respond(404, "");
+    }
+}
+
+/// Extract a query parameter value from a path like `/callback?code=abc&state=xyz`.
+fn extract_query_param(path: &str, key: &str) -> Option<String> {
+    let query = path.split('?').nth(1)?;
+    for pair in query.split('&') {
+        if let Some(value) = pair.strip_prefix(&format!("{key}=")) {
+            return Some(url_decode(value));
+        }
+    }
+    None
 }
 
 /// Build the HTML form page.
@@ -171,7 +261,7 @@ fn build_form_page(label: &str, url: Option<&str>) -> String {
     )
 }
 
-/// Build the confirmation page shown after the secret is submitted.
+/// Build the confirmation page shown after the secret is submitted or OAuth completes.
 fn build_done_page() -> String {
     r#"<!DOCTYPE html>
 <html>

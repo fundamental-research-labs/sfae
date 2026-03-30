@@ -1,4 +1,6 @@
+use sfae_core::browser::LocalServer;
 use sfae_core::credential::{credential_key, CredentialType};
+use sfae_core::oauth;
 use sfae_core::store::{KeyringStore, SecretStore};
 use sfae_core::ui::UserPrompt;
 
@@ -6,16 +8,63 @@ use crate::prompt::TerminalPrompt;
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_oauth(
-    _domain: &str,
-    _cred_type_str: &str,
-    _username: Option<&str>,
-    _client_id: &str,
-    _auth_url: &str,
-    _token_url: &str,
-    _scope: Option<&str>,
-    _client_secret: Option<&str>,
+    domain: &str,
+    cred_type_str: &str,
+    username: Option<&str>,
+    client_id: &str,
+    auth_url: &str,
+    token_url: &str,
+    scope: Option<&str>,
+    client_secret: Option<&str>,
 ) -> anyhow::Result<()> {
-    anyhow::bail!("OAuth flow not yet implemented (coming in 2c)")
+    // Validate credential type (the user asked for a specific type, e.g., ACCESS_TOKEN).
+    let _cred_type: CredentialType = cred_type_str
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!(e))?;
+
+    // Generate PKCE verifier and challenge.
+    let verifier = oauth::generate_code_verifier();
+    let challenge = oauth::compute_code_challenge(&verifier);
+    let state = oauth::generate_state();
+
+    // Start the local callback server.
+    let server = LocalServer::new()?;
+    let redirect_uri = format!("http://127.0.0.1:{}/callback", server.port());
+
+    // Build the authorization URL and open the browser.
+    let authorization_url =
+        oauth::build_authorization_url(auth_url, client_id, &redirect_uri, &challenge, scope, &state);
+    server.open_browser(&authorization_url)?;
+
+    eprintln!("Waiting for OAuth authorization in browser...");
+
+    // Wait for the callback.
+    let (code, returned_state) = sfae_core::browser::oauth_callback(&server)?;
+
+    // Verify state matches.
+    if returned_state != state {
+        anyhow::bail!("OAuth state mismatch — possible CSRF attack");
+    }
+
+    // Exchange the authorization code for tokens.
+    let token_response =
+        oauth::exchange_code(token_url, &code, &redirect_uri, client_id, client_secret, &verifier)?;
+
+    // Store the access token.
+    let mut store = KeyringStore::new();
+
+    let access_key = credential_key(domain, username, CredentialType::AccessToken);
+    store.set(&access_key, &token_response.access_token)?;
+    eprintln!("Credential stored: {access_key}");
+
+    // Store refresh token if present.
+    if let Some(ref refresh_token) = token_response.refresh_token {
+        let refresh_key = credential_key(domain, username, CredentialType::RefreshToken);
+        store.set(&refresh_key, refresh_token)?;
+        eprintln!("Credential stored: {refresh_key}");
+    }
+
+    Ok(())
 }
 
 pub fn run(
