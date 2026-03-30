@@ -143,7 +143,7 @@ Wire the refresh logic into the request execution path. The retry lives in the C
 
 Make it `pub` and re-export it from `proxy.rs`. No logic changes — just visibility.
 
-- [ ] 3a: Make `get_credential_with_fallback` public in `proxy.rs`
+- [x] 3a: Make `get_credential_with_fallback` public in `proxy.rs`
 
 ### 3b. Add retry-with-refresh orchestration in `request.rs`
 

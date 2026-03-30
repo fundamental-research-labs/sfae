@@ -45,7 +45,7 @@ pub fn find_placeholders(text: &str) -> Vec<CredentialType> {
 /// For example, if `domain` is `api.github.com` and no credential exists for
 /// that exact domain, this will try `github.com` before giving up. Stops when
 /// the domain has fewer than 2 labels (never tries bare TLDs).
-fn get_credential_with_fallback(
+pub fn get_credential_with_fallback(
     store: &dyn SecretStore,
     domain: &str,
     username: Option<&str>,
