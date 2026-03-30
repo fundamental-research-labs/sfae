@@ -168,7 +168,7 @@ Note: `find_placeholders` needs to check across URL, headers, and body — add a
 
 Logging: when `--verbose` is set, log the refresh attempt and outcome to stderr (`"< 401 (refresh token available, attempting refresh...)"`, `"< Token refreshed successfully, retrying request..."`). When `--verbose` is not set, only log on refresh **failure**.
 
-- [ ] 3b: Implement retry-with-refresh orchestration in `request.rs`, with verbose/failure stderr logging
+- [x] 3b: Implement retry-with-refresh orchestration in `request.rs`, with verbose/failure stderr logging
 
 ---
 
