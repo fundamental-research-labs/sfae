@@ -1,6 +1,11 @@
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::SfaeError;
@@ -10,6 +15,132 @@ use crate::error::SfaeError;
 pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: Option<String>,
+}
+
+/// Non-secret OAuth metadata needed to refresh tokens for a domain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthMetadata {
+    pub token_url: String,
+    pub client_id: String,
+}
+
+/// Returns the path to `~/.config/sfae/oauth.json`.
+pub fn oauth_metadata_path() -> Result<PathBuf, SfaeError> {
+    let base = dirs::config_dir()
+        .ok_or_else(|| SfaeError::ConfigError("cannot determine config directory".into()))?;
+    Ok(base.join("sfae").join("oauth.json"))
+}
+
+/// Build the metadata key: `domain` or `domain:username`.
+pub fn metadata_key(domain: &str, username: Option<&str>) -> String {
+    match username {
+        Some(user) => format!("{domain}:{user}"),
+        None => domain.to_string(),
+    }
+}
+
+fn read_all_from(path: &std::path::Path) -> Result<HashMap<String, OAuthMetadata>, SfaeError> {
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let data = fs::read_to_string(path)?;
+    let map: HashMap<String, OAuthMetadata> = serde_json::from_str(&data)?;
+    Ok(map)
+}
+
+fn write_all_to(
+    path: &std::path::Path,
+    map: &HashMap<String, OAuthMetadata>,
+) -> Result<(), SfaeError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let data = serde_json::to_string_pretty(map)?;
+    fs::write(path, data)?;
+    Ok(())
+}
+
+fn lookup_in_map(
+    map: &HashMap<String, OAuthMetadata>,
+    domain: &str,
+    username: Option<&str>,
+) -> Option<OAuthMetadata> {
+    // Exact match.
+    let key = metadata_key(domain, username);
+    if let Some(m) = map.get(&key) {
+        return Some(m.clone());
+    }
+
+    // Walk up parent domains.
+    let parts: Vec<&str> = domain.split('.').collect();
+    for i in 1..parts.len() {
+        let parent: Vec<&str> = parts[i..].to_vec();
+        if parent.len() < 2 {
+            break;
+        }
+        let parent_domain = parent.join(".");
+        let key = metadata_key(&parent_domain, username);
+        if let Some(m) = map.get(&key) {
+            return Some(m.clone());
+        }
+    }
+
+    None
+}
+
+/// Read all OAuth metadata from disk. Returns an empty map if the file is missing.
+pub fn read_all_oauth_metadata() -> Result<HashMap<String, OAuthMetadata>, SfaeError> {
+    read_all_from(&oauth_metadata_path()?)
+}
+
+/// Write all OAuth metadata to disk.
+pub fn write_all_oauth_metadata(
+    map: &HashMap<String, OAuthMetadata>,
+) -> Result<(), SfaeError> {
+    write_all_to(&oauth_metadata_path()?, map)
+}
+
+/// Save or update OAuth metadata for a domain (and optional username).
+pub fn save_oauth_metadata(
+    domain: &str,
+    username: Option<&str>,
+    metadata: OAuthMetadata,
+) -> Result<(), SfaeError> {
+    let path = oauth_metadata_path()?;
+    let mut map = read_all_from(&path)?;
+    map.insert(metadata_key(domain, username), metadata);
+    write_all_to(&path, &map)
+}
+
+/// Look up OAuth metadata for a domain, with parent-domain fallback.
+///
+/// Same walk-up logic as credential lookup: `api.example.com` → `example.com`.
+pub fn get_oauth_metadata(
+    domain: &str,
+    username: Option<&str>,
+) -> Result<Option<OAuthMetadata>, SfaeError> {
+    let map = read_all_oauth_metadata()?;
+    Ok(lookup_in_map(&map, domain, username))
+}
+
+/// Remove OAuth metadata for a domain (and optional username).
+pub fn remove_oauth_metadata(
+    domain: &str,
+    username: Option<&str>,
+) -> Result<(), SfaeError> {
+    let path = oauth_metadata_path()?;
+    let mut map = read_all_from(&path)?;
+    map.remove(&metadata_key(domain, username));
+    write_all_to(&path, &map)
+}
+
+/// Delete the entire `oauth.json` file.
+pub fn delete_all_oauth_metadata() -> Result<(), SfaeError> {
+    let path = oauth_metadata_path()?;
+    if path.exists() {
+        fs::remove_file(&path)?;
+    }
+    Ok(())
 }
 
 /// Generate a random PKCE code verifier (128 chars from unreserved charset).
@@ -215,5 +346,181 @@ mod tests {
     #[test]
     fn url_encode_encodes_special() {
         assert_eq!(url_encode("a b&c=d"), "a%20b%26c%3Dd");
+    }
+
+    // --- OAuthMetadata tests ---
+
+    fn sample_metadata() -> OAuthMetadata {
+        OAuthMetadata {
+            token_url: "https://oauth2.example.com/token".into(),
+            client_id: "my-client-id".into(),
+        }
+    }
+
+    #[test]
+    fn metadata_key_without_username() {
+        assert_eq!(metadata_key("example.com", None), "example.com");
+    }
+
+    #[test]
+    fn metadata_key_with_username() {
+        assert_eq!(
+            metadata_key("example.com", Some("alice")),
+            "example.com:alice"
+        );
+    }
+
+    #[test]
+    fn metadata_serialization_roundtrip() {
+        let m = sample_metadata();
+        let json = serde_json::to_string(&m).unwrap();
+        let m2: OAuthMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(m.token_url, m2.token_url);
+        assert_eq!(m.client_id, m2.client_id);
+    }
+
+    #[test]
+    fn read_missing_file_returns_empty_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("does_not_exist.json");
+        let map = read_all_from(&path).unwrap();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn write_and_read_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oauth.json");
+
+        let mut map = HashMap::new();
+        map.insert("example.com".to_string(), sample_metadata());
+        write_all_to(&path, &map).unwrap();
+
+        let loaded = read_all_from(&path).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded["example.com"].client_id, "my-client-id");
+    }
+
+    #[test]
+    fn save_and_get_via_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oauth.json");
+
+        // Save
+        let mut map = HashMap::new();
+        map.insert(
+            metadata_key("google.com", None),
+            OAuthMetadata {
+                token_url: "https://oauth2.googleapis.com/token".into(),
+                client_id: "goog-123".into(),
+            },
+        );
+        write_all_to(&path, &map).unwrap();
+
+        // Read back
+        let loaded = read_all_from(&path).unwrap();
+        let m = loaded.get("google.com").unwrap();
+        assert_eq!(m.token_url, "https://oauth2.googleapis.com/token");
+        assert_eq!(m.client_id, "goog-123");
+    }
+
+    #[test]
+    fn save_overwrites_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oauth.json");
+
+        let mut map = HashMap::new();
+        map.insert("d.com".to_string(), sample_metadata());
+        write_all_to(&path, &map).unwrap();
+
+        // Overwrite with new metadata
+        let mut map = read_all_from(&path).unwrap();
+        map.insert(
+            "d.com".to_string(),
+            OAuthMetadata {
+                token_url: "https://new.example.com/token".into(),
+                client_id: "new-id".into(),
+            },
+        );
+        write_all_to(&path, &map).unwrap();
+
+        let loaded = read_all_from(&path).unwrap();
+        assert_eq!(loaded["d.com"].client_id, "new-id");
+    }
+
+    #[test]
+    fn lookup_exact_match() {
+        let mut map = HashMap::new();
+        map.insert("example.com".to_string(), sample_metadata());
+        let found = lookup_in_map(&map, "example.com", None);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().client_id, "my-client-id");
+    }
+
+    #[test]
+    fn lookup_parent_domain_fallback() {
+        let mut map = HashMap::new();
+        map.insert("example.com".to_string(), sample_metadata());
+        let found = lookup_in_map(&map, "api.example.com", None);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().client_id, "my-client-id");
+    }
+
+    #[test]
+    fn lookup_deep_subdomain_fallback() {
+        let mut map = HashMap::new();
+        map.insert("example.com".to_string(), sample_metadata());
+        let found = lookup_in_map(&map, "a.b.example.com", None);
+        assert!(found.is_some());
+    }
+
+    #[test]
+    fn lookup_stops_at_two_labels() {
+        let mut map = HashMap::new();
+        map.insert("com".to_string(), sample_metadata());
+        let found = lookup_in_map(&map, "api.example.com", None);
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn lookup_not_found() {
+        let map = HashMap::new();
+        let found = lookup_in_map(&map, "example.com", None);
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn lookup_with_username() {
+        let mut map = HashMap::new();
+        map.insert("example.com:alice".to_string(), sample_metadata());
+
+        // With matching username
+        let found = lookup_in_map(&map, "example.com", Some("alice"));
+        assert!(found.is_some());
+
+        // Without username — should not match
+        let found = lookup_in_map(&map, "example.com", None);
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn remove_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oauth.json");
+
+        let mut map = HashMap::new();
+        map.insert("a.com".to_string(), sample_metadata());
+        map.insert("b.com".to_string(), sample_metadata());
+        write_all_to(&path, &map).unwrap();
+
+        // Remove one
+        let mut map = read_all_from(&path).unwrap();
+        map.remove("a.com");
+        write_all_to(&path, &map).unwrap();
+
+        let loaded = read_all_from(&path).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(loaded.contains_key("b.com"));
+        assert!(!loaded.contains_key("a.com"));
     }
 }

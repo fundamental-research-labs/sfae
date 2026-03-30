@@ -86,7 +86,7 @@ Add functions:
 - `remove_oauth_metadata(domain: &str, username: Option<&str>) -> Result<()>` — for cleanup when credentials are deleted.
 - `metadata_key(domain: &str, username: Option<&str>) -> String` — builds `domain` or `domain:username`.
 
-- [ ] 1b: Add `OAuthMetadata` struct, persistence functions, and unit tests
+- [x] 1b: Add `OAuthMetadata` struct, persistence functions, and unit tests
 
 ### 1c. Save metadata and client secret during OAuth prompt flow
 
