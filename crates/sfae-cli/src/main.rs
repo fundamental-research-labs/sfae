@@ -61,8 +61,26 @@ enum Command {
         #[arg(long)]
         user: Option<String>,
         /// Use terminal stdin instead of browser-based prompt
-        #[arg(long)]
+        #[arg(long, conflicts_with = "oauth")]
         terminal: bool,
+        /// Use OAuth2 authorization code flow with PKCE
+        #[arg(long)]
+        oauth: bool,
+        /// OAuth2 client ID (required with --oauth)
+        #[arg(long, requires = "oauth")]
+        client_id: Option<String>,
+        /// OAuth2 authorization URL (required with --oauth)
+        #[arg(long, requires = "oauth")]
+        auth_url: Option<String>,
+        /// OAuth2 token exchange URL (required with --oauth)
+        #[arg(long, requires = "oauth")]
+        token_url: Option<String>,
+        /// OAuth2 scopes (comma-separated)
+        #[arg(long, requires = "oauth")]
+        scope: Option<String>,
+        /// OAuth2 client secret (for confidential clients)
+        #[arg(long, requires = "oauth")]
+        client_secret: Option<String>,
     },
     /// Delete credentials for a domain and user
     Delete {
@@ -112,14 +130,42 @@ fn main() -> anyhow::Result<()> {
             url,
             user,
             terminal,
+            oauth,
+            client_id,
+            auth_url,
+            token_url,
+            scope,
+            client_secret,
         } => {
-            commands::prompt::run(
-                &domain,
-                &cred_type,
-                url.as_deref(),
-                user.as_deref(),
-                terminal,
-            )?;
+            if oauth {
+                let Some(client_id) = client_id else {
+                    anyhow::bail!("--client-id is required with --oauth");
+                };
+                let Some(auth_url) = auth_url else {
+                    anyhow::bail!("--auth-url is required with --oauth");
+                };
+                let Some(token_url) = token_url else {
+                    anyhow::bail!("--token-url is required with --oauth");
+                };
+                commands::prompt::run_oauth(
+                    &domain,
+                    &cred_type,
+                    user.as_deref(),
+                    &client_id,
+                    &auth_url,
+                    &token_url,
+                    scope.as_deref(),
+                    client_secret.as_deref(),
+                )?;
+            } else {
+                commands::prompt::run(
+                    &domain,
+                    &cred_type,
+                    url.as_deref(),
+                    user.as_deref(),
+                    terminal,
+                )?;
+            }
         }
         Command::Delete {
             domain,

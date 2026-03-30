@@ -124,7 +124,7 @@ Build the full OAuth2 authorization code flow with PKCE on top of the Phase 1 HT
 
 This phase covers both the core logic and the CLI integration — they are done together because the OAuth flow cannot be tested without CLI wiring.
 
-#### 2a. CLI arguments for OAuth
+#### 2a. CLI arguments for OAuth ✅
 
 In `sfae-cli/src/main.rs`, add to the `Prompt` variant:
 
