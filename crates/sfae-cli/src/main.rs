@@ -93,6 +93,12 @@ enum Command {
         #[arg(long)]
         user: Option<String>,
     },
+    /// Delete all stored credentials
+    Flush {
+        /// Show what would be deleted without actually deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -173,6 +179,9 @@ fn main() -> anyhow::Result<()> {
             user,
         } => {
             commands::delete::run(&domain, cred_type.as_deref(), user.as_deref())?;
+        }
+        Command::Flush { dry_run } => {
+            commands::flush::run(dry_run)?;
         }
     }
     Ok(())
