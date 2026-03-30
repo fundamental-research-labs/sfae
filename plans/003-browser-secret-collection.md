@@ -105,7 +105,7 @@ Implementation:
 
 Use raw `std::net::TcpListener` with manual HTTP parsing. The server only handles two routes (GET `/` and POST `/`) and serves small inline HTML responses, so a dependency like `tiny_http` is not necessary.
 
-#### 1b. Add `--terminal` flag and make `--url` optional
+#### 1b. Add `--terminal` flag and make `--url` optional ✅
 
 In `sfae-cli/src/main.rs`, update the `Prompt` variant:
 

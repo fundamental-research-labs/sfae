@@ -56,10 +56,13 @@ enum Command {
         cred_type: String,
         /// URL where the user can obtain the credential (e.g. settings page, OAuth login)
         #[arg(long)]
-        url: String,
+        url: Option<String>,
         /// Username (optional)
         #[arg(long)]
         user: Option<String>,
+        /// Use terminal stdin instead of browser-based prompt
+        #[arg(long)]
+        terminal: bool,
     },
     /// Delete credentials for a domain and user
     Delete {
@@ -108,8 +111,9 @@ fn main() -> anyhow::Result<()> {
             cred_type,
             url,
             user,
+            terminal,
         } => {
-            commands::prompt::run(&domain, &cred_type, &url, user.as_deref())?;
+            commands::prompt::run(&domain, &cred_type, url.as_deref(), user.as_deref(), terminal)?;
         }
         Command::Delete {
             domain,
