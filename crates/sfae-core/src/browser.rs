@@ -43,14 +43,10 @@ pub fn browser_prompt(label: &str, url: Option<&str>) -> Result<String, SfaeErro
 
     // Serve requests until we receive the secret via POST.
     loop {
-        let (mut stream, _addr) = listener
-            .accept()
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
-                    SfaeError::Cancelled
-                }
-                _ => SfaeError::Other(format!("accept error: {e}")),
-            })?;
+        let (mut stream, _addr) = listener.accept().map_err(|e| match e.kind() {
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => SfaeError::Cancelled,
+            _ => SfaeError::Other(format!("accept error: {e}")),
+        })?;
 
         let mut reader = BufReader::new(&stream);
 
@@ -78,16 +74,12 @@ pub fn browser_prompt(label: &str, url: Option<&str>) -> Result<String, SfaeErro
             if trimmed.is_empty() {
                 break; // End of headers.
             }
-            if let Some(val) = trimmed.strip_prefix("Content-Length:") {
-                if let Ok(len) = val.trim().parse::<usize>() {
-                    content_length = len;
-                }
-            }
-            // Also handle lowercase (browsers may vary).
-            if let Some(val) = trimmed.strip_prefix("content-length:") {
-                if let Ok(len) = val.trim().parse::<usize>() {
-                    content_length = len;
-                }
+            // Case-insensitive Content-Length check.
+            let lower = trimmed.to_ascii_lowercase();
+            if let Some(val) = lower.strip_prefix("content-length:")
+                && let Ok(len) = val.trim().parse::<usize>()
+            {
+                content_length = len;
             }
         }
 
@@ -124,16 +116,15 @@ pub fn browser_prompt(label: &str, url: Option<&str>) -> Result<String, SfaeErro
                 let _ = stream.flush();
 
                 if secret.is_empty() {
-                    return Err(SfaeError::Other(
-                        "credential value cannot be empty".into(),
-                    ));
+                    return Err(SfaeError::Other("credential value cannot be empty".into()));
                 }
 
                 return Ok(secret);
             }
             _ => {
                 // Ignore other requests (favicon, etc.).
-                let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let response =
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                 let _ = stream.write_all(response.as_bytes());
                 let _ = stream.flush();
             }
@@ -227,10 +218,8 @@ fn url_decode(s: &str) -> String {
             result.push(b' ');
             i += 1;
         } else if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                &String::from_utf8_lossy(&bytes[i + 1..i + 3]),
-                16,
-            ) {
+            if let Ok(byte) = u8::from_str_radix(&String::from_utf8_lossy(&bytes[i + 1..i + 3]), 16)
+            {
                 result.push(byte);
                 i += 3;
             } else {
@@ -264,9 +253,7 @@ fn set_accept_timeout(listener: &TcpListener, timeout: Duration) -> Result<(), S
         )
     };
     if ret != 0 {
-        return Err(SfaeError::Other(
-            "failed to set socket timeout".into(),
-        ));
+        return Err(SfaeError::Other("failed to set socket timeout".into()));
     }
     Ok(())
 }

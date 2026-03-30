@@ -113,7 +113,13 @@ fn main() -> anyhow::Result<()> {
             user,
             terminal,
         } => {
-            commands::prompt::run(&domain, &cred_type, url.as_deref(), user.as_deref(), terminal)?;
+            commands::prompt::run(
+                &domain,
+                &cred_type,
+                url.as_deref(),
+                user.as_deref(),
+                terminal,
+            )?;
         }
         Command::Delete {
             domain,
