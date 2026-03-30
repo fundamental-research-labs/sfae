@@ -126,7 +126,7 @@ Implementation:
 
 This is structurally similar to `exchange_code` — same HTTP client, same response parsing — but with different POST body parameters.
 
-- [ ] 2a: Add `refresh_access_token` function and unit tests (test request building logic; HTTP call itself requires a live server)
+- [x] 2a: Add `refresh_access_token` function and unit tests (test request building logic; HTTP call itself requires a live server)
 
 ---
 

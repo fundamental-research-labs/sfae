@@ -238,6 +238,69 @@ pub fn exchange_code(
     })
 }
 
+/// Build the form body for a token refresh request.
+fn build_refresh_body(
+    refresh_token: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+) -> String {
+    let mut body = format!(
+        "grant_type=refresh_token&refresh_token={}&client_id={}",
+        url_encode(refresh_token),
+        url_encode(client_id),
+    );
+    if let Some(secret) = client_secret {
+        body.push_str(&format!("&client_secret={}", url_encode(secret)));
+    }
+    body
+}
+
+/// Exchange a refresh token for a new access token by POSTing to the token endpoint.
+///
+/// Some providers rotate refresh tokens — if a new one is returned, it will be in
+/// `TokenResponse::refresh_token`.
+pub fn refresh_access_token(
+    token_url: &str,
+    refresh_token: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+) -> Result<TokenResponse, SfaeError> {
+    let body = build_refresh_body(refresh_token, client_id, client_secret);
+
+    let req = ureq::http::Request::builder()
+        .method("POST")
+        .uri(token_url)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Accept", "application/json")
+        .body(body)
+        .map_err(|e| SfaeError::HttpError(format!("failed to build refresh request: {e}")))?;
+
+    let agent = ureq::Agent::new_with_defaults();
+    let mut response = agent
+        .run(req)
+        .map_err(|e| SfaeError::HttpError(format!("token refresh request failed: {e}")))?;
+
+    let body_str = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| SfaeError::HttpError(format!("failed to read refresh response: {e}")))?;
+
+    let json: serde_json::Value = serde_json::from_str(&body_str)
+        .map_err(|e| SfaeError::HttpError(format!("failed to parse refresh response: {e}")))?;
+
+    let access_token = json["access_token"]
+        .as_str()
+        .ok_or_else(|| SfaeError::HttpError("refresh response missing access_token".into()))?
+        .to_string();
+
+    let new_refresh_token = json["refresh_token"].as_str().map(|s| s.to_string());
+
+    Ok(TokenResponse {
+        access_token,
+        refresh_token: new_refresh_token,
+    })
+}
+
 /// Generate a random state string for CSRF protection.
 pub fn generate_state() -> String {
     let mut rng = rand::rng();
@@ -501,6 +564,34 @@ mod tests {
         // Without username — should not match
         let found = lookup_in_map(&map, "example.com", None);
         assert!(found.is_none());
+    }
+
+    // --- refresh_access_token tests ---
+
+    #[test]
+    fn refresh_body_without_client_secret() {
+        let body = build_refresh_body("my-refresh-tok", "my-client", None);
+        assert_eq!(
+            body,
+            "grant_type=refresh_token&refresh_token=my-refresh-tok&client_id=my-client"
+        );
+    }
+
+    #[test]
+    fn refresh_body_with_client_secret() {
+        let body = build_refresh_body("my-refresh-tok", "my-client", Some("s3cret"));
+        assert_eq!(
+            body,
+            "grant_type=refresh_token&refresh_token=my-refresh-tok&client_id=my-client&client_secret=s3cret"
+        );
+    }
+
+    #[test]
+    fn refresh_body_encodes_special_chars() {
+        let body = build_refresh_body("tok&en=val", "id with spaces", Some("sec/ret"));
+        assert!(body.contains("refresh_token=tok%26en%3Dval"));
+        assert!(body.contains("client_id=id%20with%20spaces"));
+        assert!(body.contains("client_secret=sec%2Fret"));
     }
 
     #[test]
