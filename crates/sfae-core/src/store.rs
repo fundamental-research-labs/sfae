@@ -115,14 +115,20 @@ impl SecretStore for KeyringStore {
 
     fn delete(&mut self, key: &str) -> Result<(), SfaeError> {
         let entry = Self::entry(key)?;
-        entry.delete_credential().map_err(|e| match e {
+        let keychain_result = entry.delete_credential();
+
+        // Always clean the index, even if the keychain entry is already gone.
+        let mut keys = read_index()?;
+        let had_key = keys.contains(&key.to_string());
+        keys.retain(|k| k != key);
+        if had_key {
+            write_index(&keys)?;
+        }
+
+        keychain_result.map_err(|e| match e {
             keyring::Error::NoEntry => SfaeError::CredentialNotFound(key.to_string()),
             other => SfaeError::StoreError(other.to_string()),
         })?;
-
-        let mut keys = read_index()?;
-        keys.retain(|k| k != key);
-        write_index(&keys)?;
         Ok(())
     }
 
