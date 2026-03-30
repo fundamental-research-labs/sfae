@@ -139,7 +139,7 @@ Validate at the command level: if `--oauth` is set, `--client-id`, `--auth-url`,
 
 `--terminal` and `--oauth` are mutually exclusive.
 
-#### 2b. PKCE implementation in sfae-core
+#### 2b. PKCE implementation in sfae-core ✅
 
 Add an `oauth` module to sfae-core (`sfae-core/src/oauth.rs`, add `pub mod oauth` to `lib.rs`).
 
