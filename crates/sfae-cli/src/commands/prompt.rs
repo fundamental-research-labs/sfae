@@ -1,5 +1,5 @@
 use sfae_core::browser::LocalServer;
-use sfae_core::credential::{credential_key, CredentialType};
+use sfae_core::credential::{CredentialType, credential_key};
 use sfae_core::oauth;
 use sfae_core::store::{KeyringStore, SecretStore};
 use sfae_core::ui::UserPrompt;
@@ -32,8 +32,14 @@ pub fn run_oauth(
     let redirect_uri = format!("http://127.0.0.1:{}/callback", server.port());
 
     // Build the authorization URL and open the browser.
-    let authorization_url =
-        oauth::build_authorization_url(auth_url, client_id, &redirect_uri, &challenge, scope, &state);
+    let authorization_url = oauth::build_authorization_url(
+        auth_url,
+        client_id,
+        &redirect_uri,
+        &challenge,
+        scope,
+        &state,
+    );
     server.open_browser(&authorization_url)?;
 
     eprintln!("Waiting for OAuth authorization in browser...");
@@ -47,8 +53,14 @@ pub fn run_oauth(
     }
 
     // Exchange the authorization code for tokens.
-    let token_response =
-        oauth::exchange_code(token_url, &code, &redirect_uri, client_id, client_secret, &verifier)?;
+    let token_response = oauth::exchange_code(
+        token_url,
+        &code,
+        &redirect_uri,
+        client_id,
+        client_secret,
+        &verifier,
+    )?;
 
     // Store the access token.
     let mut store = KeyringStore::new();
