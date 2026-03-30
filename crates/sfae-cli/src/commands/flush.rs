@@ -1,3 +1,4 @@
+use sfae_core::oauth;
 use sfae_core::store::{KeyringStore, SecretStore};
 
 pub fn run(dry_run: bool) -> anyhow::Result<()> {
@@ -30,6 +31,12 @@ pub fn run(dry_run: bool) -> anyhow::Result<()> {
             }
         }
     }
+
+    // Delete OAuth metadata file since all credentials are gone.
+    if let Err(e) = oauth::delete_all_oauth_metadata() {
+        eprintln!("Warning: failed to remove OAuth metadata: {e}");
+    }
+
     eprintln!("Flushed {} credential(s).", keys.len());
     Ok(())
 }
