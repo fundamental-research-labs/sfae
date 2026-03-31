@@ -36,7 +36,7 @@ Revoke the existing access token before starting a new OAuth flow, so the provid
 
 ## Phase 1: Add revocation_url to data structures and Google preset
 
-- [ ] 1a: Add `revocation_url: Option<String>` to `OAuthMetadata` with `#[serde(default)]` for backward compatibility, and add `revocation_url: Option<&'static str>` to `ProviderPreset`. Set Google preset's revocation URL to `https://oauth2.googleapis.com/revoke`. Update existing tests for both structs.
+- [x] 1a: Add `revocation_url: Option<String>` to `OAuthMetadata` with `#[serde(default)]` for backward compatibility, and add `revocation_url: Option<&'static str>` to `ProviderPreset`. Set Google preset's revocation URL to `https://oauth2.googleapis.com/revoke`. Update existing tests for both structs.
 
 ## Phase 2: Add revoke_token function in oauth module
 

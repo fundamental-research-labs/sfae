@@ -22,6 +22,8 @@ pub struct TokenResponse {
 pub struct OAuthMetadata {
     pub token_url: String,
     pub client_id: String,
+    #[serde(default)]
+    pub revocation_url: Option<String>,
 }
 
 /// Returns the path to `~/.config/sfae/oauth.json`.
@@ -167,7 +169,7 @@ pub fn build_authorization_url(
 ) -> String {
     let sep = if auth_url.contains('?') { "&" } else { "?" };
     let mut url = format!(
-        "{auth_url}{sep}client_id={}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256&state={}",
+        "{auth_url}{sep}client_id={}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256&state={}&prompt=consent&access_type=offline",
         url_encode(client_id),
         url_encode(redirect_uri),
         url_encode(code_challenge),
@@ -305,6 +307,7 @@ pub struct ProviderPreset {
     pub client_secret: Option<&'static str>,
     pub auth_url: &'static str,
     pub token_url: &'static str,
+    pub revocation_url: Option<&'static str>,
 }
 
 /// Look up a built-in OAuth provider preset by domain.
@@ -332,6 +335,7 @@ fn match_preset(domain: &str) -> Option<ProviderPreset> {
             client_secret: option_env!("SFAE_GOOGLE_CLIENT_SECRET"),
             auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
             token_url: "https://oauth2.googleapis.com/token",
+            revocation_url: Some("https://oauth2.googleapis.com/revoke"),
         }),
         _ => None,
     }
@@ -446,6 +450,7 @@ mod tests {
         OAuthMetadata {
             token_url: "https://oauth2.example.com/token".into(),
             client_id: "my-client-id".into(),
+            revocation_url: None,
         }
     }
 
@@ -469,6 +474,28 @@ mod tests {
         let m2: OAuthMetadata = serde_json::from_str(&json).unwrap();
         assert_eq!(m.token_url, m2.token_url);
         assert_eq!(m.client_id, m2.client_id);
+        assert_eq!(m.revocation_url, m2.revocation_url);
+    }
+
+    #[test]
+    fn metadata_deserializes_without_revocation_url() {
+        let json = r#"{"token_url":"https://example.com/token","client_id":"old-client"}"#;
+        let m: OAuthMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(m.token_url, "https://example.com/token");
+        assert_eq!(m.client_id, "old-client");
+        assert_eq!(m.revocation_url, None);
+    }
+
+    #[test]
+    fn metadata_serialization_with_revocation_url() {
+        let m = OAuthMetadata {
+            token_url: "https://example.com/token".into(),
+            client_id: "my-client".into(),
+            revocation_url: Some("https://example.com/revoke".into()),
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let m2: OAuthMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(m2.revocation_url, Some("https://example.com/revoke".into()));
     }
 
     #[test]
@@ -505,6 +532,7 @@ mod tests {
             OAuthMetadata {
                 token_url: "https://oauth2.googleapis.com/token".into(),
                 client_id: "goog-123".into(),
+                revocation_url: None,
             },
         );
         write_all_to(&path, &map).unwrap();
@@ -532,6 +560,7 @@ mod tests {
             OAuthMetadata {
                 token_url: "https://new.example.com/token".into(),
                 client_id: "new-id".into(),
+                revocation_url: None,
             },
         );
         write_all_to(&path, &map).unwrap();
@@ -633,6 +662,10 @@ mod tests {
         assert!(p.client_id.ends_with(".apps.googleusercontent.com"));
         assert_eq!(p.auth_url, "https://accounts.google.com/o/oauth2/v2/auth");
         assert_eq!(p.token_url, "https://oauth2.googleapis.com/token");
+        assert_eq!(
+            p.revocation_url,
+            Some("https://oauth2.googleapis.com/revoke")
+        );
     }
 
     #[test]

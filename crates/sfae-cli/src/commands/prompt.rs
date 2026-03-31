@@ -90,6 +90,7 @@ pub fn run_oauth(
         oauth::OAuthMetadata {
             token_url: token_url.to_string(),
             client_id: client_id.to_string(),
+            revocation_url: None,
         },
     )?;
     eprintln!("OAuth metadata saved for {domain}");
