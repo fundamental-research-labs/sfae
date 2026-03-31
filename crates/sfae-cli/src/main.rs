@@ -81,6 +81,9 @@ enum Command {
         /// OAuth2 client secret (for confidential clients)
         #[arg(long, requires = "oauth")]
         client_secret: Option<String>,
+        /// OAuth2 token revocation URL (optional, enables pre-flow revocation)
+        #[arg(long, requires = "oauth")]
+        revocation_url: Option<String>,
     },
     /// Delete credentials for a domain and user
     Delete {
@@ -142,6 +145,7 @@ fn main() -> anyhow::Result<()> {
             token_url,
             scope,
             client_secret,
+            revocation_url,
         } => {
             if oauth {
                 let preset = sfae_core::oauth::get_provider_preset(&domain);
@@ -154,6 +158,8 @@ fn main() -> anyhow::Result<()> {
                     .or_else(|| preset.as_ref().map(|p| p.token_url.to_string()));
                 let client_secret = client_secret
                     .or_else(|| preset.as_ref().and_then(|p| p.client_secret.map(|s| s.to_string())));
+                let revocation_url = revocation_url
+                    .or_else(|| preset.as_ref().and_then(|p| p.revocation_url.map(|s| s.to_string())));
 
                 let Some(client_id) = client_id else {
                     anyhow::bail!("--client-id is required with --oauth (no built-in preset for this domain)");
@@ -173,6 +179,7 @@ fn main() -> anyhow::Result<()> {
                     &token_url,
                     scope.as_deref(),
                     client_secret.as_deref(),
+                    revocation_url.as_deref(),
                 )?;
             } else {
                 commands::prompt::run(

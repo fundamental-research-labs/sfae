@@ -16,6 +16,7 @@ pub fn run_oauth(
     token_url: &str,
     scope: Option<&str>,
     client_secret: Option<&str>,
+    revocation_url: Option<&str>,
 ) -> anyhow::Result<()> {
     // Validate credential type (the user asked for a specific type, e.g., ACCESS_TOKEN).
     let _cred_type: CredentialType = cred_type_str
