@@ -328,7 +328,7 @@ pub fn get_provider_preset(domain: &str) -> Option<ProviderPreset> {
 fn match_preset(domain: &str) -> Option<ProviderPreset> {
     match domain {
         "googleapis.com" => Some(ProviderPreset {
-            client_id: "955757506177-32g0m04laejqqfg4foeautbqh0kpn04v.apps.googleusercontent.com",
+            client_id: "648921945993-gfl5j7ksi200dt5t6k3qebid4b7alc4k.apps.googleusercontent.com",
             client_secret: option_env!("SFAE_GOOGLE_CLIENT_SECRET"),
             auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
             token_url: "https://oauth2.googleapis.com/token",
