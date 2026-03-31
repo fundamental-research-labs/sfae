@@ -55,7 +55,7 @@ The Google preset hardcodes the client ID in source and reads the client secret 
 
 Add unit tests: known domain matches, subdomain walk-up matches, unknown domain returns None.
 
-- [ ] 1a: Add `ProviderPreset` struct, `get_provider_preset` with Google preset, and unit tests
+- [x] 1a: Add `ProviderPreset` struct, `get_provider_preset` with Google preset, and unit tests
 
 ---
 

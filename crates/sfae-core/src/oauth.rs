@@ -299,6 +299,44 @@ pub fn generate_state() -> String {
     URL_SAFE_NO_PAD.encode(&bytes)
 }
 
+/// Built-in OAuth configuration for a known provider.
+pub struct ProviderPreset {
+    pub client_id: &'static str,
+    pub client_secret: Option<&'static str>,
+    pub auth_url: &'static str,
+    pub token_url: &'static str,
+}
+
+/// Look up a built-in OAuth provider preset by domain.
+///
+/// Uses parent-domain walk-up so `gmail.googleapis.com` matches the
+/// `googleapis.com` preset.
+pub fn get_provider_preset(domain: &str) -> Option<ProviderPreset> {
+    let parts: Vec<&str> = domain.split('.').collect();
+    for start in 0..parts.len() {
+        let candidate: String = parts[start..].join(".");
+        if candidate.matches('.').count() < 1 {
+            break;
+        }
+        if let Some(preset) = match_preset(&candidate) {
+            return Some(preset);
+        }
+    }
+    None
+}
+
+fn match_preset(domain: &str) -> Option<ProviderPreset> {
+    match domain {
+        "googleapis.com" => Some(ProviderPreset {
+            client_id: "955757506177-32g0m04laejqqfg4foeautbqh0kpn04v.apps.googleusercontent.com",
+            client_secret: option_env!("SFAE_GOOGLE_CLIENT_SECRET"),
+            auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
+            token_url: "https://oauth2.googleapis.com/token",
+        }),
+        _ => None,
+    }
+}
+
 /// Minimal percent-encoding for URL query parameter values.
 fn url_encode(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
@@ -583,6 +621,42 @@ mod tests {
         assert!(body.contains("refresh_token=tok%26en%3Dval"));
         assert!(body.contains("client_id=id%20with%20spaces"));
         assert!(body.contains("client_secret=sec%2Fret"));
+    }
+
+    // --- ProviderPreset tests ---
+
+    #[test]
+    fn preset_known_domain() {
+        let preset = get_provider_preset("googleapis.com");
+        assert!(preset.is_some());
+        let p = preset.unwrap();
+        assert!(p.client_id.ends_with(".apps.googleusercontent.com"));
+        assert_eq!(p.auth_url, "https://accounts.google.com/o/oauth2/v2/auth");
+        assert_eq!(p.token_url, "https://oauth2.googleapis.com/token");
+    }
+
+    #[test]
+    fn preset_subdomain_walkup() {
+        let preset = get_provider_preset("gmail.googleapis.com");
+        assert!(preset.is_some());
+        let p = preset.unwrap();
+        assert!(p.client_id.ends_with(".apps.googleusercontent.com"));
+    }
+
+    #[test]
+    fn preset_deep_subdomain_walkup() {
+        let preset = get_provider_preset("www.mail.googleapis.com");
+        assert!(preset.is_some());
+    }
+
+    #[test]
+    fn preset_unknown_domain() {
+        assert!(get_provider_preset("github.com").is_none());
+    }
+
+    #[test]
+    fn preset_tld_not_matched() {
+        assert!(get_provider_preset("com").is_none());
     }
 
     #[test]
