@@ -1,9 +1,11 @@
+#[cfg(feature = "cli")]
 pub mod browser;
 pub mod credential;
 pub mod error;
 pub mod oauth;
 pub mod proxy;
 pub mod store;
+#[cfg(feature = "cli")]
 pub mod ui;
 
 pub use credential::CredentialType;
