@@ -144,14 +144,25 @@ fn main() -> anyhow::Result<()> {
             client_secret,
         } => {
             if oauth {
+                let preset = sfae_core::oauth::get_provider_preset(&domain);
+
+                let client_id = client_id
+                    .or_else(|| preset.as_ref().map(|p| p.client_id.to_string()));
+                let auth_url = auth_url
+                    .or_else(|| preset.as_ref().map(|p| p.auth_url.to_string()));
+                let token_url = token_url
+                    .or_else(|| preset.as_ref().map(|p| p.token_url.to_string()));
+                let client_secret = client_secret
+                    .or_else(|| preset.as_ref().and_then(|p| p.client_secret.map(|s| s.to_string())));
+
                 let Some(client_id) = client_id else {
-                    anyhow::bail!("--client-id is required with --oauth");
+                    anyhow::bail!("--client-id is required with --oauth (no built-in preset for this domain)");
                 };
                 let Some(auth_url) = auth_url else {
-                    anyhow::bail!("--auth-url is required with --oauth");
+                    anyhow::bail!("--auth-url is required with --oauth (no built-in preset for this domain)");
                 };
                 let Some(token_url) = token_url else {
-                    anyhow::bail!("--token-url is required with --oauth");
+                    anyhow::bail!("--token-url is required with --oauth (no built-in preset for this domain)");
                 };
                 commands::prompt::run_oauth(
                     &domain,

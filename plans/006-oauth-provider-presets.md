@@ -75,7 +75,7 @@ In the `Command::Prompt` dispatch block, when `--oauth` is set:
 
 This means `--client-id`, `--auth-url`, and `--token-url` are no longer unconditionally required with `--oauth` — they're only required when no preset matches. The clap `requires = "oauth"` annotations stay (they mean "only valid with --oauth", which is still true). The change is that the `let Some(...) = ... else { bail!(...) }` validation checks move to after preset merging.
 
-- [ ] 2a: Merge preset defaults into OAuth flags in prompt dispatch, update validation to happen after merge
+- [x] 2a: Merge preset defaults into OAuth flags in prompt dispatch, update validation to happen after merge
 
 ---
 
