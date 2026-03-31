@@ -45,4 +45,4 @@ Revoke the existing access token before starting a new OAuth flow, so the provid
 ## Phase 3: Wire revocation into run_oauth and CLI
 
 - [x] 3a: Add `--revocation-url` flag to the Prompt CLI command (optional, `requires = "oauth"`). In main.rs dispatch, merge it with the preset value (same pattern as other OAuth flags). Pass it through to `run_oauth`.
-- [ ] 3b: In `run_oauth`, before starting the OAuth flow: check if an access token exists for the domain, and if a revocation URL is available (from parameter or stored metadata), call `revoke_token`. Log on failure but don't abort. Save `revocation_url` in `OAuthMetadata` when storing metadata.
+- [x] 3b: In `run_oauth`, before starting the OAuth flow: check if an access token exists for the domain, and if a revocation URL is available (from parameter or stored metadata), call `revoke_token`. Log on failure but don't abort. Save `revocation_url` in `OAuthMetadata` when storing metadata.

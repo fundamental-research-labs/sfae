@@ -23,6 +23,25 @@ pub fn run_oauth(
         .parse()
         .map_err(|e: String| anyhow::anyhow!(e))?;
 
+    // Determine effective revocation URL: explicit parameter wins, then stored metadata.
+    let stored_metadata = oauth::get_oauth_metadata(domain, username)?;
+    let effective_revocation_url = revocation_url
+        .map(|s| s.to_string())
+        .or_else(|| stored_metadata.as_ref().and_then(|m| m.revocation_url.clone()));
+
+    // Revoke existing access token before starting a new OAuth flow, so the provider
+    // is forced to issue a fresh token with the newly-requested scopes.
+    if let Some(ref rev_url) = effective_revocation_url {
+        let access_key = credential_key(domain, username, CredentialType::AccessToken);
+        let store = KeyringStore::new();
+        if let Ok(existing_token) = store.get(&access_key) {
+            match oauth::revoke_token(rev_url, &existing_token) {
+                Ok(()) => eprintln!("Revoked existing access token for {domain}"),
+                Err(e) => eprintln!("Warning: failed to revoke existing token: {e}"),
+            }
+        }
+    }
+
     // Generate PKCE verifier and challenge.
     let verifier = oauth::generate_code_verifier();
     let challenge = oauth::compute_code_challenge(&verifier);
@@ -91,7 +110,7 @@ pub fn run_oauth(
         oauth::OAuthMetadata {
             token_url: token_url.to_string(),
             client_id: client_id.to_string(),
-            revocation_url: None,
+            revocation_url: effective_revocation_url,
         },
     )?;
     eprintln!("OAuth metadata saved for {domain}");
