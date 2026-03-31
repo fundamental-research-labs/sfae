@@ -16,7 +16,7 @@ Add a provider registry in sfae-core that maps domains to OAuth configuration (c
 
 **Registry location**: A static lookup function in `sfae-core/src/oauth.rs` that returns `Option<ProviderPreset>` for a domain. No config files, no trait abstractions — just a match on the domain with parent-domain walk-up. Adding a new provider means adding a match arm.
 
-**Client ID/secret source**: Google's OAuth client ID and secret for a "Desktop app" type client, created in Google Cloud Console. Desktop app client secrets are not truly confidential per Google's documentation — embedding them in CLI source code is standard practice (gcloud, rclone, etc.).
+**Client ID/secret source**: Google's OAuth client ID and secret for a "Desktop app" type client, created in Google Cloud Console. Desktop app client secrets are not truly confidential per Google's documentation — embedding them in CLI source code is standard practice (gcloud, rclone, etc.). The client ID is hardcoded in source (it's visible in browser URLs during OAuth — not secret). The client secret is injected via compile-time environment variable `SFAE_GOOGLE_CLIENT_SECRET` using `option_env!()`, so it never appears in source code. If the env var is unset, the preset has no client secret and the user must pass `--client-secret` explicitly.
 
 **Domain matching**: Use the same parent-domain walk-up pattern used elsewhere (e.g., `gmail.googleapis.com` → `googleapis.com` → match). This means storing one preset for `googleapis.com` covers all Google API subdomains.
 
@@ -51,7 +51,7 @@ Add a lookup function `get_provider_preset(domain: &str) -> Option<ProviderPrese
 - Uses parent-domain walk-up so `gmail.googleapis.com`, `www.googleapis.com`, etc. all match
 - Returns `None` for unknown domains
 
-The Google preset values will use the client ID and secret from the project's Google Cloud Console OAuth app. These need to be obtained from the human before implementation.
+The Google preset hardcodes the client ID in source and reads the client secret from `option_env!("SFAE_GOOGLE_CLIENT_SECRET")` at compile time. The human provides the client ID directly (not secret) and sets the env var for the client secret when building.
 
 Add unit tests: known domain matches, subdomain walk-up matches, unknown domain returns None.
 
@@ -108,11 +108,21 @@ Keep the full-flags form documented for unknown providers. List which providers 
 - `get_provider_preset("github.com")` returns `None` (unknown provider)
 
 **Manual integration test:**
+- Build with `SFAE_GOOGLE_CLIENT_SECRET="..." cargo build --bin sfae --release`
 - `sfae prompt googleapis.com ACCESS_TOKEN --oauth --scope "openid email profile"` should work without `--client-id` etc.
 - `sfae request GET "https://www.googleapis.com/oauth2/v2/userinfo" -H "Authorization: Bearer -ACCESS_TOKEN-"` should return user info
 - Explicit flags should override preset values
 
+## Build Instructions
+
+To compile with the Google client secret baked in:
+
+```
+SFAE_GOOGLE_CLIENT_SECRET="..." cargo build --bin sfae --release
+```
+
+Without the env var, the build succeeds but Google OAuth requires `--client-secret` at runtime.
+
 ## Open Questions
 
-- **Which Google Cloud project?** The human needs to provide the client ID and client secret from their Google Cloud Console project. These will be compiled into the binary.
 - **Additional providers?** GitHub, Microsoft, etc. can be added later as new match arms. Not in scope for this plan.
