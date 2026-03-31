@@ -294,6 +294,33 @@ pub fn refresh_access_token(
     })
 }
 
+/// Build the form body for a token revocation request.
+fn build_revocation_body(token: &str) -> String {
+    format!("token={}", url_encode(token))
+}
+
+/// Revoke an OAuth2 token by POSTing to the provider's revocation endpoint.
+///
+/// Follows RFC 7009. The provider may return success even if the token is already
+/// invalid — that is fine. Callers should treat errors as non-fatal.
+pub fn revoke_token(revocation_url: &str, token: &str) -> Result<(), SfaeError> {
+    let body = build_revocation_body(token);
+
+    let req = ureq::http::Request::builder()
+        .method("POST")
+        .uri(revocation_url)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .map_err(|e| SfaeError::HttpError(format!("failed to build revocation request: {e}")))?;
+
+    let agent = ureq::Agent::new_with_defaults();
+    agent
+        .run(req)
+        .map_err(|e| SfaeError::HttpError(format!("token revocation request failed: {e}")))?;
+
+    Ok(())
+}
+
 /// Generate a random state string for CSRF protection.
 pub fn generate_state() -> String {
     let mut rng = rand::rng();
@@ -650,6 +677,20 @@ mod tests {
         assert!(body.contains("refresh_token=tok%26en%3Dval"));
         assert!(body.contains("client_id=id%20with%20spaces"));
         assert!(body.contains("client_secret=sec%2Fret"));
+    }
+
+    // --- revoke_token tests ---
+
+    #[test]
+    fn revocation_body_basic() {
+        let body = build_revocation_body("ya29.some-access-token");
+        assert_eq!(body, "token=ya29.some-access-token");
+    }
+
+    #[test]
+    fn revocation_body_encodes_special_chars() {
+        let body = build_revocation_body("tok&en=val ue");
+        assert_eq!(body, "token=tok%26en%3Dval%20ue");
     }
 
     // --- ProviderPreset tests ---

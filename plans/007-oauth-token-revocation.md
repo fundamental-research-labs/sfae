@@ -40,7 +40,7 @@ Revoke the existing access token before starting a new OAuth flow, so the provid
 
 ## Phase 2: Add revoke_token function in oauth module
 
-- [ ] 2a: Add `pub fn revoke_token(revocation_url, token) -> Result<(), SfaeError>` that POSTs `token=<url_encoded_token>` to the revocation endpoint. Follow the `refresh_access_token` HTTP pattern. Add unit tests for request body construction.
+- [x] 2a: Add `pub fn revoke_token(revocation_url, token) -> Result<(), SfaeError>` that POSTs `token=<url_encoded_token>` to the revocation endpoint. Follow the `refresh_access_token` HTTP pattern. Add unit tests for request body construction.
 
 ## Phase 3: Wire revocation into run_oauth and CLI
 
