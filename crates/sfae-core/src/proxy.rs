@@ -154,7 +154,10 @@ pub fn execute(
         builder = builder.header(key.as_str(), value.as_str());
     }
 
-    let agent = ureq::Agent::new_with_defaults();
+    let config = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build();
+    let agent = ureq::Agent::new_with_config(config);
     let mut response = if let Some(body) = body {
         let req = builder
             .body(body)
