@@ -22,6 +22,12 @@ pub enum SfaeError {
     Other(String),
 }
 
+impl serde::Serialize for SfaeError {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 impl From<io::Error> for SfaeError {
     fn from(err: io::Error) -> Self {
         SfaeError::ConfigError(err.to_string())

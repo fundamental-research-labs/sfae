@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::error::SfaeError;
 
 /// OAuth2 token response from the token endpoint.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: Option<String>,

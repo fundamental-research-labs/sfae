@@ -97,11 +97,11 @@ No change needed — default features include `cli`.
 
 Tauri commands pass data between Rust and TypeScript as JSON. Types crossing the IPC boundary need `Serialize` + `Deserialize`.
 
-- [ ] 2a: Add `Serialize`/`Deserialize` derives to `CredentialType` with `rename_all = "SCREAMING_SNAKE_CASE"`
-- [ ] 2b: Add `Serialize`/`Deserialize` derives to `ProxyRequest` and `ProxyResponse`
-- [ ] 2c: Add `Serialize`/`Deserialize` derive to `TokenResponse`
-- [ ] 2d: Add `Serialize` impl for `SfaeError`
-- [ ] 2e: Verify: `cargo test -p sfae-core`, `cargo test -p sfae-core --no-default-features`
+- [x] 2a: Add `Serialize`/`Deserialize` derives to `CredentialType` with `rename_all = "SCREAMING_SNAKE_CASE"`
+- [x] 2b: Add `Serialize`/`Deserialize` derives to `ProxyRequest` and `ProxyResponse`
+- [x] 2c: Add `Serialize`/`Deserialize` derive to `TokenResponse`
+- [x] 2d: Add `Serialize` impl for `SfaeError`
+- [x] 2e: Verify: `cargo test -p sfae-core`, `cargo test -p sfae-core --no-default-features`
 
 #### 2.1 Add serde derives to `CredentialType`
 

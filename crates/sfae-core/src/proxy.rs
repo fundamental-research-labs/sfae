@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::credential::{CredentialType, credential_key};
 use crate::error::SfaeError;
 use crate::store::SecretStore;
 
 /// An HTTP request with possible `-TYPE-` placeholders.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyRequest {
     pub method: String,
     pub url: String,
@@ -14,7 +16,7 @@ pub struct ProxyRequest {
 }
 
 /// The HTTP response returned after proxying.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProxyResponse {
     pub status: u16,
     pub headers: HashMap<String, String>,
