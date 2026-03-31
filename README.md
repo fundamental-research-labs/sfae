@@ -1,10 +1,12 @@
-# SFAE — Speak Friend, and Enter
+# 🏔️ SFAE — Speak Friend, and Enter
 
 *Pronounced "safe".*
 
-SFAE lets LLM agents make authenticated API calls without ever seeing your secrets. Credentials are stored in your OS keychain and injected at request time via placeholders — the agent only handles opaque tokens like `-ACCESS_TOKEN-`, never real values.
+> *"The Doors of Durin, Lord of Moria. Speak, friend, and enter."*
+>
+> At the Doors of Durin, only the one who knew the right word could enter. SFAE works the same way — it holds the words of power (your credentials) in the OS keychain and speaks them at the gate so your agent never has to.
 
-The name is a [Lord of the Rings reference](https://en.wikipedia.org/wiki/Moria_(Middle-earth)#Gate) — the passphrase Gandalf speaks to open the Doors of Durin in *The Fellowship of the Ring*.
+SFAE is a CLI that lets LLM agents make authenticated API calls without ever seeing your credentials. The agent writes placeholders like `-ACCESS_TOKEN-` in its requests, and SFAE swaps them for real secrets at request time.
 
 ## Features
 
@@ -19,6 +21,14 @@ The name is a [Lord of the Rings reference](https://en.wikipedia.org/wiki/Moria_
 ```
 cargo build --bin sfae --release
 ```
+
+Optionally, embed the Google OAuth client secret at build time:
+
+```
+SFAE_GOOGLE_CLIENT_SECRET="your-secret-here" cargo build --bin sfae --release
+```
+
+Without the env var, the build succeeds but Google OAuth will require `--client-secret` at runtime.
 
 The binary is produced at `./target/release/sfae`.
 
@@ -61,3 +71,7 @@ crates/
 ## License
 
 MIT
+
+---
+
+*🧙 You shall not pass... credentials in plaintext.*
