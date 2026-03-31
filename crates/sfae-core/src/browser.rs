@@ -226,7 +226,7 @@ fn extract_query_param(path: &str, key: &str) -> Option<String> {
 fn build_form_page(label: &str, url: Option<&str>) -> String {
     let url_section = match url {
         Some(u) => format!(
-            r#"<p>Obtain your credential here: <a href="{}" target="_blank">{}</a></p>"#,
+            r#"<p class="url-hint">Obtain your credential here:<br><a href="{}" target="_blank">{}</a></p>"#,
             html_escape(u),
             html_escape(u),
         ),
@@ -238,22 +238,110 @@ fn build_form_page(label: &str, url: Option<&str>) -> String {
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>sfae — enter credential</title>
 <style>
-  body {{ font-family: system-ui, sans-serif; max-width: 480px; margin: 80px auto; padding: 0 16px; }}
-  h1 {{ font-size: 1.3em; }}
-  input[type="password"] {{ width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; font-size: 1em; }}
-  button {{ padding: 8px 24px; font-size: 1em; cursor: pointer; }}
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f5f5f5;
+    color: #1a1a1a;
+    padding: 16px;
+  }}
+  .card {{
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 40px;
+    width: 100%;
+    max-width: 440px;
+  }}
+  .logo {{
+    font-size: 0.85em;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #888;
+    margin-bottom: 24px;
+  }}
+  h1 {{
+    font-size: 1.25em;
+    font-weight: 600;
+    line-height: 1.4;
+    margin-bottom: 16px;
+  }}
+  .url-hint {{
+    font-size: 0.9em;
+    color: #555;
+    margin-bottom: 20px;
+    line-height: 1.5;
+  }}
+  .url-hint a {{
+    color: #1a73e8;
+    text-decoration: none;
+    word-break: break-all;
+  }}
+  .url-hint a:hover {{
+    text-decoration: underline;
+  }}
+  label {{
+    display: block;
+    font-size: 0.85em;
+    font-weight: 500;
+    color: #555;
+    margin-bottom: 6px;
+  }}
+  input[type="password"] {{
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d0d0d0;
+    border-radius: 6px;
+    font-size: 1em;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+  }}
+  input[type="password"]:focus {{
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+  }}
+  button {{
+    margin-top: 16px;
+    width: 100%;
+    padding: 10px;
+    font-size: 1em;
+    font-weight: 500;
+    font-family: inherit;
+    background: #1a1a1a;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }}
+  button:hover {{
+    background: #333;
+  }}
+  button:active {{
+    background: #000;
+  }}
 </style>
 </head>
 <body>
-<h1>{}</h1>
-{}
-<form method="POST" action="/">
-  <input type="password" name="secret" autofocus placeholder="Paste your secret here">
-  <br><br>
-  <button type="submit">Submit</button>
-</form>
+<div class="card">
+  <div class="logo">sfae</div>
+  <h1>{}</h1>
+  {}
+  <form method="POST" action="/">
+    <label for="secret">Credential</label>
+    <input type="password" id="secret" name="secret" autofocus placeholder="Paste your secret here">
+    <button type="submit">Submit</button>
+  </form>
+</div>
 </body>
 </html>"#,
         html_escape(label),
@@ -267,14 +355,65 @@ fn build_done_page() -> String {
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>sfae — done</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 480px; margin: 80px auto; padding: 0 16px; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f5f5f5;
+    color: #1a1a1a;
+    padding: 16px;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 40px;
+    width: 100%;
+    max-width: 440px;
+    text-align: center;
+  }
+  .check {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #e8f5e9;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+  .check svg {
+    width: 24px;
+    height: 24px;
+    stroke: #2e7d32;
+    fill: none;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  h1 {
+    font-size: 1.25em;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  p {
+    font-size: 0.95em;
+    color: #555;
+  }
 </style>
 </head>
 <body>
-<h1>Done</h1>
-<p>Your credential has been saved. You can close this tab.</p>
+<div class="card">
+  <div class="check"><svg viewBox="0 0 24 24"><polyline points="4 12 10 18 20 6"/></svg></div>
+  <h1>Credential saved</h1>
+  <p>You can close this tab.</p>
+</div>
 </body>
 </html>"#
         .to_string()
