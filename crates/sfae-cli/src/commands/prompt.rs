@@ -25,9 +25,11 @@ pub fn run_oauth(
 
     // Determine effective revocation URL: explicit parameter wins, then stored metadata.
     let stored_metadata = oauth::get_oauth_metadata(domain, username)?;
-    let effective_revocation_url = revocation_url
-        .map(|s| s.to_string())
-        .or_else(|| stored_metadata.as_ref().and_then(|m| m.revocation_url.clone()));
+    let effective_revocation_url = revocation_url.map(|s| s.to_string()).or_else(|| {
+        stored_metadata
+            .as_ref()
+            .and_then(|m| m.revocation_url.clone())
+    });
 
     // Revoke existing access token before starting a new OAuth flow, so the provider
     // is forced to issue a fresh token with the newly-requested scopes.
