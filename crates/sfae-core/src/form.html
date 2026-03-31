@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sfae — enter credential</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f5f5f5;
+    color: #1a1a1a;
+    padding: 16px;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 40px;
+    width: 100%;
+    max-width: 440px;
+  }
+  .logo {
+    font-size: 0.85em;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #888;
+    margin-bottom: 24px;
+  }
+  h1 {
+    font-size: 1.25em;
+    font-weight: 600;
+    line-height: 1.4;
+    margin-bottom: 16px;
+  }
+  .url-hint {
+    font-size: 0.9em;
+    color: #555;
+    margin-bottom: 20px;
+    line-height: 1.5;
+  }
+  .url-hint a {
+    color: #1a73e8;
+    text-decoration: none;
+    word-break: break-all;
+  }
+  .url-hint a:hover {
+    text-decoration: underline;
+  }
+  label {
+    display: block;
+    font-size: 0.85em;
+    font-weight: 500;
+    color: #555;
+    margin-bottom: 6px;
+  }
+  input[type="password"] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d0d0d0;
+    border-radius: 6px;
+    font-size: 1em;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input[type="password"]:focus {
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+  }
+  button {
+    margin-top: 16px;
+    width: 100%;
+    padding: 10px;
+    font-size: 1em;
+    font-weight: 500;
+    font-family: inherit;
+    background: #1a1a1a;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover {
+    background: #333;
+  }
+  button:active {
+    background: #000;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">sfae</div>
+  <h1>{{LABEL}}</h1>
+  {{URL_SECTION}}
+  <form method="POST" action="/">
+    <label for="secret">Credential</label>
+    <input type="password" id="secret" name="secret" autofocus placeholder="Paste your secret here">
+    <button type="submit">Submit</button>
+  </form>
+</div>
+</body>
+</html>
