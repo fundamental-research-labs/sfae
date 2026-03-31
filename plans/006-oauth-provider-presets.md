@@ -96,7 +96,7 @@ sfae prompt <domain> ACCESS_TOKEN --oauth --scope "<SCOPES>"
 
 Keep the full-flags form documented for unknown providers. List which providers have built-in presets.
 
-- [ ] 3a: Update CLAUDE.md to document simplified OAuth usage for known providers
+- [x] 3a: Update CLAUDE.md to document simplified OAuth usage for known providers
 
 ---
 

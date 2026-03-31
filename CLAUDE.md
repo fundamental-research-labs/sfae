@@ -40,6 +40,49 @@ Use `-TYPE-` in URLs, headers, or request bodies. Available types:
 
 SFAE resolves these from the OS keychain at request time. You never see the actual values.
 
+### OAuth flow (for Google, GitHub Apps, etc.)
+
+For APIs that use OAuth 2.0 instead of static tokens:
+
+1. **Set up the OAuth credential:**
+
+   **Known providers (Google):** sfae has built-in OAuth presets — just specify the domain and scope:
+   ```
+   sfae prompt <domain> ACCESS_TOKEN --oauth --scope "<SPACE_SEPARATED_SCOPES>"
+   ```
+
+   Example (Google Gmail):
+   ```
+   sfae prompt googleapis.com ACCESS_TOKEN --oauth \
+     --scope "https://www.googleapis.com/auth/gmail.readonly"
+   ```
+
+   Built-in presets: `googleapis.com` (covers all Google API subdomains).
+
+   **Other providers:** pass all OAuth parameters explicitly:
+   ```
+   sfae prompt <domain> ACCESS_TOKEN --oauth \
+     --client-id "<CLIENT_ID>" \
+     --auth-url "<AUTHORIZATION_URL>" \
+     --token-url "<TOKEN_URL>" \
+     --scope "<SPACE_SEPARATED_SCOPES>" \
+     --client-secret "<CLIENT_SECRET>"
+   ```
+
+   Explicit flags override built-in preset values. `--client-secret` is optional for public OAuth clients.
+
+   This opens the provider's consent page in the human's browser. After they authorize, sfae stores the access token, refresh token, and OAuth metadata automatically.
+
+2. **Make requests normally** — use `-ACCESS_TOKEN-` as with any credential:
+   ```
+   sfae request GET "https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1" \
+     -H "Authorization: Bearer -ACCESS_TOKEN-"
+   ```
+
+3. **Token refresh is automatic.** If a request gets a 401, sfae uses the stored refresh token to obtain a new access token and retries — no action needed from you.
+
+**Domain matching:** Store credentials under the API's base domain (e.g., `googleapis.com`), not the auth provider domain (e.g., `google.com`). Subdomain fallback works automatically — a credential stored for `googleapis.com` resolves for `www.googleapis.com`, `gmail.googleapis.com`, etc.
+
 ### Important
 
 - Never ask the human to paste credentials directly into the conversation
