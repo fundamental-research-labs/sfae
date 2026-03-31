@@ -73,7 +73,7 @@ In the `Command::Prompt` dispatch block, when `--oauth` is set:
 2. For each of `client_id`, `auth_url`, `token_url`, `client_secret`: use the explicit flag if provided, otherwise use the preset value if available.
 3. If after merging there's still no `client_id`, `auth_url`, or `token_url`, bail with the existing error message.
 
-This means `--client-id`, `--auth-url`, and `--token-url` are no longer unconditionally required with `--oauth` — they're only required when no preset matches. Update the clap argument definitions accordingly: remove the `requires = "oauth"` constraint isn't the issue (that means "only valid with --oauth", which is still true), but the manual `let Some(...) = ... else { bail!(...) }` checks need to happen after preset merging.
+This means `--client-id`, `--auth-url`, and `--token-url` are no longer unconditionally required with `--oauth` — they're only required when no preset matches. The clap `requires = "oauth"` annotations stay (they mean "only valid with --oauth", which is still true). The change is that the `let Some(...) = ... else { bail!(...) }` validation checks move to after preset merging.
 
 - [ ] 2a: Merge preset defaults into OAuth flags in prompt dispatch, update validation to happen after merge
 
