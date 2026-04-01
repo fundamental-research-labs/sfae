@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
+#[cfg(feature = "cli")]
 use std::process::Command;
 use std::time::Duration;
 
@@ -39,6 +40,7 @@ impl LocalServer {
     }
 
     /// Open the given URL in the default browser (macOS-only for now).
+    #[cfg(feature = "cli")]
     pub fn open_browser(&self, url: &str) -> Result<(), SfaeError> {
         let status = Command::new("open")
             .arg(url)
@@ -152,6 +154,7 @@ impl HttpRequest {
 /// Starts a temporary HTTP server on `127.0.0.1` (random port), opens the browser,
 /// waits for the user to submit the form, then returns the secret.
 /// Times out after 120 seconds with `SfaeError::Cancelled`.
+#[cfg(feature = "cli")]
 pub fn browser_prompt(label: &str, url: Option<&str>) -> Result<String, SfaeError> {
     let server = LocalServer::new()?;
     let local_url = format!("http://127.0.0.1:{}/", server.port());
@@ -223,6 +226,7 @@ fn extract_query_param(path: &str, key: &str) -> Option<String> {
 }
 
 /// Build the HTML form page.
+#[cfg(feature = "cli")]
 fn build_form_page(label: &str, url: Option<&str>) -> String {
     let url_section = match url {
         Some(u) => format!(
@@ -244,6 +248,7 @@ fn build_done_page() -> String {
 }
 
 /// Minimal HTML escaping for user-provided strings embedded in HTML.
+#[cfg(feature = "cli")]
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -252,6 +257,7 @@ fn html_escape(s: &str) -> String {
 }
 
 /// Extract the `secret` field from a `application/x-www-form-urlencoded` body.
+#[cfg(feature = "cli")]
 fn parse_form_secret(body: &str) -> Option<String> {
     for pair in body.split('&') {
         if let Some(value) = pair.strip_prefix("secret=") {

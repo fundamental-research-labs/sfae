@@ -1,4 +1,3 @@
-#[cfg(feature = "cli")]
 pub mod browser;
 pub mod credential;
 pub mod error;
