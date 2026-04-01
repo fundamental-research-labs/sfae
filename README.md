@@ -1,3 +1,5 @@
+[![CI](https://github.com/fundamental-research-labs/sfae/actions/workflows/ci.yml/badge.svg)](https://github.com/fundamental-research-labs/sfae/actions/workflows/ci.yml)
+
 # 🏔️ SFAE — Speak Friend, and Enter
 
 *Pronounced "safe".*
