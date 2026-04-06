@@ -1,8 +1,10 @@
-use sfae_core::store::{KeyringStore, list_credential_types};
+use sfae_core::store::list_credential_types;
+
+use crate::store_factory::create_store;
 
 pub fn run(domain: &str, username: Option<&str>) -> anyhow::Result<()> {
-    let store = KeyringStore::new();
-    let types = list_credential_types(&store, domain, username)?;
+    let store = create_store();
+    let types = list_credential_types(&*store, domain, username)?;
     if types.is_empty() {
         let target = match username {
             Some(user) => format!("{user}@{domain}"),

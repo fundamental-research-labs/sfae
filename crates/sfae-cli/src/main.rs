@@ -1,12 +1,13 @@
 mod commands;
 mod prompt;
+mod store_factory;
 
 use clap::{Parser, Subcommand};
 
 /// sfae - safe credential manager and proxy allowing caller to access any online service
 /// without ever seeing credentials
 #[derive(Parser)]
-#[command(name = "sfae", version)]
+#[command(name = "sfae", version, disable_help_subcommand = true)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -48,6 +49,7 @@ enum Command {
         verbose: bool,
     },
     /// Prompt user for credentials
+    #[cfg(feature = "keyring")]
     Prompt {
         /// Domain (e.g. github.com)
         domain: String,
@@ -133,6 +135,7 @@ fn main() -> anyhow::Result<()> {
                 },
             )?;
         }
+        #[cfg(feature = "keyring")]
         Command::Prompt {
             domain,
             cred_type,
