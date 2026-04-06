@@ -11,6 +11,7 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode}
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
 use tracing::info;
 
 // ---------------------------------------------------------------------------
@@ -464,7 +465,7 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "sfae_server=info".parse().unwrap()),
+                .unwrap_or_else(|_| "sfae_server=info,tower_http=debug".parse().unwrap()),
         )
         .init();
 
@@ -500,6 +501,7 @@ async fn main() {
         )
         .route("/auth/token", post(mint_token))
         .route("/health", get(health))
+        .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state);
 
