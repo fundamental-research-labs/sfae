@@ -122,6 +122,7 @@ struct OkResponse {
 struct CredentialEntry {
     domain: String,
     cred_type: String,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Serialize)]
@@ -227,8 +228,8 @@ async fn list_all_credentials(
     };
     let user_id = auth.user_id();
 
-    let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT domain, cred_type FROM sfae_credentials \
+    let rows = sqlx::query_as::<_, (String, String, chrono::DateTime<chrono::Utc>)>(
+        "SELECT domain, cred_type, updated_at FROM sfae_credentials \
          WHERE user_id = $1 ORDER BY domain, cred_type",
     )
     .bind(user_id)
@@ -239,7 +240,11 @@ async fn list_all_credentials(
         Ok(rows) => {
             let credentials: Vec<CredentialEntry> = rows
                 .into_iter()
-                .map(|(domain, cred_type)| CredentialEntry { domain, cred_type })
+                .map(|(domain, cred_type, updated_at)| CredentialEntry {
+                    domain,
+                    cred_type,
+                    updated_at,
+                })
                 .collect();
             axum::Json(ListResponse { credentials }).into_response()
         }
@@ -262,8 +267,9 @@ async fn list_credentials(
     };
     let user_id = auth.user_id();
 
-    let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT domain, cred_type FROM sfae_credentials WHERE user_id = $1 AND domain = $2",
+    let rows = sqlx::query_as::<_, (String, String, chrono::DateTime<chrono::Utc>)>(
+        "SELECT domain, cred_type, updated_at FROM sfae_credentials \
+         WHERE user_id = $1 AND domain = $2",
     )
     .bind(user_id)
     .bind(&domain)
@@ -274,7 +280,11 @@ async fn list_credentials(
         Ok(rows) => {
             let credentials: Vec<CredentialEntry> = rows
                 .into_iter()
-                .map(|(domain, cred_type)| CredentialEntry { domain, cred_type })
+                .map(|(domain, cred_type, updated_at)| CredentialEntry {
+                    domain,
+                    cred_type,
+                    updated_at,
+                })
                 .collect();
             axum::Json(ListResponse { credentials }).into_response()
         }
