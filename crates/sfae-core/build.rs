@@ -5,8 +5,7 @@ fn main() {
     // Walk up from CARGO_MANIFEST_DIR looking for .env.secrets.
     // We can't stop at the first .git because sfae-core lives in a git
     // submodule — its .git is a file, not the top-level repo root.
-    let manifest_dir =
-        std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let manifest_dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let mut dir = manifest_dir.as_path();
     let secrets_path = loop {
         let candidate = dir.join(".env.secrets");

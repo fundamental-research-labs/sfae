@@ -69,73 +69,81 @@ fn write_index(keys: &[String]) -> Result<(), SfaeError> {
     Ok(())
 }
 
-const KEYRING_SERVICE: &str = "sfae";
+#[cfg(feature = "keyring")]
+mod keyring_store {
+    use super::*;
 
-/// Secret store backed by the OS keychain (macOS Passwords).
-///
-/// Credential keys are tracked in a local index file
-/// (`~/.config/sfae/credentials.json`). Only keys live in the index; actual
-/// secret values stay exclusively in the keychain.
-#[derive(Default)]
-pub struct KeyringStore;
+    const KEYRING_SERVICE: &str = "sfae";
 
-impl KeyringStore {
-    pub fn new() -> Self {
-        Self
-    }
+    /// Secret store backed by the OS keychain (macOS Passwords).
+    ///
+    /// Credential keys are tracked in a local index file
+    /// (`~/.config/sfae/credentials.json`). Only keys live in the index; actual
+    /// secret values stay exclusively in the keychain.
+    #[derive(Default)]
+    pub struct KeyringStore;
 
-    fn entry(key: &str) -> Result<keyring::Entry, SfaeError> {
-        keyring::Entry::new(KEYRING_SERVICE, key).map_err(|e| SfaeError::StoreError(e.to_string()))
-    }
-}
-
-impl SecretStore for KeyringStore {
-    fn set(&mut self, key: &str, value: &str) -> Result<(), SfaeError> {
-        let entry = Self::entry(key)?;
-        entry
-            .set_password(value)
-            .map_err(|e| SfaeError::StoreError(e.to_string()))?;
-
-        let mut keys = read_index()?;
-        if !keys.contains(&key.to_string()) {
-            keys.push(key.to_string());
-            keys.sort();
-            write_index(&keys)?;
-        }
-        Ok(())
-    }
-
-    fn get(&self, key: &str) -> Result<String, SfaeError> {
-        let entry = Self::entry(key)?;
-        entry.get_password().map_err(|e| match e {
-            keyring::Error::NoEntry => SfaeError::CredentialNotFound(key.to_string()),
-            other => SfaeError::StoreError(other.to_string()),
-        })
-    }
-
-    fn delete(&mut self, key: &str) -> Result<(), SfaeError> {
-        let entry = Self::entry(key)?;
-        let keychain_result = entry.delete_credential();
-
-        // Always clean the index, even if the keychain entry is already gone.
-        let mut keys = read_index()?;
-        let had_key = keys.contains(&key.to_string());
-        keys.retain(|k| k != key);
-        if had_key {
-            write_index(&keys)?;
+    impl KeyringStore {
+        pub fn new() -> Self {
+            Self
         }
 
-        keychain_result.map_err(|e| match e {
-            keyring::Error::NoEntry => SfaeError::CredentialNotFound(key.to_string()),
-            other => SfaeError::StoreError(other.to_string()),
-        })?;
-        Ok(())
+        fn entry(key: &str) -> Result<keyring::Entry, SfaeError> {
+            keyring::Entry::new(KEYRING_SERVICE, key)
+                .map_err(|e| SfaeError::StoreError(e.to_string()))
+        }
     }
 
-    fn list_keys(&self) -> Result<Vec<String>, SfaeError> {
-        read_index()
+    impl SecretStore for KeyringStore {
+        fn set(&mut self, key: &str, value: &str) -> Result<(), SfaeError> {
+            let entry = Self::entry(key)?;
+            entry
+                .set_password(value)
+                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+
+            let mut keys = read_index()?;
+            if !keys.contains(&key.to_string()) {
+                keys.push(key.to_string());
+                keys.sort();
+                write_index(&keys)?;
+            }
+            Ok(())
+        }
+
+        fn get(&self, key: &str) -> Result<String, SfaeError> {
+            let entry = Self::entry(key)?;
+            entry.get_password().map_err(|e| match e {
+                keyring::Error::NoEntry => SfaeError::CredentialNotFound(key.to_string()),
+                other => SfaeError::StoreError(other.to_string()),
+            })
+        }
+
+        fn delete(&mut self, key: &str) -> Result<(), SfaeError> {
+            let entry = Self::entry(key)?;
+            let keychain_result = entry.delete_credential();
+
+            // Always clean the index, even if the keychain entry is already gone.
+            let mut keys = read_index()?;
+            let had_key = keys.contains(&key.to_string());
+            keys.retain(|k| k != key);
+            if had_key {
+                write_index(&keys)?;
+            }
+
+            keychain_result.map_err(|e| match e {
+                keyring::Error::NoEntry => SfaeError::CredentialNotFound(key.to_string()),
+                other => SfaeError::StoreError(other.to_string()),
+            })?;
+            Ok(())
+        }
+
+        fn list_keys(&self) -> Result<Vec<String>, SfaeError> {
+            read_index()
+        }
     }
 }
+#[cfg(feature = "keyring")]
+pub use keyring_store::KeyringStore;
 
 /// In-memory secret store for testing.
 #[derive(Default)]
