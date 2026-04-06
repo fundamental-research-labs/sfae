@@ -1,8 +1,9 @@
 use sfae_core::oauth;
-use sfae_core::store::{KeyringStore, SecretStore};
+
+use crate::store_factory::create_store;
 
 pub fn run(dry_run: bool) -> anyhow::Result<()> {
-    let mut store = KeyringStore::new();
+    let mut store = create_store();
     let keys = store.list_keys()?;
 
     if keys.is_empty() {

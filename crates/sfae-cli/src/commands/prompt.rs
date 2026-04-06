@@ -1,10 +1,10 @@
 use sfae_core::browser::LocalServer;
 use sfae_core::credential::{CredentialType, credential_key};
 use sfae_core::oauth;
-use sfae_core::store::{KeyringStore, SecretStore};
 use sfae_core::ui::UserPrompt;
 
 use crate::prompt::TerminalPrompt;
+use crate::store_factory::{create_store, is_api_mode};
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_oauth(
@@ -18,6 +18,12 @@ pub fn run_oauth(
     client_secret: Option<&str>,
     revocation_url: Option<&str>,
 ) -> anyhow::Result<()> {
+    if is_api_mode() {
+        anyhow::bail!(
+            "OAuth prompting is not available in API store mode. \
+             Use the request_oauth client tool to initiate an OAuth flow."
+        );
+    }
     // Validate credential type (the user asked for a specific type, e.g., ACCESS_TOKEN).
     let _cred_type: CredentialType = cred_type_str
         .parse()
@@ -35,7 +41,7 @@ pub fn run_oauth(
     // is forced to issue a fresh token with the newly-requested scopes.
     if let Some(ref rev_url) = effective_revocation_url {
         let access_key = credential_key(domain, username, CredentialType::AccessToken);
-        let store = KeyringStore::new();
+        let store = create_store();
         if let Ok(existing_token) = store.get(&access_key) {
             match oauth::revoke_token(rev_url, &existing_token) {
                 Ok(()) => eprintln!("Revoked existing access token for {domain}"),
@@ -85,7 +91,7 @@ pub fn run_oauth(
     )?;
 
     // Store the access token.
-    let mut store = KeyringStore::new();
+    let mut store = create_store();
 
     let access_key = credential_key(domain, username, CredentialType::AccessToken);
     store.set(&access_key, &token_response.access_token)?;
@@ -127,6 +133,13 @@ pub fn run(
     username: Option<&str>,
     terminal: bool,
 ) -> anyhow::Result<()> {
+    if is_api_mode() {
+        anyhow::bail!(
+            "Credential prompting is not available in API store mode. \
+             Use the request_credential client tool to request credentials from the user."
+        );
+    }
+
     let cred_type: CredentialType = cred_type_str
         .parse()
         .map_err(|e: String| anyhow::anyhow!(e))?;
@@ -152,7 +165,7 @@ pub fn run(
         sfae_core::browser::browser_prompt(&label, url)?
     };
 
-    let mut store = KeyringStore::new();
+    let mut store = create_store();
     store.set(&key, &value)?;
     eprintln!("Credential stored: {key}");
     Ok(())

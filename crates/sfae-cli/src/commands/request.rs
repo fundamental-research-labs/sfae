@@ -4,7 +4,9 @@ use sfae_core::credential::{CredentialType, credential_key};
 use sfae_core::error::SfaeError;
 use sfae_core::oauth;
 use sfae_core::proxy::{self, ProxyRequest, ProxyResponse, extract_host, find_placeholders};
-use sfae_core::store::{KeyringStore, SecretStore};
+use sfae_core::store::SecretStore;
+
+use crate::store_factory::create_store;
 
 pub struct RequestOpts<'a> {
     pub dry_run: bool,
@@ -54,17 +56,17 @@ pub fn run(
         eprintln!();
     }
 
-    let mut store = KeyringStore::new();
+    let mut store = create_store();
 
     if opts.dry_run {
-        let masked_url = proxy::resolve_and_mask(&request.url, &store, &domain, opts.user)?;
+        let masked_url = proxy::resolve_and_mask(&request.url, &*store, &domain, opts.user)?;
         println!("{} {}", request.method, masked_url);
         for (k, v) in &request.headers {
-            let masked_v = proxy::resolve_and_mask(v, &store, &domain, opts.user)?;
+            let masked_v = proxy::resolve_and_mask(v, &*store, &domain, opts.user)?;
             println!("{k}: {masked_v}");
         }
         if let Some(b) = &request.body {
-            let masked_body = proxy::resolve_and_mask(b, &store, &domain, opts.user)?;
+            let masked_body = proxy::resolve_and_mask(b, &*store, &domain, opts.user)?;
             println!();
             println!("{masked_body}");
         }
@@ -72,7 +74,7 @@ pub fn run(
     }
 
     let start = Instant::now();
-    let response = proxy::execute(&request, &store, &domain, opts.user)?;
+    let response = proxy::execute(&request, &*store, &domain, opts.user)?;
     let elapsed = start.elapsed();
 
     if opts.verbose {
@@ -82,7 +84,7 @@ pub fn run(
     let response = if response.status == 401 && request_has_access_token_placeholder(&request) {
         try_refresh_and_retry(
             &request,
-            &mut store,
+            &mut *store,
             &domain,
             opts.user,
             opts.verbose,
