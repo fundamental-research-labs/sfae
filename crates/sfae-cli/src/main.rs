@@ -88,6 +88,7 @@ enum Command {
         revocation_url: Option<String>,
     },
     /// Delete credentials for a domain and user
+    #[cfg(feature = "keyring")]
     Delete {
         /// Domain (e.g. github.com)
         domain: String,
@@ -99,6 +100,7 @@ enum Command {
         user: Option<String>,
     },
     /// Delete all stored credentials
+    #[cfg(feature = "keyring")]
     Flush {
         /// Show what would be deleted without actually deleting
         #[arg(long)]
@@ -205,6 +207,7 @@ fn main() -> anyhow::Result<()> {
                 )?;
             }
         }
+        #[cfg(feature = "keyring")]
         Command::Delete {
             domain,
             cred_type,
@@ -212,6 +215,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             commands::delete::run(&domain, cred_type.as_deref(), user.as_deref())?;
         }
+        #[cfg(feature = "keyring")]
         Command::Flush { dry_run } => {
             commands::flush::run(dry_run)?;
         }
