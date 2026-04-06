@@ -11,6 +11,7 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode}
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
 use tracing::info;
 
 // ---------------------------------------------------------------------------
@@ -500,6 +501,7 @@ async fn main() {
         )
         .route("/auth/token", post(mint_token))
         .route("/health", get(health))
+        .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state);
 
