@@ -147,6 +147,32 @@ struct HealthResponse {
     status: String,
 }
 
+#[derive(Deserialize)]
+struct CreatePendingOAuthReq {
+    state: String,
+    user_id: String,
+    verifier: String,
+    domain: String,
+    token_url: String,
+    client_id: String,
+    client_secret: Option<String>,
+    redirect_uri: String,
+    scope: Option<String>,
+}
+
+#[derive(Serialize)]
+struct PendingOAuthRow {
+    state: String,
+    user_id: String,
+    verifier: String,
+    domain: String,
+    token_url: String,
+    client_id: String,
+    client_secret: Option<String>,
+    redirect_uri: String,
+    scope: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Credential key parsing
 // ---------------------------------------------------------------------------
@@ -451,6 +477,102 @@ async fn mint_token(
     }
 }
 
+/// POST /oauth/pending — store a pending OAuth row (internal auth only)
+async fn create_pending_oauth(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::Json(body): axum::Json<CreatePendingOAuthReq>,
+) -> impl IntoResponse {
+    let auth = match extract_auth(&headers, &state) {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    if !auth.is_internal() {
+        return (
+            StatusCode::FORBIDDEN,
+            "Write requires internal auth".to_string(),
+        )
+            .into_response();
+    }
+
+    let result = sqlx::query(
+        "INSERT INTO sfae_pending_oauth \
+         (state, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    )
+    .bind(&body.state)
+    .bind(&body.user_id)
+    .bind(&body.verifier)
+    .bind(&body.domain)
+    .bind(&body.token_url)
+    .bind(&body.client_id)
+    .bind(&body.client_secret)
+    .bind(&body.redirect_uri)
+    .bind(&body.scope)
+    .execute(&state.pool)
+    .await;
+
+    match result {
+        Ok(_) => axum::Json(OkResponse { ok: true }).into_response(),
+        Err(e) => {
+            tracing::error!("DB error creating pending OAuth: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response()
+        }
+    }
+}
+
+/// GET /oauth/pending/:state — consume a pending OAuth row (internal auth only)
+///
+/// Atomically deletes and returns the row. Returns 404 if not found or expired.
+async fn consume_pending_oauth(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(oauth_state): Path<String>,
+) -> impl IntoResponse {
+    let auth = match extract_auth(&headers, &state) {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    if !auth.is_internal() {
+        return (
+            StatusCode::FORBIDDEN,
+            "Requires internal auth".to_string(),
+        )
+            .into_response();
+    }
+
+    let result = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, String, Option<String>)>(
+        "DELETE FROM sfae_pending_oauth \
+         WHERE state = $1 AND expires_at > now() \
+         RETURNING state, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope",
+    )
+    .bind(&oauth_state)
+    .fetch_optional(&state.pool)
+    .await;
+
+    match result {
+        Ok(Some((state_val, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope))) => {
+            axum::Json(PendingOAuthRow {
+                state: state_val,
+                user_id,
+                verifier,
+                domain,
+                token_url,
+                client_id,
+                client_secret,
+                redirect_uri,
+                scope,
+            })
+            .into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, "Pending OAuth session not found or expired".to_string()).into_response(),
+        Err(e) => {
+            tracing::error!("DB error consuming pending OAuth: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response()
+        }
+    }
+}
+
 /// GET /health — health check (no auth)
 async fn health() -> impl IntoResponse {
     axum::Json(HealthResponse {
@@ -501,6 +623,8 @@ async fn main() {
             "/credentials/{domain}/{cred_type}",
             delete(delete_credential),
         )
+        .route("/oauth/pending", post(create_pending_oauth))
+        .route("/oauth/pending/{state}", get(consume_pending_oauth))
         .route("/auth/token", post(mint_token))
         .route("/health", get(health))
         .layer(TraceLayer::new_for_http())
