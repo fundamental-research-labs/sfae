@@ -6,7 +6,7 @@ use sfae_core::oauth;
 use sfae_core::proxy::{self, ProxyRequest, ProxyResponse, extract_host, find_placeholders};
 use sfae_core::store::SecretStore;
 
-use crate::store_factory::create_store;
+use crate::store_factory::{create_store, is_api_mode};
 
 pub struct RequestOpts<'a> {
     pub dry_run: bool,
@@ -127,6 +127,12 @@ fn try_refresh_and_retry(
     verbose: bool,
     original_response: ProxyResponse,
 ) -> anyhow::Result<ProxyResponse> {
+    if is_api_mode() {
+        return try_refresh_and_retry_api(request, store, domain, username, verbose, original_response);
+    }
+
+    // Local mode: read OAuth metadata from disk and refresh locally.
+
     // Check: OAuth metadata exists for this domain.
     let metadata = match oauth::get_oauth_metadata(domain, username)? {
         Some(m) => m,
@@ -190,6 +196,81 @@ fn try_refresh_and_retry(
     }
 
     // Retry the request once.
+    let start = Instant::now();
+    let retry_response = proxy::execute(request, store, domain, username)?;
+    let elapsed = start.elapsed();
+
+    if verbose {
+        eprintln!("< {} ({:.1?})", retry_response.status, elapsed);
+    }
+
+    Ok(retry_response)
+}
+
+/// API mode refresh: call sfae-server's /credentials/refresh endpoint, then retry.
+///
+/// The server reads OAuth metadata and refresh tokens from the DB, calls the provider,
+/// and updates the tokens — all server-side. The CLI just needs to retry after.
+fn try_refresh_and_retry_api(
+    request: &ProxyRequest,
+    store: &dyn SecretStore,
+    domain: &str,
+    username: Option<&str>,
+    verbose: bool,
+    original_response: ProxyResponse,
+) -> anyhow::Result<ProxyResponse> {
+    let base_url = std::env::var("SFAE_STORE_URL").unwrap();
+    let token = std::env::var("SFAE_STORE_TOKEN").unwrap_or_default();
+
+    if verbose {
+        eprintln!("< 401 (API mode, requesting server-side refresh...)");
+    }
+
+    let url = format!("{}/credentials/refresh", base_url.trim_end_matches('/'));
+    let body = serde_json::json!({ "domain": domain }).to_string();
+
+    let agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build();
+    let agent = ureq::Agent::new_with_config(agent);
+
+    let req = ureq::http::Request::builder()
+        .method("POST")
+        .uri(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .body(body)
+        .map_err(|e| anyhow::anyhow!("Failed to build refresh request: {e}"))?;
+
+    let response = match agent.run(req) {
+        Ok(resp) => resp,
+        Err(ureq::Error::StatusCode(code)) => {
+            if verbose {
+                eprintln!("< Refresh request returned {code}, returning original 401");
+            }
+            return Ok(original_response);
+        }
+        Err(e) => {
+            if verbose {
+                eprintln!("< Refresh request failed: {e}");
+            }
+            return Ok(original_response);
+        }
+    };
+
+    let status = response.status().as_u16();
+    if status != 200 {
+        if verbose {
+            eprintln!("< Server-side refresh returned {status}, returning original 401");
+        }
+        return Ok(original_response);
+    }
+
+    if verbose {
+        eprintln!("< Token refreshed successfully via server, retrying request...");
+    }
+
+    // Retry — credentials re-resolved from API store with fresh tokens.
     let start = Instant::now();
     let retry_response = proxy::execute(request, store, domain, username)?;
     let elapsed = start.elapsed();
