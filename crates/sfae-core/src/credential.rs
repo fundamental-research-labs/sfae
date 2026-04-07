@@ -11,6 +11,7 @@ pub enum CredentialType {
     RefreshToken,
     ApiKey,
     Password,
+    Username,
     ClientSecret,
 }
 
@@ -22,6 +23,7 @@ impl CredentialType {
             CredentialType::RefreshToken,
             CredentialType::ApiKey,
             CredentialType::Password,
+            CredentialType::Username,
             CredentialType::ClientSecret,
         ]
     }
@@ -33,6 +35,7 @@ impl CredentialType {
             CredentialType::RefreshToken => "REFRESH_TOKEN",
             CredentialType::ApiKey => "API_KEY",
             CredentialType::Password => "PASSWORD",
+            CredentialType::Username => "USERNAME",
             CredentialType::ClientSecret => "CLIENT_SECRET",
         }
     }
@@ -53,6 +56,7 @@ impl FromStr for CredentialType {
             "REFRESH_TOKEN" => Ok(CredentialType::RefreshToken),
             "API_KEY" => Ok(CredentialType::ApiKey),
             "PASSWORD" => Ok(CredentialType::Password),
+            "USERNAME" => Ok(CredentialType::Username),
             "CLIENT_SECRET" => Ok(CredentialType::ClientSecret),
             _ => Err(format!("unknown credential type: {s}")),
         }
