@@ -102,6 +102,7 @@ struct StoreCredentialReq {
     domain: String,
     cred_type: String,
     value: String,
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -197,15 +198,16 @@ async fn store_credential(
     let user_id = auth.user_id();
 
     let result = sqlx::query(
-        "INSERT INTO sfae_credentials (user_id, domain, cred_type, value, updated_at) \
-         VALUES ($1, $2, $3, $4, now()) \
+        "INSERT INTO sfae_credentials (user_id, domain, cred_type, value, metadata, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, now()) \
          ON CONFLICT (user_id, domain, cred_type) \
-         DO UPDATE SET value = $4, updated_at = now()",
+         DO UPDATE SET value = $4, metadata = $5, updated_at = now()",
     )
     .bind(user_id)
     .bind(&body.domain)
     .bind(&body.cred_type)
     .bind(&body.value)
+    .bind(&body.metadata)
     .execute(&state.pool)
     .await;
 
