@@ -355,6 +355,9 @@ pub fn get_provider_preset(domain: &str) -> Option<ProviderPreset> {
     None
 }
 
+// Cross-reference: these preset URLs are duplicated in the API server at
+// api/server-v1/src/routes/sfae-oauth.ts (resolveProviderPreset function).
+// If you change a URL here, update the TS side too.
 fn match_preset(domain: &str) -> Option<ProviderPreset> {
     match domain {
         "googleapis.com" => Some(ProviderPreset {
