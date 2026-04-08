@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::credential::{CredentialType, credential_key};
 use crate::error::SfaeError;
 
 /// Abstraction over secret storage backends.
@@ -21,19 +20,40 @@ pub trait SecretStore {
 }
 
 /// List credential types stored for a domain (and optional username).
+///
+/// Returns the raw type strings (e.g. `"ACCESS_TOKEN"`, `"HOST"`, `"USERNAME"`)
+/// extracted from stored keys.  This works for both known `CredentialType`
+/// variants and arbitrary custom types stored by the web credential form.
 pub fn list_credential_types(
     store: &dyn SecretStore,
     domain: &str,
     username: Option<&str>,
-) -> Result<Vec<CredentialType>, SfaeError> {
+) -> Result<Vec<String>, SfaeError> {
     let keys = store.list_keys()?;
-    let mut types = Vec::new();
-    for ct in CredentialType::all() {
-        let key = credential_key(domain, username, *ct);
-        if keys.contains(&key) {
-            types.push(*ct);
+    let prefix = match username {
+        Some(user) => format!("{domain}_{user}_"),
+        None => format!("{domain}_"),
+    };
+
+    let mut types: Vec<String> = Vec::new();
+    for key in &keys {
+        if let Some(type_str) = key.strip_prefix(&prefix) {
+            if type_str.is_empty() {
+                continue;
+            }
+            // When listing without username, skip entries that look like
+            // username-qualified keys.  Credential type strings are uppercase
+            // by convention (ACCESS_TOKEN, HOST, USERNAME, etc.) while
+            // usernames typically contain lowercase characters.
+            if username.is_none() && type_str.chars().any(|c| c.is_ascii_lowercase()) {
+                continue;
+            }
+            types.push(type_str.to_string());
         }
     }
+
+    types.sort();
+    types.dedup();
     Ok(types)
 }
 
@@ -244,13 +264,10 @@ mod tests {
         store.set("gitlab.com_PASSWORD", "pw").unwrap();
 
         let types = list_credential_types(&store, "github.com", None).unwrap();
-        assert_eq!(
-            types,
-            vec![CredentialType::AccessToken, CredentialType::ApiKey]
-        );
+        assert_eq!(types, vec!["ACCESS_TOKEN", "API_KEY"]);
 
         let types = list_credential_types(&store, "gitlab.com", None).unwrap();
-        assert_eq!(types, vec![CredentialType::Password]);
+        assert_eq!(types, vec!["PASSWORD"]);
 
         let types = list_credential_types(&store, "unknown.com", None).unwrap();
         assert!(types.is_empty());
@@ -262,12 +279,23 @@ mod tests {
         store.set("github.com_API_KEY", "key1").unwrap();
         store.set("github.com_aduermael_PASSWORD", "pw").unwrap();
 
-        // Without username: only API_KEY
+        // Without username: only API_KEY (aduermael is a username, not a type)
         let types = list_credential_types(&store, "github.com", None).unwrap();
-        assert_eq!(types, vec![CredentialType::ApiKey]);
+        assert_eq!(types, vec!["API_KEY"]);
 
         // With username: only PASSWORD
         let types = list_credential_types(&store, "github.com", Some("aduermael")).unwrap();
-        assert_eq!(types, vec![CredentialType::Password]);
+        assert_eq!(types, vec!["PASSWORD"]);
+    }
+
+    #[test]
+    fn list_credential_types_custom() {
+        let mut store = InMemoryStore::new();
+        store.set("clickhouse.cloud_HOST", "h").unwrap();
+        store.set("clickhouse.cloud_USERNAME", "u").unwrap();
+        store.set("clickhouse.cloud_PASSWORD", "p").unwrap();
+
+        let types = list_credential_types(&store, "clickhouse.cloud", None).unwrap();
+        assert_eq!(types, vec!["HOST", "PASSWORD", "USERNAME"]);
     }
 }

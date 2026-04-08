@@ -29,6 +29,7 @@ const PLACEHOLDERS: &[(&str, CredentialType)] = &[
     ("-REFRESH_TOKEN-", CredentialType::RefreshToken),
     ("-API_KEY-", CredentialType::ApiKey),
     ("-PASSWORD-", CredentialType::Password),
+    ("-USERNAME-", CredentialType::Username),
 ];
 
 /// Find all credential type placeholders present in a string.
