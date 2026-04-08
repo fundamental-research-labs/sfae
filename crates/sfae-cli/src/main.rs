@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 /// sfae - safe credential manager and proxy allowing caller to access any online service
 /// without ever seeing credentials
 #[derive(Parser)]
-#[command(name = "sfae", version, disable_help_subcommand = true)]
+#[command(version, disable_help_subcommand = true)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
