@@ -13,6 +13,9 @@ path = "src/main.rs"
 default = ["keyring"]
 keyring = ["sfae-core/keyring"]
 
+[dev-dependencies]
+assert_cmd = "2"
+
 [dependencies]
 sfae-core = { path = "../sfae-core" }
 clap = { version = "4", features = ["derive"] }

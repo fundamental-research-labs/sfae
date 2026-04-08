@@ -2,7 +2,7 @@ mod commands;
 mod prompt;
 mod store_factory;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 /// sfae - safe credential manager and proxy allowing caller to access any online service
 /// without ever seeing credentials
@@ -11,6 +11,15 @@ use clap::{Parser, Subcommand};
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+fn bin_name() -> Option<&'static str> {
+    std::env::args().next().and_then(|s| {
+        std::path::Path::new(&s)
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .map(|s| &*Box::leak(s.into_boxed_str()))
+    })
 }
 
 #[derive(Subcommand)]
@@ -109,7 +118,11 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let mut cmd = Cli::command();
+    if let Some(name) = bin_name() {
+        cmd = cmd.name(name);
+    }
+    let cli = Cli::from_arg_matches(&cmd.get_matches())?;
     match cli.command {
         Command::Credentials { domain, user } => {
             commands::credentials::run(&domain, user.as_deref())?;
