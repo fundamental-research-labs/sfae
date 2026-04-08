@@ -543,11 +543,7 @@ async fn consume_pending_oauth(
         Err(e) => return e.into_response(),
     };
     if !auth.is_internal() {
-        return (
-            StatusCode::FORBIDDEN,
-            "Requires internal auth".to_string(),
-        )
-            .into_response();
+        return (StatusCode::FORBIDDEN, "Requires internal auth".to_string()).into_response();
     }
 
     let result = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, String, Option<String>, Option<String>)>(
@@ -560,22 +556,35 @@ async fn consume_pending_oauth(
     .await;
 
     match result {
-        Ok(Some((state_val, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope, redirect_origin))) => {
-            axum::Json(PendingOAuthRow {
-                state: state_val,
-                user_id,
-                verifier,
-                domain,
-                token_url,
-                client_id,
-                client_secret,
-                redirect_uri,
-                scope,
-                redirect_origin,
-            })
-            .into_response()
-        }
-        Ok(None) => (StatusCode::NOT_FOUND, "Pending OAuth session not found or expired".to_string()).into_response(),
+        Ok(Some((
+            state_val,
+            user_id,
+            verifier,
+            domain,
+            token_url,
+            client_id,
+            client_secret,
+            redirect_uri,
+            scope,
+            redirect_origin,
+        ))) => axum::Json(PendingOAuthRow {
+            state: state_val,
+            user_id,
+            verifier,
+            domain,
+            token_url,
+            client_id,
+            client_secret,
+            redirect_uri,
+            scope,
+            redirect_origin,
+        })
+        .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            "Pending OAuth session not found or expired".to_string(),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("DB error consuming pending OAuth: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response()
@@ -670,13 +679,12 @@ async fn refresh_credential(
     };
 
     // 3. Look up client_secret: config env var first, then CLIENT_SECRET credential row
-    let client_secret = if body.domain == "googleapis.com"
-        || body.domain.ends_with(".googleapis.com")
-    {
-        state.google_client_secret.clone()
-    } else {
-        None
-    };
+    let client_secret =
+        if body.domain == "googleapis.com" || body.domain.ends_with(".googleapis.com") {
+            state.google_client_secret.clone()
+        } else {
+            None
+        };
     let client_secret = match client_secret {
         Some(s) => Some(s),
         None => {
@@ -706,11 +714,7 @@ async fn refresh_credential(
         params.push(("client_secret", secret.clone()));
     }
 
-    let provider_resp = http
-        .post(&token_url)
-        .form(&params)
-        .send()
-        .await;
+    let provider_resp = http.post(&token_url).form(&params).send().await;
 
     let provider_resp = match provider_resp {
         Ok(r) => r,

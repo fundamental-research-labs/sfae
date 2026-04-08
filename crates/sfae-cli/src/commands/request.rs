@@ -128,7 +128,14 @@ fn try_refresh_and_retry(
     original_response: ProxyResponse,
 ) -> anyhow::Result<ProxyResponse> {
     if is_api_mode() {
-        return try_refresh_and_retry_api(request, store, domain, username, verbose, original_response);
+        return try_refresh_and_retry_api(
+            request,
+            store,
+            domain,
+            username,
+            verbose,
+            original_response,
+        );
     }
 
     // Local mode: read OAuth metadata from disk and refresh locally.
