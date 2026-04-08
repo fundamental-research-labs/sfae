@@ -15,9 +15,16 @@ pub struct ApiStore {
 
 impl ApiStore {
     /// Create from environment variables. Returns None if SFAE_STORE_URL is not set.
+    ///
+    /// Panics if SFAE_STORE_URL is set but SFAE_STORE_TOKEN is missing.
     pub fn from_env() -> Option<Self> {
         let base_url = std::env::var("SFAE_STORE_URL").ok()?;
-        let token = std::env::var("SFAE_STORE_TOKEN").ok()?;
+        let token = std::env::var("SFAE_STORE_TOKEN").unwrap_or_else(|_| {
+            panic!(
+                "SFAE_STORE_URL is set but SFAE_STORE_TOKEN is missing. \
+                 Both environment variables are required for API store mode."
+            )
+        });
         let config = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .build();

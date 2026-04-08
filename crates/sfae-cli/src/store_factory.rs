@@ -16,7 +16,10 @@ pub fn create_store() -> Box<dyn SecretStore> {
 
     #[cfg(not(feature = "keyring"))]
     {
-        panic!("No credential store available — set SFAE_STORE_URL or build with keyring feature");
+        panic!(
+            "No credential store available — set SFAE_STORE_URL and SFAE_STORE_TOKEN \
+             for API store mode, or build with the keyring feature for OS keychain mode"
+        );
     }
 }
 
