@@ -22,6 +22,7 @@ struct AppState {
     pool: PgPool,
     jwt_secret: String,
     internal_auth_secret: String,
+    google_client_secret: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +103,7 @@ struct StoreCredentialReq {
     domain: String,
     cred_type: String,
     value: String,
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -144,6 +146,39 @@ struct TokenResponse {
 #[derive(Serialize)]
 struct HealthResponse {
     status: String,
+}
+
+#[derive(Deserialize)]
+struct CreatePendingOAuthReq {
+    state: String,
+    user_id: String,
+    verifier: String,
+    domain: String,
+    token_url: String,
+    client_id: String,
+    client_secret: Option<String>,
+    redirect_uri: String,
+    scope: Option<String>,
+    redirect_origin: Option<String>,
+}
+
+#[derive(Serialize)]
+struct PendingOAuthRow {
+    state: String,
+    user_id: String,
+    verifier: String,
+    domain: String,
+    token_url: String,
+    client_id: String,
+    client_secret: Option<String>,
+    redirect_uri: String,
+    scope: Option<String>,
+    redirect_origin: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RefreshReq {
+    domain: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -197,15 +232,16 @@ async fn store_credential(
     let user_id = auth.user_id();
 
     let result = sqlx::query(
-        "INSERT INTO sfae_credentials (user_id, domain, cred_type, value, updated_at) \
-         VALUES ($1, $2, $3, $4, now()) \
+        "INSERT INTO sfae_credentials (user_id, domain, cred_type, value, metadata, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, now()) \
          ON CONFLICT (user_id, domain, cred_type) \
-         DO UPDATE SET value = $4, updated_at = now()",
+         DO UPDATE SET value = $4, metadata = $5, updated_at = now()",
     )
     .bind(user_id)
     .bind(&body.domain)
     .bind(&body.cred_type)
     .bind(&body.value)
+    .bind(&body.metadata)
     .execute(&state.pool)
     .await;
 
@@ -449,6 +485,320 @@ async fn mint_token(
     }
 }
 
+/// POST /oauth/pending — store a pending OAuth row (internal auth only)
+async fn create_pending_oauth(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::Json(body): axum::Json<CreatePendingOAuthReq>,
+) -> impl IntoResponse {
+    let auth = match extract_auth(&headers, &state) {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    if !auth.is_internal() {
+        return (
+            StatusCode::FORBIDDEN,
+            "Write requires internal auth".to_string(),
+        )
+            .into_response();
+    }
+
+    let result = sqlx::query(
+        "INSERT INTO sfae_pending_oauth \
+         (state, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope, redirect_origin) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+    )
+    .bind(&body.state)
+    .bind(&body.user_id)
+    .bind(&body.verifier)
+    .bind(&body.domain)
+    .bind(&body.token_url)
+    .bind(&body.client_id)
+    .bind(&body.client_secret)
+    .bind(&body.redirect_uri)
+    .bind(&body.scope)
+    .bind(&body.redirect_origin)
+    .execute(&state.pool)
+    .await;
+
+    match result {
+        Ok(_) => axum::Json(OkResponse { ok: true }).into_response(),
+        Err(e) => {
+            tracing::error!("DB error creating pending OAuth: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response()
+        }
+    }
+}
+
+/// GET /oauth/pending/:state — consume a pending OAuth row (internal auth only)
+///
+/// Atomically deletes and returns the row. Returns 404 if not found or expired.
+async fn consume_pending_oauth(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(oauth_state): Path<String>,
+) -> impl IntoResponse {
+    let auth = match extract_auth(&headers, &state) {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    if !auth.is_internal() {
+        return (StatusCode::FORBIDDEN, "Requires internal auth".to_string()).into_response();
+    }
+
+    let result = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, String, Option<String>, Option<String>)>(
+        "DELETE FROM sfae_pending_oauth \
+         WHERE state = $1 AND expires_at > now() \
+         RETURNING state, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope, redirect_origin",
+    )
+    .bind(&oauth_state)
+    .fetch_optional(&state.pool)
+    .await;
+
+    match result {
+        Ok(Some((
+            state_val,
+            user_id,
+            verifier,
+            domain,
+            token_url,
+            client_id,
+            client_secret,
+            redirect_uri,
+            scope,
+            redirect_origin,
+        ))) => axum::Json(PendingOAuthRow {
+            state: state_val,
+            user_id,
+            verifier,
+            domain,
+            token_url,
+            client_id,
+            client_secret,
+            redirect_uri,
+            scope,
+            redirect_origin,
+        })
+        .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            "Pending OAuth session not found or expired".to_string(),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("DB error consuming pending OAuth: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response()
+        }
+    }
+}
+
+/// POST /credentials/refresh — server-side OAuth token refresh
+///
+/// Both Bearer JWT and internal auth accepted. Reads OAuth metadata from the
+/// ACCESS_TOKEN row, fetches a new token from the provider, and updates the DB.
+async fn refresh_credential(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::Json(body): axum::Json<RefreshReq>,
+) -> impl IntoResponse {
+    let auth = match extract_auth(&headers, &state) {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    let user_id = auth.user_id().to_string();
+
+    // 1. Read ACCESS_TOKEN row to get metadata (token_url, client_id)
+    let access_row = sqlx::query_as::<_, (Option<serde_json::Value>,)>(
+        "SELECT metadata FROM sfae_credentials \
+         WHERE user_id = $1 AND domain = $2 AND cred_type = 'ACCESS_TOKEN'",
+    )
+    .bind(&user_id)
+    .bind(&body.domain)
+    .fetch_optional(&state.pool)
+    .await;
+
+    let metadata = match access_row {
+        Ok(Some((Some(m),))) => m,
+        Ok(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                "No OAuth metadata found for this domain".to_string(),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("DB error reading access token metadata: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response();
+        }
+    };
+
+    let token_url = match metadata.get("token_url").and_then(|v| v.as_str()) {
+        Some(u) => u.to_string(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                "OAuth metadata missing token_url".to_string(),
+            )
+                .into_response();
+        }
+    };
+    let client_id = match metadata.get("client_id").and_then(|v| v.as_str()) {
+        Some(c) => c.to_string(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                "OAuth metadata missing client_id".to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    // 2. Read REFRESH_TOKEN row
+    let refresh_row = sqlx::query_as::<_, (String,)>(
+        "SELECT value FROM sfae_credentials \
+         WHERE user_id = $1 AND domain = $2 AND cred_type = 'REFRESH_TOKEN'",
+    )
+    .bind(&user_id)
+    .bind(&body.domain)
+    .fetch_optional(&state.pool)
+    .await;
+
+    let refresh_token = match refresh_row {
+        Ok(Some((val,))) => val,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                "No refresh token found for this domain".to_string(),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("DB error reading refresh token: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response();
+        }
+    };
+
+    // 3. Look up client_secret: config env var first, then CLIENT_SECRET credential row
+    let client_secret =
+        if body.domain == "googleapis.com" || body.domain.ends_with(".googleapis.com") {
+            state.google_client_secret.clone()
+        } else {
+            None
+        };
+    let client_secret = match client_secret {
+        Some(s) => Some(s),
+        None => {
+            // Fallback: look for a CLIENT_SECRET credential row
+            sqlx::query_as::<_, (String,)>(
+                "SELECT value FROM sfae_credentials \
+                 WHERE user_id = $1 AND domain = $2 AND cred_type = 'CLIENT_SECRET'",
+            )
+            .bind(&user_id)
+            .bind(&body.domain)
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|(v,)| v)
+        }
+    };
+
+    // 4. Call provider token endpoint
+    let http = reqwest::Client::new();
+    let mut params = vec![
+        ("grant_type", "refresh_token".to_string()),
+        ("refresh_token", refresh_token),
+        ("client_id", client_id),
+    ];
+    if let Some(ref secret) = client_secret {
+        params.push(("client_secret", secret.clone()));
+    }
+
+    let provider_resp = http.post(&token_url).form(&params).send().await;
+
+    let provider_resp = match provider_resp {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Provider token endpoint error: {e}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                "Failed to contact token endpoint".to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    if !provider_resp.status().is_success() {
+        let status = provider_resp.status();
+        let body_text = provider_resp.text().await.unwrap_or_default();
+        tracing::error!("Provider rejected refresh: {status} {body_text}");
+        return (
+            StatusCode::BAD_GATEWAY,
+            format!("Provider rejected refresh: {status}"),
+        )
+            .into_response();
+    }
+
+    let token_data: serde_json::Value = match provider_resp.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("Failed to parse token response: {e}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                "Invalid token response from provider".to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    let new_access_token = match token_data.get("access_token").and_then(|v| v.as_str()) {
+        Some(t) => t.to_string(),
+        None => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                "Provider response missing access_token".to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    // 5. Update ACCESS_TOKEN in DB (preserve existing metadata)
+    let update_access = sqlx::query(
+        "UPDATE sfae_credentials SET value = $1, updated_at = now() \
+         WHERE user_id = $2 AND domain = $3 AND cred_type = 'ACCESS_TOKEN'",
+    )
+    .bind(&new_access_token)
+    .bind(&user_id)
+    .bind(&body.domain)
+    .execute(&state.pool)
+    .await;
+
+    if let Err(e) = update_access {
+        tracing::error!("DB error updating access token: {e}");
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response();
+    }
+
+    // 6. Update REFRESH_TOKEN if provider rotated it
+    if let Some(new_refresh) = token_data.get("refresh_token").and_then(|v| v.as_str()) {
+        let update_refresh = sqlx::query(
+            "UPDATE sfae_credentials SET value = $1, updated_at = now() \
+             WHERE user_id = $2 AND domain = $3 AND cred_type = 'REFRESH_TOKEN'",
+        )
+        .bind(new_refresh)
+        .bind(&user_id)
+        .bind(&body.domain)
+        .execute(&state.pool)
+        .await;
+
+        if let Err(e) = update_refresh {
+            tracing::error!("DB error updating refresh token: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response();
+        }
+    }
+
+    axum::Json(OkResponse { ok: true }).into_response()
+}
+
 /// GET /health — health check (no auth)
 async fn health() -> impl IntoResponse {
     axum::Json(HealthResponse {
@@ -478,6 +828,8 @@ async fn main() {
         .parse()
         .expect("SFAE_SERVER_PORT must be a valid port number");
 
+    let google_client_secret = std::env::var("SFAE_GOOGLE_CLIENT_SECRET").ok();
+
     let pool = PgPool::connect(&database_url)
         .await
         .expect("Failed to connect to database");
@@ -486,6 +838,7 @@ async fn main() {
         pool,
         jwt_secret,
         internal_auth_secret,
+        google_client_secret,
     });
 
     let app = Router::new()
@@ -499,6 +852,9 @@ async fn main() {
             "/credentials/{domain}/{cred_type}",
             delete(delete_credential),
         )
+        .route("/credentials/refresh", post(refresh_credential))
+        .route("/oauth/pending", post(create_pending_oauth))
+        .route("/oauth/pending/{state}", get(consume_pending_oauth))
         .route("/auth/token", post(mint_token))
         .route("/health", get(health))
         .layer(TraceLayer::new_for_http())
