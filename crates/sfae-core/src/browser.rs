@@ -299,7 +299,7 @@ fn set_accept_timeout(listener: &TcpListener, timeout: Duration) -> Result<(), S
 
     let fd = listener.as_raw_fd();
     let tv = libc::timeval {
-        tv_sec: timeout.as_secs() as libc::time_t,
+        tv_sec: timeout.as_secs() as _,
         tv_usec: 0,
     };
     let ret = unsafe {
