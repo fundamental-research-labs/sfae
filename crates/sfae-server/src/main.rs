@@ -159,6 +159,7 @@ struct CreatePendingOAuthReq {
     client_secret: Option<String>,
     redirect_uri: String,
     scope: Option<String>,
+    redirect_origin: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -172,6 +173,7 @@ struct PendingOAuthRow {
     client_secret: Option<String>,
     redirect_uri: String,
     scope: Option<String>,
+    redirect_origin: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -503,8 +505,8 @@ async fn create_pending_oauth(
 
     let result = sqlx::query(
         "INSERT INTO sfae_pending_oauth \
-         (state, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+         (state, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope, redirect_origin) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
     .bind(&body.state)
     .bind(&body.user_id)
@@ -515,6 +517,7 @@ async fn create_pending_oauth(
     .bind(&body.client_secret)
     .bind(&body.redirect_uri)
     .bind(&body.scope)
+    .bind(&body.redirect_origin)
     .execute(&state.pool)
     .await;
 
@@ -547,17 +550,17 @@ async fn consume_pending_oauth(
             .into_response();
     }
 
-    let result = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, String, Option<String>)>(
+    let result = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, String, Option<String>, Option<String>)>(
         "DELETE FROM sfae_pending_oauth \
          WHERE state = $1 AND expires_at > now() \
-         RETURNING state, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope",
+         RETURNING state, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope, redirect_origin",
     )
     .bind(&oauth_state)
     .fetch_optional(&state.pool)
     .await;
 
     match result {
-        Ok(Some((state_val, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope))) => {
+        Ok(Some((state_val, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope, redirect_origin))) => {
             axum::Json(PendingOAuthRow {
                 state: state_val,
                 user_id,
@@ -568,6 +571,7 @@ async fn consume_pending_oauth(
                 client_secret,
                 redirect_uri,
                 scope,
+                redirect_origin,
             })
             .into_response()
         }
