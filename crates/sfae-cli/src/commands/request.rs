@@ -4,7 +4,7 @@ use sfae_core::credential::{CredentialType, credential_key};
 use sfae_core::error::SfaeError;
 use sfae_core::oauth;
 use sfae_core::proxy::{
-    self, ProxyRequest, ProxyResponse, extract_host, find_dynamic_placeholders, find_placeholders,
+    self, ProxyRequest, ProxyResponse, extract_host, find_dynamic_placeholders,
 };
 use sfae_core::store::SecretStore;
 
@@ -100,18 +100,19 @@ pub fn run(
     Ok(())
 }
 
-/// Check whether any part of the request contains an `-ACCESS_TOKEN-` placeholder.
+/// Check whether any part of the request contains an `{OAUTH_ACCESS_TOKEN}` placeholder.
 fn request_has_access_token_placeholder(request: &ProxyRequest) -> bool {
-    if find_placeholders(&request.url).contains(&CredentialType::AccessToken) {
+    let target = "OAUTH_ACCESS_TOKEN";
+    if find_dynamic_placeholders(&request.url).contains(&target.to_string()) {
         return true;
     }
     for (_, v) in &request.headers {
-        if find_placeholders(v).contains(&CredentialType::AccessToken) {
+        if find_dynamic_placeholders(v).contains(&target.to_string()) {
             return true;
         }
     }
     if let Some(b) = &request.body
-        && find_placeholders(b).contains(&CredentialType::AccessToken)
+        && find_dynamic_placeholders(b).contains(&target.to_string())
     {
         return true;
     }
