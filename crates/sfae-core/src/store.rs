@@ -83,7 +83,7 @@ pub fn list_credential_types(
     domain: &str,
     username: Option<&str>,
 ) -> Result<Vec<String>, SfaeError> {
-    // New path: credential sets
+    // New path: credential sets (falls through to legacy if no sets found)
     if store.supports_credential_sets() {
         let sets = store.list_credential_sets(Some(domain))?;
         let filtered: Vec<_> = if let Some(user) = username {
@@ -94,10 +94,13 @@ pub fn list_credential_types(
             sets
         };
 
-        let mut types: Vec<String> = filtered.into_iter().flat_map(|s| s.keys).collect();
-        types.sort();
-        types.dedup();
-        return Ok(types);
+        if !filtered.is_empty() {
+            let mut types: Vec<String> = filtered.into_iter().flat_map(|s| s.keys).collect();
+            types.sort();
+            types.dedup();
+            return Ok(types);
+        }
+        // No credential sets found — fall through to legacy flat-key lookup
     }
 
     // Legacy fallback: flat domain_TYPE keys
@@ -125,7 +128,7 @@ pub fn list_credential_types(
     Ok(types)
 }
 
-// --- Index file for tracking credential keys ---
+// --- Credential index file ---
 
 fn config_dir() -> Result<PathBuf, SfaeError> {
     let base = dirs::config_dir()
@@ -137,24 +140,69 @@ fn index_path() -> Result<PathBuf, SfaeError> {
     Ok(config_dir()?.join("credentials.json"))
 }
 
-fn read_index() -> Result<Vec<String>, SfaeError> {
-    let path = index_path()?;
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let data = fs::read_to_string(&path)?;
-    let keys: Vec<String> = serde_json::from_str(&data)?;
-    Ok(keys)
+/// On-disk credential index. Supports migration from the old `Vec<String>` format.
+#[derive(Default, Serialize, Deserialize)]
+struct CredentialIndex {
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    sets: Vec<CredentialSetInfo>,
+    #[serde(default)]
+    legacy_keys: Vec<String>,
 }
 
-fn write_index(keys: &[String]) -> Result<(), SfaeError> {
+fn read_credential_index() -> Result<CredentialIndex, SfaeError> {
+    let path = index_path()?;
+    if !path.exists() {
+        return Ok(CredentialIndex {
+            version: 2,
+            ..Default::default()
+        });
+    }
+    let data = fs::read_to_string(&path)?;
+
+    // Try new format (JSON object with version/sets/legacy_keys)
+    if let Ok(index) = serde_json::from_str::<CredentialIndex>(&data) {
+        return Ok(index);
+    }
+
+    // Fall back to old format (JSON array of strings)
+    if let Ok(keys) = serde_json::from_str::<Vec<String>>(&data) {
+        return Ok(CredentialIndex {
+            version: 1,
+            sets: vec![],
+            legacy_keys: keys,
+        });
+    }
+
+    // Corrupted — start fresh
+    Ok(CredentialIndex {
+        version: 2,
+        ..Default::default()
+    })
+}
+
+fn write_credential_index(index: &CredentialIndex) -> Result<(), SfaeError> {
     let path = index_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let data = serde_json::to_string_pretty(keys)?;
+    let data = serde_json::to_string_pretty(index)?;
     fs::write(&path, data)?;
     Ok(())
+}
+
+/// Legacy wrapper: read only the flat key list from the index.
+fn read_index() -> Result<Vec<String>, SfaeError> {
+    Ok(read_credential_index()?.legacy_keys)
+}
+
+/// Legacy wrapper: update the flat key list, preserving credential sets.
+fn write_index(keys: &[String]) -> Result<(), SfaeError> {
+    let mut index = read_credential_index()?;
+    index.legacy_keys = keys.to_vec();
+    index.version = 2;
+    write_credential_index(&index)
 }
 
 #[cfg(feature = "keyring")]
@@ -227,6 +275,69 @@ mod keyring_store {
 
         fn list_keys(&self) -> Result<Vec<String>, SfaeError> {
             read_index()
+        }
+
+        fn supports_credential_sets(&self) -> bool {
+            true
+        }
+
+        fn store_credential_set(
+            &mut self,
+            domain: &str,
+            label: Option<&str>,
+            values: &HashMap<String, String>,
+        ) -> Result<String, SfaeError> {
+            let id = uuid::Uuid::new_v4().to_string();
+            let mut keys: Vec<String> = values.keys().cloned().collect();
+            keys.sort();
+
+            let json = serde_json::to_string(values)
+                .map_err(|e| SfaeError::StoreError(format!("failed to serialize: {e}")))?;
+            let entry = Self::entry(&id)?;
+            entry
+                .set_password(&json)
+                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+
+            let mut index = read_credential_index()?;
+            index.sets.push(CredentialSetInfo {
+                id: id.clone(),
+                domain: domain.to_string(),
+                label: label.map(String::from),
+                keys,
+            });
+            index.version = 2;
+            write_credential_index(&index)?;
+
+            Ok(id)
+        }
+
+        fn list_credential_sets(
+            &self,
+            domain: Option<&str>,
+        ) -> Result<Vec<CredentialSetInfo>, SfaeError> {
+            let index = read_credential_index()?;
+            let sets = match domain {
+                Some(d) => index.sets.into_iter().filter(|s| s.domain == d).collect(),
+                None => index.sets,
+            };
+            Ok(sets)
+        }
+
+        fn delete_credential_set(&mut self, id: &str) -> Result<(), SfaeError> {
+            let mut index = read_credential_index()?;
+            if !index.sets.iter().any(|s| s.id == id) {
+                return Err(SfaeError::CredentialNotFound(id.to_string()));
+            }
+
+            // Remove from keychain (ignore if already gone)
+            let entry = Self::entry(id)?;
+            let _ = entry.delete_credential();
+
+            index.sets.retain(|s| s.id != id);
+            index.version = 2;
+            write_credential_index(&index)?;
+
+            Ok(())
         }
     }
 }

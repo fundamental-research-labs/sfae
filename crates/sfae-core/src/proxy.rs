@@ -120,7 +120,11 @@ pub fn get_credentials_map(
     username: Option<&str>,
 ) -> Result<HashMap<String, String>, SfaeError> {
     if store.supports_credential_sets() {
-        return get_credentials_map_from_sets(store, domain, username);
+        match get_credentials_map_from_sets(store, domain, username) {
+            Ok(map) if !map.is_empty() => return Ok(map),
+            Ok(_) => {} // No credential sets found — fall through to legacy
+            Err(e) => return Err(e),
+        }
     }
     legacy_get_credentials_map(store, domain, username)
 }
