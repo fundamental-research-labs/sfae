@@ -99,15 +99,15 @@ enum Command {
         #[arg(long, requires = "oauth")]
         revocation_url: Option<String>,
     },
-    /// Delete credentials for a domain and user
+    /// Delete a credential set by UUID or legacy credentials by domain
     #[cfg(feature = "keyring")]
     Delete {
-        /// Domain (e.g. github.com)
-        domain: String,
-        /// Delete only this credential type
+        /// Credential set UUID or domain (e.g. github.com)
+        target: String,
+        /// Delete only this credential type (legacy, not used with UUID)
         #[arg(long, name = "type")]
         cred_type: Option<String>,
-        /// Delete only credentials for this username
+        /// Delete only credentials for this username (legacy, not used with UUID)
         #[arg(long)]
         user: Option<String>,
     },
@@ -227,11 +227,11 @@ fn main() -> anyhow::Result<()> {
         }
         #[cfg(feature = "keyring")]
         Command::Delete {
-            domain,
+            target,
             cred_type,
             user,
         } => {
-            commands::delete::run(&domain, cred_type.as_deref(), user.as_deref())?;
+            commands::delete::run(&target, cred_type.as_deref(), user.as_deref())?;
         }
         #[cfg(feature = "keyring")]
         Command::Flush { dry_run } => {
