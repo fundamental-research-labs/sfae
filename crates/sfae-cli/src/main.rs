@@ -24,11 +24,11 @@ fn bin_name() -> Option<&'static str> {
 
 #[derive(Subcommand)]
 enum Command {
-    /// List credential types available for a given domain (ACCESS_TOKEN, REFRESH_TOKEN, API_KEY, PASSWORD)
+    /// List credential sets (optionally filtered by domain)
     Credentials {
-        /// Domain to list credentials for (e.g. github.com)
-        domain: String,
-        /// Filter by username
+        /// Domain to filter by (e.g. github.com). Lists all if omitted.
+        domain: Option<String>,
+        /// Filter by label
         #[arg(long)]
         user: Option<String>,
     },
@@ -128,7 +128,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
     match cli.command {
         Command::Credentials { domain, user } => {
-            commands::credentials::run(&domain, user.as_deref())?;
+            commands::credentials::run(domain.as_deref(), user.as_deref())?;
         }
         Command::Request {
             method,
