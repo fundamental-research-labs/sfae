@@ -15,6 +15,7 @@ pub struct RequestOpts<'a> {
     pub verbose: bool,
     pub domain: Option<&'a str>,
     pub user: Option<&'a str>,
+    pub cred_id: Option<&'a str>,
 }
 
 pub fn run(
@@ -61,14 +62,17 @@ pub fn run(
     let mut store = create_store();
 
     if opts.dry_run {
-        let masked_url = proxy::resolve_and_mask(&request.url, &*store, &domain, opts.user)?;
+        let masked_url =
+            proxy::resolve_and_mask(&request.url, &*store, &domain, opts.user, opts.cred_id)?;
         println!("{} {}", request.method, masked_url);
         for (k, v) in &request.headers {
-            let masked_v = proxy::resolve_and_mask(v, &*store, &domain, opts.user)?;
+            let masked_v =
+                proxy::resolve_and_mask(v, &*store, &domain, opts.user, opts.cred_id)?;
             println!("{k}: {masked_v}");
         }
         if let Some(b) = &request.body {
-            let masked_body = proxy::resolve_and_mask(b, &*store, &domain, opts.user)?;
+            let masked_body =
+                proxy::resolve_and_mask(b, &*store, &domain, opts.user, opts.cred_id)?;
             println!();
             println!("{masked_body}");
         }
@@ -76,7 +80,7 @@ pub fn run(
     }
 
     let start = Instant::now();
-    let response = proxy::execute(&request, &*store, &domain, opts.user)?;
+    let response = proxy::execute(&request, &*store, &domain, opts.user, opts.cred_id)?;
     let elapsed = start.elapsed();
 
     if opts.verbose {
@@ -89,6 +93,7 @@ pub fn run(
             &mut *store,
             &domain,
             opts.user,
+            opts.cred_id,
             opts.verbose,
             response,
         )?
@@ -127,6 +132,7 @@ fn try_refresh_and_retry(
     store: &mut dyn SecretStore,
     domain: &str,
     username: Option<&str>,
+    cred_id: Option<&str>,
     verbose: bool,
     original_response: ProxyResponse,
 ) -> anyhow::Result<ProxyResponse> {
@@ -136,6 +142,7 @@ fn try_refresh_and_retry(
             store,
             domain,
             username,
+            cred_id,
             verbose,
             original_response,
         );
@@ -207,7 +214,7 @@ fn try_refresh_and_retry(
 
     // Retry the request once.
     let start = Instant::now();
-    let retry_response = proxy::execute(request, store, domain, username)?;
+    let retry_response = proxy::execute(request, store, domain, username, cred_id)?;
     let elapsed = start.elapsed();
 
     if verbose {
@@ -226,6 +233,7 @@ fn try_refresh_and_retry_api(
     store: &dyn SecretStore,
     domain: &str,
     username: Option<&str>,
+    cred_id: Option<&str>,
     verbose: bool,
     original_response: ProxyResponse,
 ) -> anyhow::Result<ProxyResponse> {
@@ -282,7 +290,7 @@ fn try_refresh_and_retry_api(
 
     // Retry — credentials re-resolved from API store with fresh tokens.
     let start = Instant::now();
-    let retry_response = proxy::execute(request, store, domain, username)?;
+    let retry_response = proxy::execute(request, store, domain, username, cred_id)?;
     let elapsed = start.elapsed();
 
     if verbose {

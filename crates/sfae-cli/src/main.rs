@@ -32,7 +32,7 @@ enum Command {
         #[arg(long)]
         user: Option<String>,
     },
-    /// Send HTTP request with placeholders (e.g. -ACCESS_TOKEN- will be replaced by actual access token)
+    /// Send HTTP request with {KEY} placeholders resolved from stored credentials
     Request {
         /// HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)
         method: String,
@@ -41,12 +41,15 @@ enum Command {
         /// Request headers in "Key: Value" format
         #[arg(short = 'H', long = "header")]
         headers: Vec<String>,
-        /// Request body (may contain -TYPE- placeholders)
+        /// Request body (may contain {KEY} placeholders)
         #[arg(short = 'd', long = "data")]
         body: Option<String>,
         /// Domain for credential lookup (defaults to URL host)
         #[arg(long)]
         domain: Option<String>,
+        /// Credential set UUID (direct lookup, skips domain resolution)
+        #[arg(long)]
+        cred: Option<String>,
         /// Username for credential lookup
         #[arg(long)]
         user: Option<String>,
@@ -133,6 +136,7 @@ fn main() -> anyhow::Result<()> {
             headers,
             body,
             domain,
+            cred,
             user,
             dry_run,
             verbose,
@@ -147,6 +151,7 @@ fn main() -> anyhow::Result<()> {
                     verbose,
                     domain: domain.as_deref(),
                     user: user.as_deref(),
+                    cred_id: cred.as_deref(),
                 },
             )?;
         }

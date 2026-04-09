@@ -207,6 +207,34 @@ fn find_credential_set_for_domain(
     Ok(Some(map))
 }
 
+/// Fetch credentials by credential set UUID, parse JSON blob into HashMap.
+pub fn get_credentials_map_by_id(
+    store: &dyn SecretStore,
+    id: &str,
+) -> Result<HashMap<String, String>, SfaeError> {
+    let blob = store.get(id)?;
+    let map: HashMap<String, String> = serde_json::from_str(&blob)
+        .map_err(|e| SfaeError::StoreError(format!("invalid credential blob JSON: {e}")))?;
+    Ok(map)
+}
+
+/// Fetch credentials either by UUID (direct lookup) or by domain (with fallback).
+///
+/// When `cred_id` is `Some`, fetches the blob by UUID directly — no domain fallback.
+/// When `cred_id` is `None`, uses domain + username with parent-domain fallback.
+pub fn fetch_credentials(
+    store: &dyn SecretStore,
+    domain: &str,
+    username: Option<&str>,
+    cred_id: Option<&str>,
+) -> Result<HashMap<String, String>, SfaeError> {
+    if let Some(id) = cred_id {
+        get_credentials_map_by_id(store, id)
+    } else {
+        get_credentials_map(store, domain, username)
+    }
+}
+
 /// Legacy fallback: build credentials map from flat `domain_TYPE` keys.
 fn legacy_get_credentials_map(
     store: &dyn SecretStore,
@@ -308,24 +336,30 @@ pub fn get_credential_with_fallback(
 // -- Public resolution API ---------------------------------------------------
 
 /// Replace all `{KEY}` placeholders in `text` with credential values from the store.
+///
+/// When `cred_id` is `Some`, fetches credentials by UUID. Otherwise uses domain + username.
 pub fn resolve_placeholders(
     text: &str,
     store: &dyn SecretStore,
     domain: &str,
     username: Option<&str>,
+    cred_id: Option<&str>,
 ) -> Result<String, SfaeError> {
-    let map = get_credentials_map(store, domain, username)?;
+    let map = fetch_credentials(store, domain, username, cred_id)?;
     resolve_placeholders_from_map(text, &map)
 }
 
 /// Replace all `{KEY}` placeholders with `***`, verifying each credential exists.
+///
+/// When `cred_id` is `Some`, fetches credentials by UUID. Otherwise uses domain + username.
 pub fn resolve_and_mask(
     text: &str,
     store: &dyn SecretStore,
     domain: &str,
     username: Option<&str>,
+    cred_id: Option<&str>,
 ) -> Result<String, SfaeError> {
-    let map = get_credentials_map(store, domain, username)?;
+    let map = fetch_credentials(store, domain, username, cred_id)?;
     mask_placeholders_from_map(text, &map)
 }
 
@@ -349,13 +383,16 @@ pub fn extract_host(url: &str) -> Option<String> {
 ///
 /// Fetches the credential map once and resolves all `{KEY}` patterns across
 /// URL, headers, and body from a single map lookup.
+///
+/// When `cred_id` is `Some`, fetches credentials by UUID. Otherwise uses domain + username.
 pub fn execute(
     request: &ProxyRequest,
     store: &dyn SecretStore,
     domain: &str,
     username: Option<&str>,
+    cred_id: Option<&str>,
 ) -> Result<ProxyResponse, SfaeError> {
-    let map = get_credentials_map(store, domain, username)?;
+    let map = fetch_credentials(store, domain, username, cred_id)?;
 
     let url = resolve_placeholders_from_map(&request.url, &map)?;
     let headers: Vec<(String, String)> = request
@@ -571,7 +608,7 @@ mod tests {
     fn resolve_single() {
         let store = test_store();
         let result =
-            resolve_placeholders("Bearer {API_KEY}", &store, "github.com", None).unwrap();
+            resolve_placeholders("Bearer {API_KEY}", &store, "github.com", None, None).unwrap();
         assert_eq!(result, "Bearer ghk_abc123");
     }
 
@@ -585,28 +622,28 @@ mod tests {
             .unwrap();
 
         let result =
-            resolve_placeholders("pw={PASSWORD}", &store, "github.com", Some("user1")).unwrap();
+            resolve_placeholders("pw={PASSWORD}", &store, "github.com", Some("user1"), None).unwrap();
         assert_eq!(result, "pw=secret");
     }
 
     #[test]
     fn resolve_missing_credential_fails() {
         let store = InMemoryStore::new();
-        let err = resolve_placeholders("{API_KEY}", &store, "github.com", None).unwrap_err();
+        let err = resolve_placeholders("{API_KEY}", &store, "github.com", None, None).unwrap_err();
         assert!(matches!(err, SfaeError::CredentialNotFound(_)));
     }
 
     #[test]
     fn resolve_no_placeholders_passes_through() {
         let store = InMemoryStore::new();
-        let result = resolve_placeholders("plain text", &store, "github.com", None).unwrap();
+        let result = resolve_placeholders("plain text", &store, "github.com", None, None).unwrap();
         assert_eq!(result, "plain text");
     }
 
     #[test]
     fn mask_replaces_with_stars() {
         let store = test_store();
-        let result = resolve_and_mask("key={API_KEY}", &store, "github.com", None).unwrap();
+        let result = resolve_and_mask("key={API_KEY}", &store, "github.com", None, None).unwrap();
         assert_eq!(result, "key=***");
     }
 
@@ -732,14 +769,14 @@ mod tests {
     fn resolve_subdomain_placeholders() {
         let store = test_store();
         let result =
-            resolve_placeholders("Bearer {ACCESS_TOKEN}", &store, "api.github.com", None).unwrap();
+            resolve_placeholders("Bearer {ACCESS_TOKEN}", &store, "api.github.com", None, None).unwrap();
         assert_eq!(result, "Bearer ght_xyz789");
     }
 
     #[test]
     fn mask_subdomain_placeholders() {
         let store = test_store();
-        let result = resolve_and_mask("key={API_KEY}", &store, "api.github.com", None).unwrap();
+        let result = resolve_and_mask("key={API_KEY}", &store, "api.github.com", None, None).unwrap();
         assert_eq!(result, "key=***");
     }
 
@@ -762,6 +799,46 @@ mod tests {
         assert_eq!(val, "exact");
     }
 
+    // -- Credential ID lookup tests --
+
+    #[test]
+    fn get_credentials_map_by_id_works() {
+        let mut store = InMemoryStore::new();
+        let mut creds = HashMap::new();
+        creds.insert("HOST".to_string(), "db.example.com".to_string());
+        creds.insert("PASSWORD".to_string(), "secret".to_string());
+        let id = store
+            .store_credential_set("example.com", None, &creds)
+            .unwrap();
+
+        let map = get_credentials_map_by_id(&store, &id).unwrap();
+        assert_eq!(map.get("HOST").unwrap(), "db.example.com");
+        assert_eq!(map.get("PASSWORD").unwrap(), "secret");
+    }
+
+    #[test]
+    fn get_credentials_map_by_id_not_found() {
+        let store = InMemoryStore::new();
+        let err = get_credentials_map_by_id(&store, "nonexistent-uuid").unwrap_err();
+        assert!(matches!(err, SfaeError::CredentialNotFound(_)));
+    }
+
+    #[test]
+    fn resolve_with_cred_id() {
+        let mut store = InMemoryStore::new();
+        let mut creds = HashMap::new();
+        creds.insert("API_KEY".to_string(), "key123".to_string());
+        let id = store
+            .store_credential_set("github.com", None, &creds)
+            .unwrap();
+
+        // With cred_id, domain is ignored — fetch by ID directly
+        let result =
+            resolve_placeholders("Bearer {API_KEY}", &store, "wrong.domain", None, Some(&id))
+                .unwrap();
+        assert_eq!(result, "Bearer key123");
+    }
+
     // -- Custom field types (the whole point of dynamic placeholders) --
 
     #[test]
@@ -781,6 +858,7 @@ mod tests {
             "https://{HOST}:{PORT}/?database={DATABASE}&user={USERNAME}&password={PASSWORD}",
             &store,
             "ch.cloud",
+            None,
             None,
         )
         .unwrap();

@@ -33,7 +33,7 @@ fn full_request_resolution() {
 
     // Resolve URL
     let resolved_url =
-        proxy::resolve_placeholders(&request.url, &store, "api.example.com", None).unwrap();
+        proxy::resolve_placeholders(&request.url, &store, "api.example.com", None, None).unwrap();
     assert_eq!(
         resolved_url,
         "https://api.example.com/v1/data?key=key-xyz-789"
@@ -41,7 +41,7 @@ fn full_request_resolution() {
 
     // Resolve headers
     for (key, value) in &request.headers {
-        let resolved = proxy::resolve_placeholders(value, &store, "api.example.com", None).unwrap();
+        let resolved = proxy::resolve_placeholders(value, &store, "api.example.com", None, None).unwrap();
         if key == "Authorization" {
             assert_eq!(resolved, "Bearer ghp_abc123");
         } else {
@@ -54,6 +54,7 @@ fn full_request_resolution() {
         request.body.as_ref().unwrap(),
         &store,
         "api.example.com",
+        None,
         None,
     )
     .unwrap();
@@ -91,7 +92,7 @@ fn resolution_fails_on_missing_credential() {
     let store = populated_store(); // has ACCESS_TOKEN and API_KEY for api.example.com
 
     let err =
-        proxy::resolve_placeholders("{PASSWORD}", &store, "api.example.com", None).unwrap_err();
+        proxy::resolve_placeholders("{PASSWORD}", &store, "api.example.com", None, None).unwrap_err();
     assert!(matches!(
         err,
         sfae_core::SfaeError::CredentialNotFound(ref name) if name == "PASSWORD"
@@ -118,7 +119,7 @@ fn credential_set_lifecycle() {
 
     // Resolve using proxy
     let resolved =
-        proxy::resolve_placeholders("val={API_KEY}", &store, "github.com", None).unwrap();
+        proxy::resolve_placeholders("val={API_KEY}", &store, "github.com", None, None).unwrap();
     assert_eq!(resolved, "val=aaa");
 
     // Delete credential set
@@ -127,7 +128,7 @@ fn credential_set_lifecycle() {
 
     // Resolution now fails
     let err =
-        proxy::resolve_placeholders("{API_KEY}", &store, "github.com", None).unwrap_err();
+        proxy::resolve_placeholders("{API_KEY}", &store, "github.com", None, None).unwrap_err();
     assert!(matches!(err, sfae_core::SfaeError::CredentialNotFound(_)));
 }
 
@@ -149,10 +150,10 @@ fn label_scoped_credentials() {
 
     // Resolve with label filter — gets the labeled set
     let result =
-        proxy::resolve_placeholders("{PASSWORD}", &store, "github.com", Some("aduermael")).unwrap();
+        proxy::resolve_placeholders("{PASSWORD}", &store, "github.com", Some("aduermael"), None).unwrap();
     assert_eq!(result, "user_pw");
 
     // Multiple sets without label filter → error
-    let err = proxy::resolve_placeholders("{API_KEY}", &store, "github.com", None).unwrap_err();
+    let err = proxy::resolve_placeholders("{API_KEY}", &store, "github.com", None, None).unwrap_err();
     assert!(matches!(err, sfae_core::SfaeError::Other(_)));
 }
