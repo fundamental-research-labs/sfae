@@ -144,9 +144,7 @@ pub fn run(
         .parse()
         .map_err(|e: String| anyhow::anyhow!(e))?;
 
-    let key = credential_key(domain, username, cred_type);
-
-    let label = match username {
+    let display_label = match username {
         Some(user) => format!("{cred_type} for {user}@{domain}"),
         None => format!("{cred_type} for {domain}"),
     };
@@ -156,17 +154,26 @@ pub fn run(
             eprintln!("Obtain your credential here: {u}");
         }
         let prompt = TerminalPrompt;
-        let v = prompt.prompt_secret(&format!("Enter {label}"))?;
+        let v = prompt.prompt_secret(&format!("Enter {display_label}"))?;
         if v.is_empty() {
             anyhow::bail!("credential value cannot be empty");
         }
         v
     } else {
-        sfae_core::browser::browser_prompt(&label, url)?
+        sfae_core::browser::browser_prompt(&display_label, url)?
     };
 
     let mut store = create_store();
-    store.set(&key, &value)?;
-    eprintln!("Credential stored: {key}");
+
+    if store.supports_credential_sets() {
+        let mut values = std::collections::HashMap::new();
+        values.insert(cred_type_str.to_uppercase(), value);
+        let id = store.store_credential_set(domain, username, &values)?;
+        eprintln!("Credential stored: {id}");
+    } else {
+        let key = credential_key(domain, username, cred_type);
+        store.set(&key, &value)?;
+        eprintln!("Credential stored: {key}");
+    }
     Ok(())
 }
