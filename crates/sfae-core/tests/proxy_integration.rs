@@ -1,5 +1,4 @@
-use sfae_core::credential::CredentialType;
-use sfae_core::proxy::{self, ProxyRequest};
+use sfae_core::proxy::{self, ProxyRequest, find_dynamic_placeholders};
 use sfae_core::store::{InMemoryStore, SecretStore};
 
 fn populated_store() -> InMemoryStore {
@@ -17,15 +16,15 @@ fn full_request_resolution() {
 
     let request = ProxyRequest {
         method: "POST".to_string(),
-        url: "https://api.example.com/v1/data?key=-API_KEY-".to_string(),
+        url: "https://api.example.com/v1/data?key={API_KEY}".to_string(),
         headers: vec![
             (
                 "Authorization".to_string(),
-                "Bearer -ACCESS_TOKEN-".to_string(),
+                "Bearer {ACCESS_TOKEN}".to_string(),
             ),
             ("Content-Type".to_string(), "application/json".to_string()),
         ],
-        body: Some(r#"{"token": "-API_KEY-"}"#.to_string()),
+        body: Some(r#"{"token": "{API_KEY}"}"#.to_string()),
     };
 
     // Resolve URL
@@ -61,33 +60,26 @@ fn full_request_resolution() {
 fn placeholder_discovery_across_request() {
     let request = ProxyRequest {
         method: "GET".to_string(),
-        url: "https://api.example.com/resource?key=-API_KEY-".to_string(),
+        url: "https://api.example.com/resource?key={API_KEY}".to_string(),
         headers: vec![(
             "Authorization".to_string(),
-            "Bearer -ACCESS_TOKEN-".to_string(),
+            "Bearer {ACCESS_TOKEN}".to_string(),
         )],
-        body: Some("data=-PASSWORD-".to_string()),
+        body: Some("data={PASSWORD}".to_string()),
     };
 
-    let mut all_types: Vec<CredentialType> = Vec::new();
-    all_types.extend(proxy::find_placeholders(&request.url));
+    let mut all_keys: Vec<String> = Vec::new();
+    all_keys.extend(find_dynamic_placeholders(&request.url));
     for (_, value) in &request.headers {
-        all_types.extend(proxy::find_placeholders(value));
+        all_keys.extend(find_dynamic_placeholders(value));
     }
     if let Some(body) = &request.body {
-        all_types.extend(proxy::find_placeholders(body));
+        all_keys.extend(find_dynamic_placeholders(body));
     }
 
-    all_types.sort_by_key(|t| t.as_str().to_string());
-    all_types.dedup();
-    assert_eq!(
-        all_types,
-        vec![
-            CredentialType::AccessToken,
-            CredentialType::ApiKey,
-            CredentialType::Password,
-        ]
-    );
+    all_keys.sort();
+    all_keys.dedup();
+    assert_eq!(all_keys, vec!["ACCESS_TOKEN", "API_KEY", "PASSWORD"]);
 }
 
 #[test]
@@ -95,10 +87,10 @@ fn resolution_fails_on_missing_credential() {
     let store = populated_store(); // has ACCESS_TOKEN and API_KEY for api.example.com
 
     let err =
-        proxy::resolve_placeholders("-PASSWORD-", &store, "api.example.com", None).unwrap_err();
+        proxy::resolve_placeholders("{PASSWORD}", &store, "api.example.com", None).unwrap_err();
     assert!(matches!(
         err,
-        sfae_core::SfaeError::CredentialNotFound(ref name) if name == "api.example.com_PASSWORD"
+        sfae_core::SfaeError::CredentialNotFound(ref name) if name == "PASSWORD"
     ));
 }
 
@@ -128,7 +120,7 @@ fn store_crud_lifecycle() {
 
     // Resolve using the updated store
     let resolved =
-        proxy::resolve_placeholders("val=-API_KEY-", &store, "github.com", None).unwrap();
+        proxy::resolve_placeholders("val={API_KEY}", &store, "github.com", None).unwrap();
     assert_eq!(resolved, "val=aaa_updated");
 }
 
@@ -141,11 +133,11 @@ fn username_scoped_credentials() {
         .unwrap();
 
     // Resolve without username — uses domain-level credential
-    let result = proxy::resolve_placeholders("-API_KEY-", &store, "github.com", None).unwrap();
+    let result = proxy::resolve_placeholders("{API_KEY}", &store, "github.com", None).unwrap();
     assert_eq!(result, "shared_key");
 
     // Resolve with username — uses user-scoped credential
     let result =
-        proxy::resolve_placeholders("-PASSWORD-", &store, "github.com", Some("aduermael")).unwrap();
+        proxy::resolve_placeholders("{PASSWORD}", &store, "github.com", Some("aduermael")).unwrap();
     assert_eq!(result, "user_pw");
 }
