@@ -3,7 +3,9 @@ use std::time::Instant;
 use sfae_core::credential::{CredentialType, credential_key};
 use sfae_core::error::SfaeError;
 use sfae_core::oauth;
-use sfae_core::proxy::{self, ProxyRequest, ProxyResponse, extract_host, find_placeholders};
+use sfae_core::proxy::{
+    self, ProxyRequest, ProxyResponse, extract_host, find_dynamic_placeholders, find_placeholders,
+};
 use sfae_core::store::SecretStore;
 
 use crate::store_factory::{create_store, is_api_mode};
@@ -291,13 +293,8 @@ fn try_refresh_and_retry_api(
 
 fn mask_placeholders(text: &str) -> String {
     let mut result = text.to_string();
-    for pattern in &[
-        "-ACCESS_TOKEN-",
-        "-REFRESH_TOKEN-",
-        "-API_KEY-",
-        "-PASSWORD-",
-    ] {
-        result = result.replace(pattern, "***");
+    for key in find_dynamic_placeholders(text) {
+        result = result.replace(&format!("{{{key}}}"), "***");
     }
     result
 }
