@@ -13,6 +13,8 @@ The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin s
    sfae credentials <domain>
    ```
    Example: `sfae credentials github.com`
+   
+   Lists credential sets with ID, label, and field names. Use the UUID to target a specific set.
 
 2. **If the needed credential is missing, prompt the human to provide it:**
    ```
@@ -20,25 +22,39 @@ The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin s
    ```
    Example: `sfae prompt github.com ACCESS_TOKEN --url "https://github.com/settings/tokens"`
 
-   This opens a web page in the human's browser with a form to enter the credential. The `--url` value is shown as a helpful link on that page. The command blocks until the human submits the form, then stores the credential securely in the OS keychain.
+   This opens a web page in the human's browser with a form to enter the credential. The `--url` value is shown as a helpful link on that page. The command blocks until the human submits the form, then stores the credential as a JSON blob in the OS keychain and returns the UUID.
 
    **Do not** pass `--terminal` — that mode requires stdin access which you don't have.
 
-3. **Make the API request using placeholders:**
+3. **Make the API request using `{KEY}` placeholders:**
    ```
-   sfae request <METHOD> <URL> -H "Header: -TYPE-"
+   sfae request <METHOD> <URL> -H "Header: {KEY}"
    ```
-   Example: `sfae request GET "https://api.github.com/user" -H "Authorization: Bearer -ACCESS_TOKEN-" -H "User-Agent: sfae"`
+   Example: `sfae request GET "https://api.github.com/user" -H "Authorization: Bearer {ACCESS_TOKEN}" -H "User-Agent: sfae"`
 
 ### Placeholder syntax
 
-Use `-TYPE-` in URLs, headers, or request bodies. Available types:
-- `-ACCESS_TOKEN-`
-- `-API_KEY-`
-- `-PASSWORD-`
-- `-REFRESH_TOKEN-`
+Use `{KEY}` in URLs, headers, or request bodies. Any `{ALLCAPS_NAME}` pattern is resolved from the stored credential blob. Common keys:
 
-SFAE resolves these from the OS keychain at request time. You never see the actual values.
+- `{ACCESS_TOKEN}` — PAT-style access tokens
+- `{API_KEY}` — API keys
+- `{PASSWORD}` — passwords
+- `{USERNAME}` — usernames
+- `{HOST}`, `{PORT}`, `{DATABASE}` — connection fields (ClickHouse, Postgres, etc.)
+- `{OAUTH_ACCESS_TOKEN}` — OAuth bearer tokens (see OAuth section below)
+
+There is no fixed list — any field stored in the credential blob can be used as a placeholder. SFAE resolves them from the OS keychain at request time. You never see the actual values.
+
+### Multi-credential support
+
+A domain can have multiple credential sets (e.g., "Work GitHub" and "Personal GitHub"). Each set has a UUID.
+
+- If a domain has exactly one credential set, it's used automatically.
+- If a domain has multiple sets, use `--cred <uuid>` to select one:
+  ```
+  sfae request GET "https://api.github.com/user" --cred 550e8400-... -H "Authorization: Bearer {ACCESS_TOKEN}"
+  ```
+- Get UUIDs via `sfae credentials <domain>`.
 
 ### OAuth flow (for Google, GitHub Apps, etc.)
 
@@ -71,17 +87,36 @@ For APIs that use OAuth 2.0 instead of static tokens:
 
    Explicit flags override built-in preset values. `--client-secret` is optional for public OAuth clients.
 
-   This opens the provider's consent page in the human's browser. After they authorize, sfae stores the access token, refresh token, and OAuth metadata automatically.
+   This opens the provider's consent page in the human's browser. After they authorize, sfae stores all tokens and metadata as a single JSON blob: `OAUTH_ACCESS_TOKEN`, `OAUTH_REFRESH_TOKEN`, `OAUTH_TOKEN_URL`, `OAUTH_REVOCATION_URL`.
 
-2. **Make requests normally** — use `-ACCESS_TOKEN-` as with any credential:
+2. **Make requests normally** — use `{OAUTH_ACCESS_TOKEN}` as the placeholder:
    ```
    sfae request GET "https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1" \
-     -H "Authorization: Bearer -ACCESS_TOKEN-"
+     -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}"
    ```
 
-3. **Token refresh is automatic.** If a request gets a 401, sfae uses the stored refresh token to obtain a new access token and retries — no action needed from you.
+3. **Token refresh is automatic.** If a request gets a 401, sfae reads `OAUTH_TOKEN_URL` from the blob and `client_id`/`client_secret` from server env config, refreshes the token, and retries — no action needed from you.
+
+**OAuth key convention:** All OAuth-related keys use the `OAUTH_` prefix to distinguish from PAT-style credentials. `client_id` and `client_secret` are per-app (from server env), not per-user — they are NOT stored in the credential blob.
 
 **Domain matching:** Store credentials under the API's base domain (e.g., `googleapis.com`), not the auth provider domain (e.g., `google.com`). Subdomain fallback works automatically — a credential stored for `googleapis.com` resolves for `www.googleapis.com`, `gmail.googleapis.com`, etc.
+
+### JSON blob storage
+
+All credential fields are stored as a single JSON blob per credential set. Each set has:
+- **UUID** — unique identifier (primary key)
+- **domain** — the API domain
+- **label** — optional human-friendly name (e.g., "Work", "Personal", "Staging")
+- **keys** — list of field names in the blob (visible without decrypting)
+- **value** — the JSON blob containing all key-value pairs
+
+### Deleting credentials
+
+```
+sfae delete <uuid>
+```
+
+Delete a credential set by its UUID. Get UUIDs via `sfae credentials`.
 
 ### Important
 
