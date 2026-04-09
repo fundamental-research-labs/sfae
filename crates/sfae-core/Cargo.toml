@@ -17,6 +17,7 @@ sha2 = "0.10"
 base64 = "0.22"
 rand = "0.9"
 regex = "1"
+uuid = { version = "1", features = ["v4"] }
 
 [features]
 default = ["cli", "keyring"]

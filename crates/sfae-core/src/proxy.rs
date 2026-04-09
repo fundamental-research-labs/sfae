@@ -109,18 +109,111 @@ pub fn mask_placeholders_from_map(
 ///
 /// Walks up parent domains if no credentials are found at the exact domain.
 /// Returns an empty map if no credentials exist anywhere in the domain chain.
+///
+/// For stores that support credential sets (JSON blob storage), fetches and
+/// parses the blob directly. The `username` parameter filters by credential
+/// set label. Falls back to the legacy `domain_TYPE` flat-key format for
+/// stores that haven't migrated yet.
 pub fn get_credentials_map(
     store: &dyn SecretStore,
     domain: &str,
     username: Option<&str>,
 ) -> Result<HashMap<String, String>, SfaeError> {
+    if store.supports_credential_sets() {
+        return get_credentials_map_from_sets(store, domain, username);
+    }
+    legacy_get_credentials_map(store, domain, username)
+}
+
+/// New path: fetch credentials from JSON blob credential sets with domain fallback.
+fn get_credentials_map_from_sets(
+    store: &dyn SecretStore,
+    domain: &str,
+    username: Option<&str>,
+) -> Result<HashMap<String, String>, SfaeError> {
     // Try exact domain
+    if let Some(map) = find_credential_set_for_domain(store, domain, username)? {
+        return Ok(map);
+    }
+
+    // Walk up parent domains: api.github.com -> github.com
+    let parts: Vec<&str> = domain.split('.').collect();
+    for i in 1..parts.len() {
+        let parent: Vec<&str> = parts[i..].to_vec();
+        if parent.len() < 2 {
+            break;
+        }
+        let parent_domain = parent.join(".");
+        if let Some(map) = find_credential_set_for_domain(store, &parent_domain, username)? {
+            return Ok(map);
+        }
+    }
+
+    Ok(HashMap::new())
+}
+
+/// Find a single credential set for an exact domain and parse its JSON blob.
+///
+/// Returns `None` if no credential sets exist for this domain (+ label filter).
+/// Errors if multiple sets match and no specific one is selected.
+fn find_credential_set_for_domain(
+    store: &dyn SecretStore,
+    domain: &str,
+    username: Option<&str>,
+) -> Result<Option<HashMap<String, String>>, SfaeError> {
+    let sets = store.list_credential_sets(Some(domain))?;
+    if sets.is_empty() {
+        return Ok(None);
+    }
+
+    // Filter by label (maps to old 'username' concept)
+    let filtered: Vec<_> = if let Some(user) = username {
+        sets.into_iter()
+            .filter(|s| s.label.as_deref() == Some(user))
+            .collect()
+    } else {
+        sets
+    };
+
+    if filtered.is_empty() {
+        return Ok(None);
+    }
+
+    if filtered.len() > 1 {
+        let set_list: Vec<String> = filtered
+            .iter()
+            .map(|s| {
+                format!(
+                    "  {} ({})",
+                    s.id,
+                    s.label.as_deref().unwrap_or("no label")
+                )
+            })
+            .collect();
+        return Err(SfaeError::Other(format!(
+            "multiple credential sets for domain '{}'. Use --cred <id> to select:\n{}",
+            domain,
+            set_list.join("\n")
+        )));
+    }
+
+    let blob = store.get(&filtered[0].id)?;
+    let map: HashMap<String, String> = serde_json::from_str(&blob)
+        .map_err(|e| SfaeError::StoreError(format!("invalid credential blob JSON: {e}")))?;
+    Ok(Some(map))
+}
+
+/// Legacy fallback: build credentials map from flat `domain_TYPE` keys.
+fn legacy_get_credentials_map(
+    store: &dyn SecretStore,
+    domain: &str,
+    username: Option<&str>,
+) -> Result<HashMap<String, String>, SfaeError> {
     let types = list_credential_types(store, domain, username)?;
     if !types.is_empty() {
         return build_credentials_map(store, domain, username, &types);
     }
 
-    // Walk up parent domains: api.github.com -> github.com
     let parts: Vec<&str> = domain.split('.').collect();
     for i in 1..parts.len() {
         let parent: Vec<&str> = parts[i..].to_vec();
@@ -162,12 +255,25 @@ fn build_credentials_map(
 /// For example, if `domain` is `api.github.com` and no credential exists for
 /// that exact domain, this will try `github.com` before giving up. Stops when
 /// the domain has fewer than 2 labels (never tries bare TLDs).
+///
+/// For stores that support credential sets, looks for the credential type
+/// string as a key in the JSON blob. Falls back to legacy flat-key lookup
+/// for stores that haven't migrated yet.
 pub fn get_credential_with_fallback(
     store: &dyn SecretStore,
     domain: &str,
     username: Option<&str>,
     cred_type: CredentialType,
 ) -> Result<String, SfaeError> {
+    if store.supports_credential_sets() {
+        let map = get_credentials_map(store, domain, username)?;
+        let key_name = cred_type.as_str();
+        return map.get(key_name).cloned().ok_or_else(|| {
+            SfaeError::CredentialNotFound(credential_key(domain, username, cred_type))
+        });
+    }
+
+    // Legacy path: flat domain_TYPE keys
     let key = credential_key(domain, username, cred_type);
     match store.get(&key) {
         Ok(value) => return Ok(value),
@@ -175,7 +281,6 @@ pub fn get_credential_with_fallback(
         Err(e) => return Err(e),
     }
 
-    // Walk up parent domains: api.github.com -> github.com
     let parts: Vec<&str> = domain.split('.').collect();
     for i in 1..parts.len() {
         let parent: Vec<&str> = parts[i..].to_vec();
@@ -312,9 +417,12 @@ mod tests {
 
     fn test_store() -> InMemoryStore {
         let mut store = InMemoryStore::new();
-        store.set("github.com_API_KEY", "ghk_abc123").unwrap();
-        store.set("github.com_ACCESS_TOKEN", "ght_xyz789").unwrap();
-        store.set("github.com_user1_PASSWORD", "secret").unwrap();
+        let mut creds = HashMap::new();
+        creds.insert("API_KEY".to_string(), "ghk_abc123".to_string());
+        creds.insert("ACCESS_TOKEN".to_string(), "ght_xyz789".to_string());
+        store
+            .store_credential_set("github.com", None, &creds)
+            .unwrap();
         store
     }
 
@@ -432,8 +540,15 @@ mod tests {
     }
 
     #[test]
-    fn credentials_map_with_username() {
-        let store = test_store();
+    fn credentials_map_with_label() {
+        let mut store = test_store();
+        let mut user_creds = HashMap::new();
+        user_creds.insert("PASSWORD".to_string(), "secret".to_string());
+        store
+            .store_credential_set("github.com", Some("user1"), &user_creds)
+            .unwrap();
+
+        // Filter by label gets the labeled set
         let map = get_credentials_map(&store, "github.com", Some("user1")).unwrap();
         assert_eq!(map.get("PASSWORD").unwrap(), "secret");
         assert_eq!(map.len(), 1);
@@ -457,8 +572,14 @@ mod tests {
     }
 
     #[test]
-    fn resolve_with_username() {
-        let store = test_store();
+    fn resolve_with_label() {
+        let mut store = InMemoryStore::new();
+        let mut creds = HashMap::new();
+        creds.insert("PASSWORD".to_string(), "secret".to_string());
+        store
+            .store_credential_set("github.com", Some("user1"), &creds)
+            .unwrap();
+
         let result =
             resolve_placeholders("pw={PASSWORD}", &store, "github.com", Some("user1")).unwrap();
         assert_eq!(result, "pw=secret");
@@ -542,7 +663,11 @@ mod tests {
     #[test]
     fn fallback_multi_level_subdomain() {
         let mut store = InMemoryStore::new();
-        store.set("example.com_API_KEY", "deep_key").unwrap();
+        let mut creds = HashMap::new();
+        creds.insert("API_KEY".to_string(), "deep_key".to_string());
+        store
+            .store_credential_set("example.com", None, &creds)
+            .unwrap();
         let val =
             get_credential_with_fallback(&store, "a.b.example.com", None, CredentialType::ApiKey)
                 .unwrap();
@@ -552,7 +677,11 @@ mod tests {
     #[test]
     fn fallback_stops_at_two_labels() {
         let mut store = InMemoryStore::new();
-        store.set("com_API_KEY", "bad").unwrap();
+        let mut creds = HashMap::new();
+        creds.insert("API_KEY".to_string(), "bad".to_string());
+        store
+            .store_credential_set("com", None, &creds)
+            .unwrap();
         let err =
             get_credential_with_fallback(&store, "api.github.com", None, CredentialType::ApiKey)
                 .unwrap_err();
@@ -578,8 +707,13 @@ mod tests {
     }
 
     #[test]
-    fn fallback_with_username() {
-        let store = test_store();
+    fn fallback_with_label() {
+        let mut store = InMemoryStore::new();
+        let mut creds = HashMap::new();
+        creds.insert("PASSWORD".to_string(), "secret".to_string());
+        store
+            .store_credential_set("github.com", Some("user1"), &creds)
+            .unwrap();
         let val = get_credential_with_fallback(
             &store,
             "api.github.com",
@@ -608,8 +742,16 @@ mod tests {
     #[test]
     fn fallback_prefers_exact_match() {
         let mut store = InMemoryStore::new();
-        store.set("api.github.com_API_KEY", "exact").unwrap();
-        store.set("github.com_API_KEY", "parent").unwrap();
+        let mut exact = HashMap::new();
+        exact.insert("API_KEY".to_string(), "exact".to_string());
+        store
+            .store_credential_set("api.github.com", None, &exact)
+            .unwrap();
+        let mut parent = HashMap::new();
+        parent.insert("API_KEY".to_string(), "parent".to_string());
+        store
+            .store_credential_set("github.com", None, &parent)
+            .unwrap();
         let val =
             get_credential_with_fallback(&store, "api.github.com", None, CredentialType::ApiKey)
                 .unwrap();
@@ -621,11 +763,15 @@ mod tests {
     #[test]
     fn resolve_custom_fields() {
         let mut store = InMemoryStore::new();
-        store.set("ch.cloud_HOST", "analytics.ch.cloud").unwrap();
-        store.set("ch.cloud_PORT", "8443").unwrap();
-        store.set("ch.cloud_USERNAME", "admin").unwrap();
-        store.set("ch.cloud_PASSWORD", "hunter2").unwrap();
-        store.set("ch.cloud_DATABASE", "default").unwrap();
+        let mut ch = HashMap::new();
+        ch.insert("HOST".to_string(), "analytics.ch.cloud".to_string());
+        ch.insert("PORT".to_string(), "8443".to_string());
+        ch.insert("USERNAME".to_string(), "admin".to_string());
+        ch.insert("PASSWORD".to_string(), "hunter2".to_string());
+        ch.insert("DATABASE".to_string(), "default".to_string());
+        store
+            .store_credential_set("ch.cloud", None, &ch)
+            .unwrap();
 
         let result = resolve_placeholders(
             "https://{HOST}:{PORT}/?database={DATABASE}&user={USERNAME}&password={PASSWORD}",
