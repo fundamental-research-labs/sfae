@@ -66,8 +66,7 @@ pub fn run(
             proxy::resolve_and_mask(&request.url, &*store, &domain, opts.user, opts.cred_id)?;
         println!("{} {}", request.method, masked_url);
         for (k, v) in &request.headers {
-            let masked_v =
-                proxy::resolve_and_mask(v, &*store, &domain, opts.user, opts.cred_id)?;
+            let masked_v = proxy::resolve_and_mask(v, &*store, &domain, opts.user, opts.cred_id)?;
             println!("{k}: {masked_v}");
         }
         if let Some(b) = &request.body {

@@ -194,10 +194,10 @@ impl SecretStore for ApiStore {
         let body_str = Self::read_response_body(&mut response)?;
 
         // Try new format first (returns credential set IDs)
-        if let Ok(parsed) = serde_json::from_str::<CredentialSetListResponse>(&body_str) {
-            if parsed.credentials.iter().all(|c| !c.id.is_empty()) {
-                return Ok(parsed.credentials.into_iter().map(|c| c.id).collect());
-            }
+        if let Ok(parsed) = serde_json::from_str::<CredentialSetListResponse>(&body_str)
+            && parsed.credentials.iter().all(|c| !c.id.is_empty())
+        {
+            return Ok(parsed.credentials.into_iter().map(|c| c.id).collect());
         }
 
         // Legacy format: domain_cred_type strings

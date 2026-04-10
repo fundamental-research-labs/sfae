@@ -186,13 +186,7 @@ fn find_credential_set_for_domain(
     if filtered.len() > 1 {
         let set_list: Vec<String> = filtered
             .iter()
-            .map(|s| {
-                format!(
-                    "  {} ({})",
-                    s.id,
-                    s.label.as_deref().unwrap_or("no label")
-                )
-            })
+            .map(|s| format!("  {} ({})", s.id, s.label.as_deref().unwrap_or("no label")))
             .collect();
         return Err(SfaeError::Other(format!(
             "multiple credential sets for domain '{}'. Use --cred <id> to select:\n{}",
@@ -525,8 +519,7 @@ mod tests {
         let mut map = HashMap::new();
         map.insert("HOST".to_string(), "ch.cloud".to_string());
         map.insert("PASSWORD".to_string(), "secret".to_string());
-        let result =
-            resolve_placeholders_from_map("https://{HOST}/?pw={PASSWORD}", &map).unwrap();
+        let result = resolve_placeholders_from_map("https://{HOST}/?pw={PASSWORD}", &map).unwrap();
         assert_eq!(result, "https://ch.cloud/?pw=secret");
     }
 
@@ -622,7 +615,8 @@ mod tests {
             .unwrap();
 
         let result =
-            resolve_placeholders("pw={PASSWORD}", &store, "github.com", Some("user1"), None).unwrap();
+            resolve_placeholders("pw={PASSWORD}", &store, "github.com", Some("user1"), None)
+                .unwrap();
         assert_eq!(result, "pw=secret");
     }
 
@@ -720,9 +714,7 @@ mod tests {
         let mut store = InMemoryStore::new();
         let mut creds = HashMap::new();
         creds.insert("API_KEY".to_string(), "bad".to_string());
-        store
-            .store_credential_set("com", None, &creds)
-            .unwrap();
+        store.store_credential_set("com", None, &creds).unwrap();
         let err =
             get_credential_with_fallback(&store, "api.github.com", None, CredentialType::ApiKey)
                 .unwrap_err();
@@ -768,15 +760,22 @@ mod tests {
     #[test]
     fn resolve_subdomain_placeholders() {
         let store = test_store();
-        let result =
-            resolve_placeholders("Bearer {ACCESS_TOKEN}", &store, "api.github.com", None, None).unwrap();
+        let result = resolve_placeholders(
+            "Bearer {ACCESS_TOKEN}",
+            &store,
+            "api.github.com",
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(result, "Bearer ght_xyz789");
     }
 
     #[test]
     fn mask_subdomain_placeholders() {
         let store = test_store();
-        let result = resolve_and_mask("key={API_KEY}", &store, "api.github.com", None, None).unwrap();
+        let result =
+            resolve_and_mask("key={API_KEY}", &store, "api.github.com", None, None).unwrap();
         assert_eq!(result, "key=***");
     }
 
@@ -850,9 +849,7 @@ mod tests {
         ch.insert("USERNAME".to_string(), "admin".to_string());
         ch.insert("PASSWORD".to_string(), "hunter2".to_string());
         ch.insert("DATABASE".to_string(), "default".to_string());
-        store
-            .store_credential_set("ch.cloud", None, &ch)
-            .unwrap();
+        store.store_credential_set("ch.cloud", None, &ch).unwrap();
 
         let result = resolve_placeholders(
             "https://{HOST}:{PORT}/?database={DATABASE}&user={USERNAME}&password={PASSWORD}",

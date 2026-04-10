@@ -274,9 +274,7 @@ async fn store_credential(
 
     let value_json = match serde_json::to_string(&body.values) {
         Ok(j) => j,
-        Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("Invalid values: {e}")).into_response()
-        }
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("Invalid values: {e}")).into_response(),
     };
 
     let result = sqlx::query_as::<_, (String,)>(
@@ -339,7 +337,7 @@ async fn update_credential(
                 StatusCode::NOT_FOUND,
                 "Credential set not found".to_string(),
             )
-                .into_response()
+                .into_response();
         }
         Err(e) => {
             tracing::error!("DB error reading credential set: {e}");
@@ -364,7 +362,7 @@ async fn update_credential(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Serialize error: {e}"),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -544,13 +542,11 @@ async fn delete_credential(
     }
     let user_id = auth.user_id();
 
-    let result = sqlx::query(
-        "DELETE FROM sfae_credentials WHERE id = $1::uuid AND user_id = $2",
-    )
-    .bind(&id)
-    .bind(user_id)
-    .execute(&state.pool)
-    .await;
+    let result = sqlx::query("DELETE FROM sfae_credentials WHERE id = $1::uuid AND user_id = $2")
+        .bind(&id)
+        .bind(user_id)
+        .execute(&state.pool)
+        .await;
 
     match result {
         Ok(r) => {
@@ -751,7 +747,7 @@ async fn refresh_credential(
                     StatusCode::NOT_FOUND,
                     "Credential set not found".to_string(),
                 )
-                    .into_response()
+                    .into_response();
             }
             Err(e) => {
                 tracing::error!("DB error: {e}");
@@ -767,7 +763,7 @@ async fn refresh_credential(
                     StatusCode::NOT_FOUND,
                     "No OAuth credentials found for this domain".to_string(),
                 )
-                    .into_response()
+                    .into_response();
             }
             Err(e) => {
                 tracing::error!("DB error: {e}");
@@ -791,7 +787,7 @@ async fn refresh_credential(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Invalid credential blob: {e}"),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -802,7 +798,7 @@ async fn refresh_credential(
                 StatusCode::NOT_FOUND,
                 "Credential blob missing OAUTH_TOKEN_URL".to_string(),
             )
-                .into_response()
+                .into_response();
         }
     };
     let refresh_token = match blob.get("OAUTH_REFRESH_TOKEN") {
@@ -812,7 +808,7 @@ async fn refresh_credential(
                 StatusCode::NOT_FOUND,
                 "Credential blob missing OAUTH_REFRESH_TOKEN".to_string(),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -828,7 +824,7 @@ async fn refresh_credential(
                 StatusCode::NOT_FOUND,
                 format!("No OAuth client config for domain {domain}"),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -885,7 +881,7 @@ async fn refresh_credential(
                 StatusCode::BAD_GATEWAY,
                 "Provider response missing access_token".to_string(),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -904,7 +900,7 @@ async fn refresh_credential(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Serialize error: {e}"),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -1009,9 +1005,12 @@ mod tests {
 
     #[test]
     fn resolve_oauth_client_google() {
-        let (id, secret) =
-            resolve_oauth_client(Some("test-client-id"), Some("test-secret"), "googleapis.com")
-                .unwrap();
+        let (id, secret) = resolve_oauth_client(
+            Some("test-client-id"),
+            Some("test-secret"),
+            "googleapis.com",
+        )
+        .unwrap();
         assert_eq!(id, "test-client-id");
         assert_eq!(secret.unwrap(), "test-secret");
     }

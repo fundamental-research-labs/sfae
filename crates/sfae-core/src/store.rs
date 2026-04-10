@@ -494,11 +494,15 @@ mod tests {
         let mut github = HashMap::new();
         github.insert("API_KEY".to_string(), "key1".to_string());
         github.insert("ACCESS_TOKEN".to_string(), "tok1".to_string());
-        store.store_credential_set("github.com", None, &github).unwrap();
+        store
+            .store_credential_set("github.com", None, &github)
+            .unwrap();
 
         let mut gitlab = HashMap::new();
         gitlab.insert("PASSWORD".to_string(), "pw".to_string());
-        store.store_credential_set("gitlab.com", None, &gitlab).unwrap();
+        store
+            .store_credential_set("gitlab.com", None, &gitlab)
+            .unwrap();
 
         let types = list_credential_types(&store, "github.com", None).unwrap();
         assert_eq!(types, vec!["ACCESS_TOKEN", "API_KEY"]);
@@ -515,7 +519,9 @@ mod tests {
         let mut store = InMemoryStore::new();
         let mut shared = HashMap::new();
         shared.insert("API_KEY".to_string(), "key1".to_string());
-        store.store_credential_set("github.com", None, &shared).unwrap();
+        store
+            .store_credential_set("github.com", None, &shared)
+            .unwrap();
 
         let mut user_creds = HashMap::new();
         user_creds.insert("PASSWORD".to_string(), "pw".to_string());
@@ -589,10 +595,27 @@ mod tests {
         gl.insert("PASSWORD".to_string(), "p".to_string());
         store.store_credential_set("gitlab.com", None, &gl).unwrap();
 
-        assert_eq!(store.list_credential_sets(Some("github.com")).unwrap().len(), 1);
-        assert_eq!(store.list_credential_sets(Some("gitlab.com")).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .list_credential_sets(Some("github.com"))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .list_credential_sets(Some("gitlab.com"))
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(store.list_credential_sets(None).unwrap().len(), 2);
-        assert!(store.list_credential_sets(Some("unknown.com")).unwrap().is_empty());
+        assert!(
+            store
+                .list_credential_sets(Some("unknown.com"))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -600,7 +623,9 @@ mod tests {
         let mut store = InMemoryStore::new();
         let mut values = HashMap::new();
         values.insert("KEY".to_string(), "val".to_string());
-        let id = store.store_credential_set("example.com", None, &values).unwrap();
+        let id = store
+            .store_credential_set("example.com", None, &values)
+            .unwrap();
 
         store.delete_credential_set(&id).unwrap();
 
