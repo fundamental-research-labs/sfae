@@ -24,15 +24,15 @@ fn bin_name() -> Option<&'static str> {
 
 #[derive(Subcommand)]
 enum Command {
-    /// List credential types available for a given domain (ACCESS_TOKEN, REFRESH_TOKEN, API_KEY, PASSWORD)
+    /// List credential sets (optionally filtered by domain)
     Credentials {
-        /// Domain to list credentials for (e.g. github.com)
-        domain: String,
-        /// Filter by username
+        /// Domain to filter by (e.g. github.com). Lists all if omitted.
+        domain: Option<String>,
+        /// Filter by label
         #[arg(long)]
         user: Option<String>,
     },
-    /// Send HTTP request with placeholders (e.g. -ACCESS_TOKEN- will be replaced by actual access token)
+    /// Send HTTP request with {KEY} placeholders resolved from stored credentials
     Request {
         /// HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)
         method: String,
@@ -41,12 +41,15 @@ enum Command {
         /// Request headers in "Key: Value" format
         #[arg(short = 'H', long = "header")]
         headers: Vec<String>,
-        /// Request body (may contain -TYPE- placeholders)
+        /// Request body (may contain {KEY} placeholders)
         #[arg(short = 'd', long = "data")]
         body: Option<String>,
         /// Domain for credential lookup (defaults to URL host)
         #[arg(long)]
         domain: Option<String>,
+        /// Credential set UUID (direct lookup, skips domain resolution)
+        #[arg(long)]
+        cred: Option<String>,
         /// Username for credential lookup
         #[arg(long)]
         user: Option<String>,
@@ -96,15 +99,15 @@ enum Command {
         #[arg(long, requires = "oauth")]
         revocation_url: Option<String>,
     },
-    /// Delete credentials for a domain and user
+    /// Delete a credential set by UUID or legacy credentials by domain
     #[cfg(feature = "keyring")]
     Delete {
-        /// Domain (e.g. github.com)
-        domain: String,
-        /// Delete only this credential type
+        /// Credential set UUID or domain (e.g. github.com)
+        target: String,
+        /// Delete only this credential type (legacy, not used with UUID)
         #[arg(long, name = "type")]
         cred_type: Option<String>,
-        /// Delete only credentials for this username
+        /// Delete only credentials for this username (legacy, not used with UUID)
         #[arg(long)]
         user: Option<String>,
     },
@@ -125,7 +128,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
     match cli.command {
         Command::Credentials { domain, user } => {
-            commands::credentials::run(&domain, user.as_deref())?;
+            commands::credentials::run(domain.as_deref(), user.as_deref())?;
         }
         Command::Request {
             method,
@@ -133,6 +136,7 @@ fn main() -> anyhow::Result<()> {
             headers,
             body,
             domain,
+            cred,
             user,
             dry_run,
             verbose,
@@ -147,6 +151,7 @@ fn main() -> anyhow::Result<()> {
                     verbose,
                     domain: domain.as_deref(),
                     user: user.as_deref(),
+                    cred_id: cred.as_deref(),
                 },
             )?;
         }
@@ -222,11 +227,11 @@ fn main() -> anyhow::Result<()> {
         }
         #[cfg(feature = "keyring")]
         Command::Delete {
-            domain,
+            target,
             cred_type,
             user,
         } => {
-            commands::delete::run(&domain, cred_type.as_deref(), user.as_deref())?;
+            commands::delete::run(&target, cred_type.as_deref(), user.as_deref())?;
         }
         #[cfg(feature = "keyring")]
         Command::Flush { dry_run } => {

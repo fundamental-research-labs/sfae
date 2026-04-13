@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use crate::error::SfaeError;
-use crate::store::SecretStore;
+use crate::store::{CredentialSetInfo, SecretStore};
 
 /// SecretStore backed by the SFAE HTTP API.
 ///
@@ -36,20 +38,43 @@ impl ApiStore {
     }
 }
 
+// -- Response types for the resolve/list endpoints ----------------------------
+
 #[derive(serde::Deserialize)]
 struct ResolveResponse {
-    values: std::collections::HashMap<String, Option<String>>,
+    values: HashMap<String, Option<String>>,
 }
 
 #[derive(serde::Deserialize)]
-struct CredentialEntry {
+struct LegacyCredentialEntry {
     domain: String,
     cred_type: String,
 }
 
 #[derive(serde::Deserialize)]
-struct ListResponse {
-    credentials: Vec<CredentialEntry>,
+struct LegacyListResponse {
+    credentials: Vec<LegacyCredentialEntry>,
+}
+
+// -- Response types for the new credential set endpoints (Phase 3) ------------
+
+#[derive(serde::Deserialize)]
+struct CredentialSetEntry {
+    id: String,
+    domain: String,
+    #[serde(default)]
+    label: Option<String>,
+    keys: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct CredentialSetListResponse {
+    credentials: Vec<CredentialSetEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct StoreCredentialResponse {
+    id: String,
 }
 
 impl ApiStore {
@@ -79,6 +104,9 @@ impl ApiStore {
                  The JWT may be expired or invalid."
             )));
         }
+        if status == 404 {
+            return Err(SfaeError::CredentialNotFound("not found".into()));
+        }
         if status >= 400 {
             return Err(SfaeError::StoreError(format!(
                 "Credential store returned {status}"
@@ -86,6 +114,15 @@ impl ApiStore {
         }
 
         Ok(response)
+    }
+
+    fn read_response_body(
+        response: &mut ureq::http::Response<ureq::Body>,
+    ) -> Result<String, SfaeError> {
+        response
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| SfaeError::StoreError(format!("Failed to read response: {e}")))
     }
 }
 
@@ -97,6 +134,24 @@ impl SecretStore for ApiStore {
     }
 
     fn get(&self, key: &str) -> Result<String, SfaeError> {
+        // If key looks like a UUID, use the blob endpoint (new credential sets).
+        if uuid::Uuid::parse_str(key).is_ok() {
+            let url = format!("{}/credentials/{}/blob", self.base_url, key);
+            let req = ureq::http::Request::builder()
+                .method("GET")
+                .uri(&url)
+                .header("Authorization", self.auth_header())
+                .body(())
+                .map_err(|e| SfaeError::StoreError(format!("Failed to build request: {e}")))?;
+
+            let mut response = self.run_request(req).map_err(|e| match e {
+                SfaeError::CredentialNotFound(_) => SfaeError::CredentialNotFound(key.into()),
+                other => other,
+            })?;
+            return Self::read_response_body(&mut response);
+        }
+
+        // Legacy: resolve endpoint for flat domain_TYPE keys.
         let url = format!("{}/credentials/resolve", self.base_url);
         let body = serde_json::json!({ "keys": [key] }).to_string();
 
@@ -109,10 +164,7 @@ impl SecretStore for ApiStore {
             .map_err(|e| SfaeError::StoreError(format!("Failed to build request: {e}")))?;
 
         let mut response = self.run_request(req)?;
-        let body_str = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| SfaeError::StoreError(format!("Failed to read response: {e}")))?;
+        let body_str = Self::read_response_body(&mut response)?;
         let parsed: ResolveResponse = serde_json::from_str(&body_str)
             .map_err(|e| SfaeError::StoreError(format!("Failed to parse response: {e}")))?;
 
@@ -139,11 +191,17 @@ impl SecretStore for ApiStore {
             .map_err(|e| SfaeError::StoreError(format!("Failed to build request: {e}")))?;
 
         let mut response = self.run_request(req)?;
-        let body_str = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| SfaeError::StoreError(format!("Failed to read response: {e}")))?;
-        let parsed: ListResponse = serde_json::from_str(&body_str)
+        let body_str = Self::read_response_body(&mut response)?;
+
+        // Try new format first (returns credential set IDs)
+        if let Ok(parsed) = serde_json::from_str::<CredentialSetListResponse>(&body_str)
+            && parsed.credentials.iter().all(|c| !c.id.is_empty())
+        {
+            return Ok(parsed.credentials.into_iter().map(|c| c.id).collect());
+        }
+
+        // Legacy format: domain_cred_type strings
+        let parsed: LegacyListResponse = serde_json::from_str(&body_str)
             .map_err(|e| SfaeError::StoreError(format!("Failed to parse response: {e}")))?;
 
         let mut keys: Vec<String> = parsed
@@ -153,5 +211,99 @@ impl SecretStore for ApiStore {
             .collect();
         keys.sort();
         Ok(keys)
+    }
+
+    // -- Credential set operations (active once server supports Phase 3 API) --
+
+    fn supports_credential_sets(&self) -> bool {
+        true
+    }
+
+    fn store_credential_set(
+        &mut self,
+        domain: &str,
+        label: Option<&str>,
+        values: &HashMap<String, String>,
+    ) -> Result<String, SfaeError> {
+        let url = format!("{}/credentials", self.base_url);
+        let body = serde_json::json!({
+            "domain": domain,
+            "label": label,
+            "values": values,
+        })
+        .to_string();
+
+        let req = ureq::http::Request::builder()
+            .method("POST")
+            .uri(&url)
+            .header("Authorization", self.auth_header())
+            .header("Content-Type", "application/json")
+            .body(body)
+            .map_err(|e| SfaeError::StoreError(format!("Failed to build request: {e}")))?;
+
+        let mut response = self.run_request(req)?;
+        let body_str = Self::read_response_body(&mut response)?;
+        let parsed: StoreCredentialResponse = serde_json::from_str(&body_str)
+            .map_err(|e| SfaeError::StoreError(format!("Failed to parse response: {e}")))?;
+
+        Ok(parsed.id)
+    }
+
+    fn list_credential_sets(
+        &self,
+        domain: Option<&str>,
+    ) -> Result<Vec<CredentialSetInfo>, SfaeError> {
+        let url = match domain {
+            Some(d) => format!("{}/credentials/{}", self.base_url, d),
+            None => format!("{}/credentials", self.base_url),
+        };
+
+        let req = ureq::http::Request::builder()
+            .method("GET")
+            .uri(&url)
+            .header("Authorization", self.auth_header())
+            .body(())
+            .map_err(|e| SfaeError::StoreError(format!("Failed to build request: {e}")))?;
+
+        let mut response = match self.run_request(req) {
+            Ok(r) => r,
+            Err(SfaeError::CredentialNotFound(_)) => return Ok(vec![]),
+            Err(e) => return Err(e),
+        };
+        let body_str = Self::read_response_body(&mut response)?;
+
+        // Try new format
+        let parsed: CredentialSetListResponse = match serde_json::from_str(&body_str) {
+            Ok(p) => p,
+            Err(_) => return Ok(vec![]), // Server returns old format — no sets
+        };
+
+        Ok(parsed
+            .credentials
+            .into_iter()
+            .map(|c| CredentialSetInfo {
+                id: c.id,
+                domain: c.domain,
+                label: c.label,
+                keys: c.keys,
+            })
+            .collect())
+    }
+
+    fn delete_credential_set(&mut self, id: &str) -> Result<(), SfaeError> {
+        let url = format!("{}/credentials/{}", self.base_url, id);
+
+        let req = ureq::http::Request::builder()
+            .method("DELETE")
+            .uri(&url)
+            .header("Authorization", self.auth_header())
+            .body(())
+            .map_err(|e| SfaeError::StoreError(format!("Failed to build request: {e}")))?;
+
+        self.run_request(req).map_err(|e| match e {
+            SfaeError::CredentialNotFound(_) => SfaeError::CredentialNotFound(id.into()),
+            other => other,
+        })?;
+        Ok(())
     }
 }

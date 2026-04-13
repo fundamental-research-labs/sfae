@@ -4,12 +4,42 @@ use sfae_core::store::SecretStore;
 
 use crate::store_factory::create_store;
 
+/// Check if a string looks like a UUID (8-4-4-4-12 hex pattern).
+fn looks_like_uuid(s: &str) -> bool {
+    if s.len() != 36 {
+        return false;
+    }
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && parts[0].len() == 8
+        && parts[1].len() == 4
+        && parts[2].len() == 4
+        && parts[3].len() == 4
+        && parts[4].len() == 12
+        && parts
+            .iter()
+            .all(|p| p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
 pub fn run(
-    domain: &str,
+    target: &str,
     cred_type_str: Option<&str>,
     username: Option<&str>,
 ) -> anyhow::Result<()> {
     let mut store = create_store();
+
+    // If target looks like a UUID, delete by credential set ID.
+    if looks_like_uuid(target) {
+        if cred_type_str.is_some() || username.is_some() {
+            anyhow::bail!("--type and --user flags are not used with UUID deletion");
+        }
+        store.delete_credential_set(target)?;
+        eprintln!("Deleted credential set: {target}");
+        return Ok(());
+    }
+
+    // Otherwise treat as domain (legacy path).
+    let domain = target;
 
     if let Some(ct_str) = cred_type_str {
         let cred_type: CredentialType = ct_str.parse().map_err(|e: String| anyhow::anyhow!(e))?;

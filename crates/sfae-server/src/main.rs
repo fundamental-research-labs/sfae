@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -5,7 +6,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{get, post},
 };
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,7 @@ struct AppState {
     pool: PgPool,
     jwt_secret: String,
     internal_auth_secret: String,
+    google_client_id: Option<String>,
     google_client_secret: Option<String>,
 }
 
@@ -101,14 +103,13 @@ struct Claims {
 #[derive(Deserialize)]
 struct StoreCredentialReq {
     domain: String,
-    cred_type: String,
-    value: String,
-    metadata: Option<serde_json::Value>,
+    label: Option<String>,
+    values: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
-struct ResolveReq {
-    keys: Vec<String>,
+struct UpdateCredentialReq {
+    values: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -122,20 +123,24 @@ struct OkResponse {
 }
 
 #[derive(Serialize)]
+struct StoreOkResponse {
+    ok: bool,
+    id: String,
+}
+
+#[derive(Serialize)]
 struct CredentialEntry {
+    id: String,
     domain: String,
-    cred_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    keys: Vec<String>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Serialize)]
 struct ListResponse {
     credentials: Vec<CredentialEntry>,
-}
-
-#[derive(Serialize)]
-struct ResolveResponse {
-    values: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -178,41 +183,74 @@ struct PendingOAuthRow {
 
 #[derive(Deserialize)]
 struct RefreshReq {
-    domain: String,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    domain: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
-// Credential key parsing
+// Helpers
 // ---------------------------------------------------------------------------
 
-/// Known credential type suffixes. Order matters — check longer suffixes first
-/// to avoid false matches (e.g. `_CLIENT_SECRET` before `_SECRET`).
-const CRED_TYPE_SUFFIXES: &[&str] = &[
-    "_CLIENT_SECRET",
-    "_REFRESH_TOKEN",
-    "_ACCESS_TOKEN",
-    "_API_KEY",
-    "_PASSWORD",
-];
-
-/// Parse a key like "github.com_ACCESS_TOKEN" into (domain, cred_type).
-fn parse_credential_key(key: &str) -> Option<(String, String)> {
-    for suffix in CRED_TYPE_SUFFIXES {
-        if let Some(domain) = key.strip_suffix(suffix)
-            && !domain.is_empty()
-        {
-            // Remove leading underscore from suffix to get the cred_type
-            return Some((domain.to_string(), suffix[1..].to_string()));
+/// Resolve OAuth client_id and client_secret from env config for a domain.
+/// Walks up parent domains (e.g. gmail.googleapis.com -> googleapis.com).
+fn resolve_oauth_client(
+    google_client_id: Option<&str>,
+    google_client_secret: Option<&str>,
+    domain: &str,
+) -> Option<(String, Option<String>)> {
+    let parts: Vec<&str> = domain.split('.').collect();
+    for i in 0..parts.len() {
+        let candidate = parts[i..].join(".");
+        if candidate == "googleapis.com" {
+            let client_id = google_client_id?.to_string();
+            let client_secret = google_client_secret.map(String::from);
+            return Some((client_id, client_secret));
         }
     }
     None
+}
+
+/// Find an OAuth credential set for a domain (one containing OAUTH_ACCESS_TOKEN).
+/// Walks up parent domains for fallback.
+async fn find_oauth_set_for_domain(
+    pool: &PgPool,
+    user_id: &str,
+    domain: &str,
+) -> Result<Option<(String, String, String)>, sqlx::Error> {
+    let parts: Vec<&str> = domain.split('.').collect();
+    for i in 0..parts.len() {
+        if parts.len() - i < 2 {
+            break;
+        }
+        let candidate = parts[i..].join(".");
+        let row = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT id::text, domain, value FROM sfae_credentials \
+             WHERE user_id = $1 AND domain = $2 AND 'OAUTH_ACCESS_TOKEN' = ANY(keys) \
+             LIMIT 1",
+        )
+        .bind(user_id)
+        .bind(&candidate)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some(row) = row {
+            return Ok(Some(row));
+        }
+    }
+
+    Ok(None)
 }
 
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// POST /credentials — store or upsert a credential (internal auth only)
+/// POST /credentials — create a new credential set (internal auth only)
+///
+/// Accepts `{domain, label?, values: {KEY: VALUE, ...}}`, inserts a new row
+/// with a generated UUID, and returns `{ok: true, id: "<uuid>"}`.
 async fn store_credential(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -231,30 +269,161 @@ async fn store_credential(
     }
     let user_id = auth.user_id();
 
-    let result = sqlx::query(
-        "INSERT INTO sfae_credentials (user_id, domain, cred_type, value, metadata, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, now()) \
-         ON CONFLICT (user_id, domain, cred_type) \
-         DO UPDATE SET value = $4, metadata = $5, updated_at = now()",
+    let mut keys: Vec<String> = body.values.keys().cloned().collect();
+    keys.sort();
+
+    let value_json = match serde_json::to_string(&body.values) {
+        Ok(j) => j,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("Invalid values: {e}")).into_response(),
+    };
+
+    let result = sqlx::query_as::<_, (String,)>(
+        "INSERT INTO sfae_credentials (user_id, domain, label, keys, value) \
+         VALUES ($1, $2, $3, $4, $5) \
+         RETURNING id::text",
     )
     .bind(user_id)
     .bind(&body.domain)
-    .bind(&body.cred_type)
-    .bind(&body.value)
-    .bind(&body.metadata)
+    .bind(&body.label)
+    .bind(&keys)
+    .bind(&value_json)
+    .fetch_one(&state.pool)
+    .await;
+
+    match result {
+        Ok((id,)) => axum::Json(StoreOkResponse { ok: true, id }).into_response(),
+        Err(e) => {
+            tracing::error!("DB error storing credential set: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response()
+        }
+    }
+}
+
+/// PUT /credentials/:id — merge fields into an existing credential set (internal auth only)
+///
+/// Reads the current blob, merges new `{values}` into it, and writes back.
+async fn update_credential(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    axum::Json(body): axum::Json<UpdateCredentialReq>,
+) -> impl IntoResponse {
+    let auth = match extract_auth(&headers, &state) {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    if !auth.is_internal() {
+        return (
+            StatusCode::FORBIDDEN,
+            "Write requires internal auth".to_string(),
+        )
+            .into_response();
+    }
+    let user_id = auth.user_id();
+
+    // Read current blob
+    let current = sqlx::query_as::<_, (String,)>(
+        "SELECT value FROM sfae_credentials WHERE id = $1::uuid AND user_id = $2",
+    )
+    .bind(&id)
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await;
+
+    let current_value = match current {
+        Ok(Some((v,))) => v,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                "Credential set not found".to_string(),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("DB error reading credential set: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response();
+        }
+    };
+
+    // Parse and merge
+    let mut values: HashMap<String, String> =
+        serde_json::from_str(&current_value).unwrap_or_default();
+    for (k, v) in body.values {
+        values.insert(k, v);
+    }
+
+    let mut keys: Vec<String> = values.keys().cloned().collect();
+    keys.sort();
+
+    let value_json = match serde_json::to_string(&values) {
+        Ok(j) => j,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Serialize error: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    let result = sqlx::query(
+        "UPDATE sfae_credentials SET value = $1, keys = $2, updated_at = now() \
+         WHERE id = $3::uuid AND user_id = $4",
+    )
+    .bind(&value_json)
+    .bind(&keys)
+    .bind(&id)
+    .bind(user_id)
     .execute(&state.pool)
     .await;
 
     match result {
         Ok(_) => axum::Json(OkResponse { ok: true }).into_response(),
         Err(e) => {
-            tracing::error!("DB error storing credential: {e}");
+            tracing::error!("DB error updating credential set: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response()
         }
     }
 }
 
-/// GET /credentials — list all credentials for the authenticated user
+/// GET /credentials/:id/blob — return the raw JSON blob for a credential set
+///
+/// The response body is the JSON string exactly as stored (not wrapped in an
+/// envelope). Both Bearer JWT and internal auth accepted.
+async fn get_blob(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let auth = match extract_auth(&headers, &state) {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    let user_id = auth.user_id();
+
+    let result = sqlx::query_as::<_, (String,)>(
+        "SELECT value FROM sfae_credentials WHERE id = $1::uuid AND user_id = $2",
+    )
+    .bind(&id)
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await;
+
+    match result {
+        Ok(Some((value,))) => (StatusCode::OK, value).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            "Credential set not found".to_string(),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("DB error fetching blob: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response()
+        }
+    }
+}
+
+/// GET /credentials — list all credential sets for the authenticated user
 async fn list_all_credentials(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -265,9 +434,18 @@ async fn list_all_credentials(
     };
     let user_id = auth.user_id();
 
-    let rows = sqlx::query_as::<_, (String, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT domain, cred_type, updated_at FROM sfae_credentials \
-         WHERE user_id = $1 ORDER BY domain, cred_type",
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Option<String>,
+            Vec<String>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        "SELECT id::text, domain, label, keys, updated_at FROM sfae_credentials \
+         WHERE user_id = $1 ORDER BY domain, label",
     )
     .bind(user_id)
     .fetch_all(&state.pool)
@@ -277,9 +455,11 @@ async fn list_all_credentials(
         Ok(rows) => {
             let credentials: Vec<CredentialEntry> = rows
                 .into_iter()
-                .map(|(domain, cred_type, updated_at)| CredentialEntry {
+                .map(|(id, domain, label, keys, updated_at)| CredentialEntry {
+                    id,
                     domain,
-                    cred_type,
+                    label,
+                    keys,
                     updated_at,
                 })
                 .collect();
@@ -292,7 +472,7 @@ async fn list_all_credentials(
     }
 }
 
-/// GET /credentials/:domain — list credential types for a domain
+/// GET /credentials/:domain — list credential sets for a domain
 async fn list_credentials(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -304,8 +484,17 @@ async fn list_credentials(
     };
     let user_id = auth.user_id();
 
-    let rows = sqlx::query_as::<_, (String, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT domain, cred_type, updated_at FROM sfae_credentials \
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Option<String>,
+            Vec<String>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        "SELECT id::text, domain, label, keys, updated_at FROM sfae_credentials \
          WHERE user_id = $1 AND domain = $2",
     )
     .bind(user_id)
@@ -317,9 +506,11 @@ async fn list_credentials(
         Ok(rows) => {
             let credentials: Vec<CredentialEntry> = rows
                 .into_iter()
-                .map(|(domain, cred_type, updated_at)| CredentialEntry {
+                .map(|(id, domain, label, keys, updated_at)| CredentialEntry {
+                    id,
                     domain,
-                    cred_type,
+                    label,
+                    keys,
                     updated_at,
                 })
                 .collect();
@@ -332,86 +523,11 @@ async fn list_credentials(
     }
 }
 
-/// POST /credentials/resolve — batch resolve credential values
-async fn resolve_credentials(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    axum::Json(body): axum::Json<ResolveReq>,
-) -> impl IntoResponse {
-    let auth = match extract_auth(&headers, &state) {
-        Ok(a) => a,
-        Err(e) => return e.into_response(),
-    };
-    let user_id = auth.user_id();
-
-    // Parse all keys into (domain, cred_type) pairs
-    let parsed: Vec<(String, String, String)> = body
-        .keys
-        .iter()
-        .filter_map(|key| {
-            parse_credential_key(key).map(|(domain, cred_type)| (key.clone(), domain, cred_type))
-        })
-        .collect();
-
-    // Build result map — start with null for all requested keys
-    let mut values = serde_json::Map::new();
-    for key in &body.keys {
-        values.insert(key.clone(), serde_json::Value::Null);
-    }
-
-    if !parsed.is_empty() {
-        // Build a dynamic query for batch lookup
-        // SELECT domain, cred_type, value FROM sfae_credentials
-        // WHERE user_id = $1 AND (domain, cred_type) IN (...)
-        let mut query = String::from(
-            "SELECT domain, cred_type, value FROM sfae_credentials WHERE user_id = $1 AND (",
-        );
-        let mut bind_idx = 2u32;
-        for (i, _) in parsed.iter().enumerate() {
-            if i > 0 {
-                query.push_str(" OR ");
-            }
-            query.push_str(&format!(
-                "(domain = ${} AND cred_type = ${})",
-                bind_idx,
-                bind_idx + 1
-            ));
-            bind_idx += 2;
-        }
-        query.push(')');
-
-        let mut q = sqlx::query_as::<_, (String, String, String)>(&query).bind(user_id);
-        for (_, domain, cred_type) in &parsed {
-            q = q.bind(domain).bind(cred_type);
-        }
-
-        match q.fetch_all(&state.pool).await {
-            Ok(rows) => {
-                for (domain, cred_type, value) in rows {
-                    // Find the original key for this (domain, cred_type)
-                    for (key, d, ct) in &parsed {
-                        if d == &domain && ct == &cred_type {
-                            values.insert(key.clone(), serde_json::Value::String(value.clone()));
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!("DB error resolving credentials: {e}");
-                return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}"))
-                    .into_response();
-            }
-        }
-    }
-
-    axum::Json(ResolveResponse { values }).into_response()
-}
-
-/// DELETE /credentials/:domain/:cred_type — delete a credential (internal auth only)
+/// DELETE /credentials/:id — delete a credential set by UUID (internal auth only)
 async fn delete_credential(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path((domain, cred_type)): Path<(String, String)>,
+    Path(id): Path<String>,
 ) -> impl IntoResponse {
     let auth = match extract_auth(&headers, &state) {
         Ok(a) => a,
@@ -426,17 +542,24 @@ async fn delete_credential(
     }
     let user_id = auth.user_id();
 
-    let result = sqlx::query(
-        "DELETE FROM sfae_credentials WHERE user_id = $1 AND domain = $2 AND cred_type = $3",
-    )
-    .bind(user_id)
-    .bind(&domain)
-    .bind(&cred_type)
-    .execute(&state.pool)
-    .await;
+    let result = sqlx::query("DELETE FROM sfae_credentials WHERE id = $1::uuid AND user_id = $2")
+        .bind(&id)
+        .bind(user_id)
+        .execute(&state.pool)
+        .await;
 
     match result {
-        Ok(_) => axum::Json(OkResponse { ok: true }).into_response(),
+        Ok(r) => {
+            if r.rows_affected() == 0 {
+                (
+                    StatusCode::NOT_FOUND,
+                    "Credential set not found".to_string(),
+                )
+                    .into_response()
+            } else {
+                axum::Json(OkResponse { ok: true }).into_response()
+            }
+        }
         Err(e) => {
             tracing::error!("DB error deleting credential: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response()
@@ -594,8 +717,9 @@ async fn consume_pending_oauth(
 
 /// POST /credentials/refresh — server-side OAuth token refresh
 ///
-/// Both Bearer JWT and internal auth accepted. Reads OAuth metadata from the
-/// ACCESS_TOKEN row, fetches a new token from the provider, and updates the DB.
+/// Accepts `{id?, domain?}`. Reads OAuth metadata from the credential blob,
+/// fetches a new token from the provider, and updates the blob.
+/// Both Bearer JWT and internal auth accepted.
 async fn refresh_credential(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -607,99 +731,100 @@ async fn refresh_credential(
     };
     let user_id = auth.user_id().to_string();
 
-    // 1. Read ACCESS_TOKEN row to get metadata (token_url, client_id)
-    let access_row = sqlx::query_as::<_, (Option<serde_json::Value>,)>(
-        "SELECT metadata FROM sfae_credentials \
-         WHERE user_id = $1 AND domain = $2 AND cred_type = 'ACCESS_TOKEN'",
-    )
-    .bind(&user_id)
-    .bind(&body.domain)
-    .fetch_optional(&state.pool)
-    .await;
-
-    let metadata = match access_row {
-        Ok(Some((Some(m),))) => m,
-        Ok(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                "No OAuth metadata found for this domain".to_string(),
-            )
-                .into_response();
+    // 1. Find the credential set and its blob
+    let (cred_id, domain, blob_str) = if let Some(ref id) = body.id {
+        match sqlx::query_as::<_, (String, String)>(
+            "SELECT domain, value FROM sfae_credentials WHERE id = $1::uuid AND user_id = $2",
+        )
+        .bind(id)
+        .bind(&user_id)
+        .fetch_optional(&state.pool)
+        .await
+        {
+            Ok(Some((d, v))) => (id.clone(), d, v),
+            Ok(None) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    "Credential set not found".to_string(),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                tracing::error!("DB error: {e}");
+                return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}"))
+                    .into_response();
+            }
         }
+    } else if let Some(ref domain) = body.domain {
+        match find_oauth_set_for_domain(&state.pool, &user_id, domain).await {
+            Ok(Some((id, d, v))) => (id, d, v),
+            Ok(None) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    "No OAuth credentials found for this domain".to_string(),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                tracing::error!("DB error: {e}");
+                return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}"))
+                    .into_response();
+            }
+        }
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Either id or domain is required".to_string(),
+        )
+            .into_response();
+    };
+
+    // 2. Parse blob
+    let mut blob: HashMap<String, String> = match serde_json::from_str(&blob_str) {
+        Ok(v) => v,
         Err(e) => {
-            tracing::error!("DB error reading access token metadata: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response();
-        }
-    };
-
-    let token_url = match metadata.get("token_url").and_then(|v| v.as_str()) {
-        Some(u) => u.to_string(),
-        None => {
             return (
-                StatusCode::NOT_FOUND,
-                "OAuth metadata missing token_url".to_string(),
-            )
-                .into_response();
-        }
-    };
-    let client_id = match metadata.get("client_id").and_then(|v| v.as_str()) {
-        Some(c) => c.to_string(),
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                "OAuth metadata missing client_id".to_string(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Invalid credential blob: {e}"),
             )
                 .into_response();
         }
     };
 
-    // 2. Read REFRESH_TOKEN row
-    let refresh_row = sqlx::query_as::<_, (String,)>(
-        "SELECT value FROM sfae_credentials \
-         WHERE user_id = $1 AND domain = $2 AND cred_type = 'REFRESH_TOKEN'",
-    )
-    .bind(&user_id)
-    .bind(&body.domain)
-    .fetch_optional(&state.pool)
-    .await;
-
-    let refresh_token = match refresh_row {
-        Ok(Some((val,))) => val,
-        Ok(None) => {
+    let token_url = match blob.get("OAUTH_TOKEN_URL") {
+        Some(u) => u.clone(),
+        None => {
             return (
                 StatusCode::NOT_FOUND,
-                "No refresh token found for this domain".to_string(),
+                "Credential blob missing OAUTH_TOKEN_URL".to_string(),
             )
                 .into_response();
         }
-        Err(e) => {
-            tracing::error!("DB error reading refresh token: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response();
+    };
+    let refresh_token = match blob.get("OAUTH_REFRESH_TOKEN") {
+        Some(t) => t.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                "Credential blob missing OAUTH_REFRESH_TOKEN".to_string(),
+            )
+                .into_response();
         }
     };
 
-    // 3. Look up client_secret: config env var first, then CLIENT_SECRET credential row
-    let client_secret =
-        if body.domain == "googleapis.com" || body.domain.ends_with(".googleapis.com") {
-            state.google_client_secret.clone()
-        } else {
-            None
-        };
-    let client_secret = match client_secret {
-        Some(s) => Some(s),
+    // 3. Resolve client credentials from env config by domain
+    let (client_id, client_secret) = match resolve_oauth_client(
+        state.google_client_id.as_deref(),
+        state.google_client_secret.as_deref(),
+        &domain,
+    ) {
+        Some(pair) => pair,
         None => {
-            // Fallback: look for a CLIENT_SECRET credential row
-            sqlx::query_as::<_, (String,)>(
-                "SELECT value FROM sfae_credentials \
-                 WHERE user_id = $1 AND domain = $2 AND cred_type = 'CLIENT_SECRET'",
+            return (
+                StatusCode::NOT_FOUND,
+                format!("No OAuth client config for domain {domain}"),
             )
-            .bind(&user_id)
-            .bind(&body.domain)
-            .fetch_optional(&state.pool)
-            .await
-            .ok()
-            .flatten()
-            .map(|(v,)| v)
+                .into_response();
         }
     };
 
@@ -714,9 +839,7 @@ async fn refresh_credential(
         params.push(("client_secret", secret.clone()));
     }
 
-    let provider_resp = http.post(&token_url).form(&params).send().await;
-
-    let provider_resp = match provider_resp {
+    let provider_resp = match http.post(&token_url).form(&params).send().await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Provider token endpoint error: {e}");
@@ -762,38 +885,39 @@ async fn refresh_credential(
         }
     };
 
-    // 5. Update ACCESS_TOKEN in DB (preserve existing metadata)
-    let update_access = sqlx::query(
-        "UPDATE sfae_credentials SET value = $1, updated_at = now() \
-         WHERE user_id = $2 AND domain = $3 AND cred_type = 'ACCESS_TOKEN'",
+    // 5. Update blob with new tokens
+    blob.insert("OAUTH_ACCESS_TOKEN".to_string(), new_access_token);
+    if let Some(new_refresh) = token_data.get("refresh_token").and_then(|v| v.as_str()) {
+        blob.insert("OAUTH_REFRESH_TOKEN".to_string(), new_refresh.to_string());
+    }
+
+    let mut keys: Vec<String> = blob.keys().cloned().collect();
+    keys.sort();
+    let value_json = match serde_json::to_string(&blob) {
+        Ok(j) => j,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Serialize error: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    let update_result = sqlx::query(
+        "UPDATE sfae_credentials SET value = $1, keys = $2, updated_at = now() \
+         WHERE id = $3::uuid AND user_id = $4",
     )
-    .bind(&new_access_token)
+    .bind(&value_json)
+    .bind(&keys)
+    .bind(&cred_id)
     .bind(&user_id)
-    .bind(&body.domain)
     .execute(&state.pool)
     .await;
 
-    if let Err(e) = update_access {
-        tracing::error!("DB error updating access token: {e}");
+    if let Err(e) = update_result {
+        tracing::error!("DB error updating credential blob: {e}");
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response();
-    }
-
-    // 6. Update REFRESH_TOKEN if provider rotated it
-    if let Some(new_refresh) = token_data.get("refresh_token").and_then(|v| v.as_str()) {
-        let update_refresh = sqlx::query(
-            "UPDATE sfae_credentials SET value = $1, updated_at = now() \
-             WHERE user_id = $2 AND domain = $3 AND cred_type = 'REFRESH_TOKEN'",
-        )
-        .bind(new_refresh)
-        .bind(&user_id)
-        .bind(&body.domain)
-        .execute(&state.pool)
-        .await;
-
-        if let Err(e) = update_refresh {
-            tracing::error!("DB error updating refresh token: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {e}")).into_response();
-        }
     }
 
     axum::Json(OkResponse { ok: true }).into_response()
@@ -828,6 +952,7 @@ async fn main() {
         .parse()
         .expect("SFAE_SERVER_PORT must be a valid port number");
 
+    let google_client_id = std::env::var("SFAE_GOOGLE_CLIENT_ID").ok();
     let google_client_secret = std::env::var("SFAE_GOOGLE_CLIENT_SECRET").ok();
 
     let pool = PgPool::connect(&database_url)
@@ -838,6 +963,7 @@ async fn main() {
         pool,
         jwt_secret,
         internal_auth_secret,
+        google_client_id,
         google_client_secret,
     });
 
@@ -846,13 +972,14 @@ async fn main() {
             "/credentials",
             post(store_credential).get(list_all_credentials),
         )
-        .route("/credentials/{domain}", get(list_credentials))
-        .route("/credentials/resolve", post(resolve_credentials))
-        .route(
-            "/credentials/{domain}/{cred_type}",
-            delete(delete_credential),
-        )
         .route("/credentials/refresh", post(refresh_credential))
+        .route("/credentials/{id}/blob", get(get_blob))
+        .route(
+            "/credentials/{id_or_domain}",
+            get(list_credentials)
+                .put(update_credential)
+                .delete(delete_credential),
+        )
         .route("/oauth/pending", post(create_pending_oauth))
         .route("/oauth/pending/{state}", get(consume_pending_oauth))
         .route("/auth/token", post(mint_token))
@@ -877,53 +1004,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_credential_key_access_token() {
-        let (domain, cred_type) = parse_credential_key("github.com_ACCESS_TOKEN").unwrap();
-        assert_eq!(domain, "github.com");
-        assert_eq!(cred_type, "ACCESS_TOKEN");
+    fn resolve_oauth_client_google() {
+        let (id, secret) = resolve_oauth_client(
+            Some("test-client-id"),
+            Some("test-secret"),
+            "googleapis.com",
+        )
+        .unwrap();
+        assert_eq!(id, "test-client-id");
+        assert_eq!(secret.unwrap(), "test-secret");
     }
 
     #[test]
-    fn parse_credential_key_api_key() {
-        let (domain, cred_type) = parse_credential_key("stripe.com_API_KEY").unwrap();
-        assert_eq!(domain, "stripe.com");
-        assert_eq!(cred_type, "API_KEY");
+    fn resolve_oauth_client_google_subdomain() {
+        let (id, _) = resolve_oauth_client(
+            Some("test-client-id"),
+            Some("test-secret"),
+            "gmail.googleapis.com",
+        )
+        .unwrap();
+        assert_eq!(id, "test-client-id");
     }
 
     #[test]
-    fn parse_credential_key_password() {
-        let (domain, cred_type) = parse_credential_key("example.org_PASSWORD").unwrap();
-        assert_eq!(domain, "example.org");
-        assert_eq!(cred_type, "PASSWORD");
+    fn resolve_oauth_client_unknown_domain() {
+        assert!(
+            resolve_oauth_client(Some("test-client-id"), Some("test-secret"), "github.com")
+                .is_none()
+        );
     }
 
     #[test]
-    fn parse_credential_key_client_secret() {
-        let (domain, cred_type) = parse_credential_key("oauth.example.com_CLIENT_SECRET").unwrap();
-        assert_eq!(domain, "oauth.example.com");
-        assert_eq!(cred_type, "CLIENT_SECRET");
+    fn resolve_oauth_client_no_env_config() {
+        assert!(resolve_oauth_client(None, None, "googleapis.com").is_none());
     }
 
     #[test]
-    fn parse_credential_key_refresh_token() {
-        let (domain, cred_type) = parse_credential_key("googleapis.com_REFRESH_TOKEN").unwrap();
-        assert_eq!(domain, "googleapis.com");
-        assert_eq!(cred_type, "REFRESH_TOKEN");
-    }
-
-    #[test]
-    fn parse_credential_key_unknown_suffix() {
-        assert!(parse_credential_key("github.com_UNKNOWN").is_none());
-    }
-
-    #[test]
-    fn parse_credential_key_empty_domain() {
-        assert!(parse_credential_key("_ACCESS_TOKEN").is_none());
-    }
-
-    #[test]
-    fn parse_credential_key_no_suffix() {
-        assert!(parse_credential_key("github.com").is_none());
+    fn resolve_oauth_client_secret_optional() {
+        let (id, secret) =
+            resolve_oauth_client(Some("test-client-id"), None, "googleapis.com").unwrap();
+        assert_eq!(id, "test-client-id");
+        assert!(secret.is_none());
     }
 
     #[test]
