@@ -1,6 +1,6 @@
 [![CI](https://github.com/fundamental-research-labs/sfae/actions/workflows/ci.yml/badge.svg)](https://github.com/fundamental-research-labs/sfae/actions/workflows/ci.yml)
 
-# SFAE — Speak Friend, and Enter
+# 🏔️ SFAE — Speak Friend, and Enter
 
 *Pronounced "safe."* &nbsp; [sfae.io](https://sfae.io)
 
@@ -9,24 +9,24 @@ SFAE lets AI coding agents make authenticated API calls without ever seeing cred
 ## Features
 
 - **Keychain-native storage** — macOS Keychain, Windows Credential Manager, Linux Secret Service. Not env vars.
-- **Placeholder-based requests** — agents write `-ACCESS_TOKEN-`, `-API_KEY-`, etc. SFAE resolves them at request time.
-- **OAuth 2.0 with PKCE and auto-refresh** — built-in presets for Google, bring-your-own for everything else.
-- **Browser-based credential prompts** — opens a local page for the human to enter credentials. No stdin required.
-- **Domain matching with subdomain fallback** — a credential stored for `googleapis.com` resolves for `gmail.googleapis.com`, etc.
+- **All sorts of credentials** — Basic Auth, API Key, OAuth 2.0, and more.
+- **Communication protocols** — HTTP, Postgres, and more coming soon.
 
 ## Installation
 
 ```
-cargo install sfae
+cargo build --bin sfae --release
 ```
 
-To embed the Google OAuth client secret at build time:
+Optionally, embed the Google OAuth client secret at build time:
 
 ```
-SFAE_GOOGLE_CLIENT_SECRET="your-secret-here" cargo install sfae
+SFAE_GOOGLE_CLIENT_SECRET="your-secret-here" cargo build --bin sfae --release
 ```
 
 Without the env var, the build succeeds but Google OAuth will require `--client-secret` at runtime.
+
+The binary is produced at `./target/release/sfae`.
 
 ## Quick start
 
@@ -67,3 +67,7 @@ crates/
 ## License
 
 MIT
+
+---
+
+*🧙 You shall not pass.*
