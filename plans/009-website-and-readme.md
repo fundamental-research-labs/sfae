@@ -60,7 +60,7 @@ All three agents converged on the same core message and structure:
 
 ## Phase 3: README update
 
-- [ ] 3a: Update `README.md` — replace the current intro/description with the tighter narrative. Keep the existing quick-start code examples, features list, project structure, and license sections but tighten the copy. Add a link to sfae.io. Remove the emoji wizard quote at the bottom — it undercuts the "no bullshit" tone.
+- [x] 3a: Update `README.md` — replace the current intro/description with the tighter narrative. Keep the existing quick-start code examples, features list, project structure, and license sections but tighten the copy. Add a link to sfae.io. Remove the emoji wizard quote at the bottom — it undercuts the "no bullshit" tone.
 
 ---
 
