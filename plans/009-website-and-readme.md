@@ -56,7 +56,7 @@ All three agents converged on the same core message and structure:
 
 ## Phase 2: Website content
 
-- [ ] 2a: Build `docs/index.html` — single self-contained HTML page with inline CSS. Includes: JetBrains Mono font import, light theme color system, SVG feTurbulence noise overlay, hero section (headline + subheadline), features section (4 bullets), how-it-works section (3 code steps), CTA (cargo install + GitHub link), footer. Version placeholder `__VERSION__` for workflow injection. Must be responsive (mobile-friendly). Page should reference the SFAE GitHub repo (`fundamental-research-labs/sfae`). Include a small lockpad or shield SVG icon inline for visual identity — keep it minimal.
+- [x] 2a: Build `docs/index.html` — single self-contained HTML page with inline CSS. Includes: JetBrains Mono font import, light theme color system, SVG feTurbulence noise overlay, hero section (headline + subheadline), features section (4 bullets), how-it-works section (3 code steps), CTA (cargo install + GitHub link), footer. Version placeholder `__VERSION__` for workflow injection. Must be responsive (mobile-friendly). Page should reference the SFAE GitHub repo (`fundamental-research-labs/sfae`). Include a small lockpad or shield SVG icon inline for visual identity — keep it minimal.
 
 ## Phase 3: README update
 

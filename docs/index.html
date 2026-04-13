@@ -4,10 +4,350 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SFAE — Speak Friend, and Enter</title>
+  <meta name="description" content="SFAE lets AI coding agents make authenticated API calls without ever seeing your credentials.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --white: #ffffff;
+      --bg: #fafafa;
+      --surface: #ffffff;
+      --border: #e2e2e2;
+      --text: #1a1a1a;
+      --text-secondary: #555555;
+      --text-tertiary: #888888;
+      --accent: #2a6b4a;
+      --accent-light: #e8f5ee;
+      --code-bg: #f0f0f0;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      position: relative;
+    }
+
+    /* SVG noise overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.03;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* Hero */
+    .hero {
+      padding: 96px 0 64px;
+      text-align: center;
+    }
+
+    .hero-icon {
+      display: inline-block;
+      margin-bottom: 32px;
+    }
+
+    .hero-icon svg {
+      width: 48px;
+      height: 48px;
+    }
+
+    .hero h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 16px;
+      color: var(--text);
+    }
+
+    .hero .subheadline {
+      font-size: 0.85rem;
+      font-weight: 300;
+      color: var(--text-secondary);
+      max-width: 520px;
+      margin: 0 auto;
+      line-height: 1.7;
+    }
+
+    /* Sections */
+    section {
+      padding: 48px 0;
+    }
+
+    .section-title {
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-tertiary);
+      margin-bottom: 24px;
+    }
+
+    /* Features */
+    .features {
+      list-style: none;
+    }
+
+    .features li {
+      padding: 16px 0;
+      border-top: 1px solid var(--border);
+      font-size: 0.85rem;
+      line-height: 1.7;
+    }
+
+    .features li:last-child {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .features li strong {
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .features li span {
+      color: var(--text-secondary);
+      font-weight: 300;
+    }
+
+    /* How it works */
+    .steps {
+      list-style: none;
+      counter-reset: step;
+    }
+
+    .steps li {
+      counter-increment: step;
+      padding: 24px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .steps li:last-child {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .step-label {
+      font-size: 0.7rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+
+    .step-label::before {
+      content: counter(step) ". ";
+    }
+
+    .step-desc {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      font-weight: 300;
+      margin-bottom: 12px;
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 12px 16px;
+      overflow-x: auto;
+      font-size: 0.78rem;
+      line-height: 1.6;
+      color: var(--text);
+    }
+
+    code {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* CTA */
+    .cta {
+      padding: 64px 0;
+      text-align: center;
+    }
+
+    .cta pre {
+      display: inline-block;
+      text-align: left;
+      margin-bottom: 24px;
+      font-size: 0.85rem;
+      background: var(--text);
+      color: var(--bg);
+      border: none;
+      padding: 16px 32px;
+      border-radius: 4px;
+    }
+
+    .cta-links {
+      font-size: 0.8rem;
+      color: var(--text-tertiary);
+      font-weight: 300;
+    }
+
+    .cta-links a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 400;
+    }
+
+    .cta-links a:hover {
+      text-decoration: underline;
+    }
+
+    /* Footer */
+    footer {
+      padding: 32px 0;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      font-size: 0.7rem;
+      color: var(--text-tertiary);
+      font-weight: 300;
+    }
+
+    footer a {
+      color: var(--text-tertiary);
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      color: var(--text);
+    }
+
+    .version {
+      margin-top: 4px;
+    }
+
+    /* Responsive */
+    @media (max-width: 480px) {
+      .hero {
+        padding: 64px 0 48px;
+      }
+
+      .hero h1 {
+        font-size: 1.25rem;
+      }
+
+      .hero .subheadline {
+        font-size: 0.8rem;
+      }
+
+      pre {
+        font-size: 0.72rem;
+        padding: 10px 12px;
+      }
+
+      .cta pre {
+        padding: 12px 20px;
+        font-size: 0.78rem;
+      }
+    }
+  </style>
 </head>
 <body>
-  <h1>SFAE</h1>
-  <p>Version __VERSION__</p>
-  <p>Site under construction.</p>
+  <div class="container">
+
+    <!-- Hero -->
+    <section class="hero">
+      <div class="hero-icon">
+        <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="12" y="20" width="24" height="20" rx="3" stroke="currentColor" stroke-width="2.5" fill="none"/>
+          <path d="M18 20V14a6 6 0 1 1 12 0v6" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+          <circle cx="24" cy="31" r="2.5" fill="currentColor"/>
+          <line x1="24" y1="33.5" x2="24" y2="37" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h1>Your agent makes API calls.<br>It never sees your keys.</h1>
+      <p class="subheadline">
+        Credentials stay in your OS keychain. Agents use placeholders.
+        Secrets never hit the context window.
+      </p>
+    </section>
+
+    <!-- Features -->
+    <section>
+      <h2 class="section-title">Features</h2>
+      <ul class="features">
+        <li>
+          <strong>Keychain-native storage</strong><br>
+          <span>macOS Keychain, Windows Credential Manager, Linux Secret Service. Not env vars.</span>
+        </li>
+        <li>
+          <strong>Placeholder-based requests</strong><br>
+          <span>Agent writes <code>-ACCESS_TOKEN-</code>, SFAE resolves the real value at request time.</span>
+        </li>
+        <li>
+          <strong>OAuth 2.0 with PKCE and auto-refresh</strong><br>
+          <span>Built-in presets for Google. Bring your own config for everything else.</span>
+        </li>
+        <li>
+          <strong>Browser-based credential prompts</strong><br>
+          <span>No stdin required. Works with any agent runtime.</span>
+        </li>
+      </ul>
+    </section>
+
+    <!-- How it works -->
+    <section>
+      <h2 class="section-title">How it works</h2>
+      <ol class="steps">
+        <li>
+          <div class="step-label">Check</div>
+          <p class="step-desc">Agent checks what credentials exist for a domain.</p>
+          <pre><code>sfae credentials github.com</code></pre>
+        </li>
+        <li>
+          <div class="step-label">Prompt</div>
+          <p class="step-desc">Human provides what's missing via a browser form.</p>
+          <pre><code>sfae prompt github.com ACCESS_TOKEN \
+  --url "https://github.com/settings/tokens"</code></pre>
+        </li>
+        <li>
+          <div class="step-label">Request</div>
+          <p class="step-desc">Agent makes calls with placeholders. SFAE resolves them.</p>
+          <pre><code>sfae request GET "https://api.github.com/user" \
+  -H "Authorization: Bearer -ACCESS_TOKEN-" \
+  -H "User-Agent: sfae"</code></pre>
+        </li>
+      </ol>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta">
+      <pre><code>cargo install sfae</code></pre>
+      <p class="cta-links">
+        <a href="https://github.com/fundamental-research-labs/sfae">GitHub</a>
+        &nbsp;&middot;&nbsp;
+        <a href="https://github.com/fundamental-research-labs/sfae#quick-start">Docs</a>
+      </p>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+      <div><a href="https://github.com/fundamental-research-labs/sfae">SFAE</a> — Speak Friend, and Enter</div>
+      <div class="version">__VERSION__</div>
+    </footer>
+
+  </div>
 </body>
 </html>
