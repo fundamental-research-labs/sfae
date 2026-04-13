@@ -51,8 +51,8 @@ All three agents converged on the same core message and structure:
 
 ## Phase 1: GitHub Pages infrastructure
 
-- [ ] 1a: Create `docs/` directory with `CNAME` file containing `sfae.io`, and a minimal placeholder `index.html`
-- [ ] 1b: Create `.github/workflows/pages.yml` — GitHub Actions workflow to deploy `docs/` to GitHub Pages (modeled on herm's: checkout with tags → inject version via sed → configure-pages → upload-pages-artifact → deploy-pages)
+- [x] 1a: Create `docs/` directory with `CNAME` file containing `sfae.io`, and a minimal placeholder `index.html`
+- [x] 1b: Create `.github/workflows/pages.yml` — GitHub Actions workflow to deploy `docs/` to GitHub Pages (modeled on herm's: checkout with tags → inject version via sed → configure-pages → upload-pages-artifact → deploy-pages)
 
 ## Phase 2: Website content
 
