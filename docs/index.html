@@ -187,32 +187,65 @@
       text-align: center;
     }
 
-    .cta pre {
-      display: inline-block;
-      text-align: left;
-      margin-bottom: 24px;
-      font-size: 0.85rem;
+    .cta-install {
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
       background: var(--text);
+      border-radius: 4px;
+      margin-bottom: 24px;
+    }
+
+    .cta-install pre {
+      display: inline-block;
+      margin: 0;
+      font-size: 0.85rem;
+      background: none;
       color: var(--bg);
       border: none;
-      padding: 16px 32px;
-      border-radius: 4px;
+      padding: 16px 0 16px 24px;
+      border-radius: 0;
     }
 
-    .cta-links {
-      font-size: 0.8rem;
+    .cta-install .copy-btn {
+      background: none;
+      border: none;
       color: var(--text-tertiary);
-      font-weight: 300;
+      cursor: pointer;
+      padding: 16px 20px 16px 16px;
+      display: flex;
+      align-items: center;
+      transition: color 0.15s;
     }
 
-    .cta-links a {
-      color: var(--accent);
+    .cta-install .copy-btn:hover {
+      color: var(--bg);
+    }
+
+    .cta-install .copy-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .cta-github {
+      margin-top: 4px;
+    }
+
+    .cta-github a {
+      color: var(--text-tertiary);
       text-decoration: none;
-      font-weight: 400;
+      transition: color 0.15s;
+      display: inline-flex;
+      align-items: center;
     }
 
-    .cta-links a:hover {
-      text-decoration: underline;
+    .cta-github a:hover {
+      color: var(--text);
+    }
+
+    .cta-github svg {
+      width: 24px;
+      height: 24px;
     }
 
     /* Footer */
@@ -330,12 +363,22 @@
 
     <!-- CTA -->
     <section class="cta">
-      <pre><code>cargo install sfae</code></pre>
-      <p class="cta-links">
-        <a href="https://github.com/fundamental-research-labs/sfae">GitHub</a>
-        &nbsp;&middot;&nbsp;
-        <a href="https://github.com/fundamental-research-labs/sfae#quick-start">Docs</a>
-      </p>
+      <div class="cta-install">
+        <pre><code>cargo install sfae</code></pre>
+        <button class="copy-btn" onclick="navigator.clipboard.writeText('cargo install sfae')" aria-label="Copy to clipboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+        </button>
+      </div>
+      <div class="cta-github">
+        <a href="https://github.com/fundamental-research-labs/sfae" aria-label="GitHub">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
     </section>
 
     <!-- Footer -->
