@@ -2,21 +2,15 @@
 
 # 🏔️ SFAE — Speak Friend, and Enter
 
-*Pronounced "safe".*
+*Pronounced "safe."* &nbsp; [sfae.io](https://sfae.io)
 
-> *"The Doors of Durin, Lord of Moria. Speak, friend, and enter."*
->
-> At the Doors of Durin, only the one who knew the right word could enter. SFAE works the same way — it holds the words of power (your credentials) in the OS keychain and speaks them at the gate so your agent never has to.
-
-SFAE is a CLI that lets LLM agents make authenticated API calls without ever seeing your credentials. The agent writes placeholders like `-ACCESS_TOKEN-` in its requests, and SFAE swaps them for real secrets at request time.
+SFAE lets AI coding agents make authenticated API calls without ever seeing credentials. Agents write placeholders like `-ACCESS_TOKEN-` in requests; SFAE resolves them from the OS keychain at execution time. Supports static tokens, API keys, and OAuth 2.0 with PKCE and automatic refresh.
 
 ## Features
 
-- **OS keychain storage** — credentials are stored securely using the native keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service).
-- **Placeholder-based requests** — agents write `-ACCESS_TOKEN-`, `-API_KEY-`, etc. in headers, URLs, or bodies. SFAE resolves them at request time.
-- **OAuth 2.0** — built-in support with provider presets (Google) and automatic token refresh.
-- **Browser-based credential prompt** — opens a local web page for the human to enter credentials. No stdin required.
-- **Domain matching with subdomain fallback** — a credential stored for `googleapis.com` resolves for `gmail.googleapis.com`, `www.googleapis.com`, etc.
+- **Keychain-native storage** — macOS Keychain, Windows Credential Manager, Linux Secret Service. Not env vars.
+- **All sorts of credentials** — Basic Auth, API Key, OAuth 2.0, and more.
+- **Communication protocols** — HTTP, Postgres, and more coming soon.
 
 ## Installation
 
@@ -76,4 +70,4 @@ MIT
 
 ---
 
-*🧙 You shall not pass... credentials in plaintext.*
+*🧙 You shall not pass.*
