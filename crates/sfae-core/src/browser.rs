@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 #[cfg(feature = "cli")]
@@ -5,6 +6,11 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::error::SfaeError;
+#[cfg(feature = "cli")]
+use crate::spec::{FieldSpec, PromptSpec};
+
+/// Shared CSS included in both form and done pages.
+const BASE_STYLES: &str = include_str!("base.css");
 
 /// A temporary local HTTP server bound to `127.0.0.1` on a random port.
 ///
@@ -146,6 +152,52 @@ impl HttpRequest {
     }
 }
 
+/// Collect credentials from the user via a spec-driven form in the default browser.
+///
+/// Returns a map of field names to values collected from the form.
+/// Times out after 120 seconds with `SfaeError::Cancelled`.
+#[cfg(feature = "cli")]
+pub fn browser_prompt_spec(
+    label: &str,
+    spec: &PromptSpec,
+) -> Result<HashMap<String, String>, SfaeError> {
+    let fields = collect_spec_fields(spec);
+    let server = LocalServer::new()?;
+    let local_url = format!("http://127.0.0.1:{}/", server.port());
+    server.open_browser(&local_url)?;
+
+    loop {
+        let mut req = server.accept_request()?;
+
+        match (req.method.as_str(), req.path.as_str()) {
+            ("GET", "/") => {
+                let html = build_form_page(label, spec.url.as_deref(), &fields);
+                req.respond(200, &html);
+            }
+            ("POST", "/") => {
+                let values = parse_form_fields(&req.body);
+                req.respond(200, &build_done_page());
+
+                // Validate no empty values.
+                for field in &fields {
+                    let val = values.get(&field.name).map(|s| s.as_str()).unwrap_or("");
+                    if val.is_empty() {
+                        return Err(SfaeError::Other(format!(
+                            "credential value for {} cannot be empty",
+                            field.name
+                        )));
+                    }
+                }
+
+                return Ok(values);
+            }
+            _ => {
+                req.respond(404, "");
+            }
+        }
+    }
+}
+
 /// Collect a secret from the user via a local web page opened in the default browser.
 ///
 /// - `label` — heading shown on the page (e.g., "Enter API_KEY for github.com").
@@ -156,32 +208,21 @@ impl HttpRequest {
 /// Times out after 120 seconds with `SfaeError::Cancelled`.
 #[cfg(feature = "cli")]
 pub fn browser_prompt(label: &str, url: Option<&str>) -> Result<String, SfaeError> {
-    let server = LocalServer::new()?;
-    let local_url = format!("http://127.0.0.1:{}/", server.port());
-    server.open_browser(&local_url)?;
-
-    loop {
-        let mut req = server.accept_request()?;
-
-        match (req.method.as_str(), req.path.as_str()) {
-            ("GET", "/") => {
-                let html = build_form_page(label, url);
-                req.respond(200, &html);
-            }
-            ("POST", "/") => {
-                let secret = parse_form_secret(&req.body).unwrap_or_default();
-                req.respond(200, &build_done_page());
-
-                if secret.is_empty() {
-                    return Err(SfaeError::Other("credential value cannot be empty".into()));
-                }
-                return Ok(secret);
-            }
-            _ => {
-                req.respond(404, "");
-            }
-        }
-    }
+    // Build a single-field spec and delegate.
+    let spec = PromptSpec {
+        url: url.map(|s| s.to_string()),
+        fields: Some(vec![FieldSpec {
+            name: "secret".to_string(),
+            label: Some("Credential".to_string()),
+            default: None,
+            secret: Some(true),
+        }]),
+        groups: None,
+    };
+    let mut values = browser_prompt_spec(label, &spec)?;
+    values
+        .remove("secret")
+        .ok_or_else(|| SfaeError::Other("credential value cannot be empty".into()))
 }
 
 /// Run the OAuth2 callback server: wait for the provider to redirect back with an auth code.
@@ -214,6 +255,17 @@ pub fn oauth_callback(server: &LocalServer) -> Result<(String, String), SfaeErro
     }
 }
 
+/// Collect all fields from a PromptSpec (common fields only for now;
+/// group fields are added in Phase 3).
+#[cfg(feature = "cli")]
+fn collect_spec_fields(spec: &PromptSpec) -> Vec<FieldSpec> {
+    let mut fields = Vec::new();
+    if let Some(ref f) = spec.fields {
+        fields.extend(f.iter().cloned());
+    }
+    fields
+}
+
 /// Extract a query parameter value from a path like `/callback?code=abc&state=xyz`.
 fn extract_query_param(path: &str, key: &str) -> Option<String> {
     let query = path.split('?').nth(1)?;
@@ -225,9 +277,9 @@ fn extract_query_param(path: &str, key: &str) -> Option<String> {
     None
 }
 
-/// Build the HTML form page.
+/// Build the HTML form page with data-driven fields.
 #[cfg(feature = "cli")]
-fn build_form_page(label: &str, url: Option<&str>) -> String {
+fn build_form_page(label: &str, url: Option<&str>, fields: &[FieldSpec]) -> String {
     let url_section = match url {
         Some(u) => format!(
             r#"<p class="url-hint">Obtain your credential here:<br><a href="{}" target="_blank">{}</a></p>"#,
@@ -237,14 +289,46 @@ fn build_form_page(label: &str, url: Option<&str>) -> String {
         None => String::new(),
     };
 
+    let fields_html = build_fields_html(fields);
+
     include_str!("form.html")
+        .replace("{{BASE_STYLES}}", BASE_STYLES)
         .replace("{{LABEL}}", &html_escape(label))
         .replace("{{URL_SECTION}}", &url_section)
+        .replace("{{FIELDS}}", &fields_html)
+}
+
+/// Generate HTML for a list of field specs.
+#[cfg(feature = "cli")]
+fn build_fields_html(fields: &[FieldSpec]) -> String {
+    let mut html = String::new();
+    for (i, field) in fields.iter().enumerate() {
+        let input_type = if field.is_secret() { "password" } else { "text" };
+        let label = html_escape(&field.display_label());
+        let name = html_escape(&field.name);
+        let id = format!("field_{}", html_escape(&field.name));
+        let autofocus = if i == 0 { " autofocus" } else { "" };
+        let value = field
+            .default
+            .as_ref()
+            .map(|d| format!(r#" value="{}""#, html_escape(d)))
+            .unwrap_or_default();
+        let placeholder = if field.is_secret() {
+            format!(r#" placeholder="Enter {}""#, label)
+        } else {
+            String::new()
+        };
+
+        html.push_str(&format!(
+            r#"<div class="field"><label for="{id}">{label}</label><input type="{input_type}" id="{id}" name="{name}"{value}{autofocus}{placeholder}></div>"#,
+        ));
+    }
+    html
 }
 
 /// Build the confirmation page shown after the secret is submitted or OAuth completes.
 fn build_done_page() -> String {
-    include_str!("done.html").to_string()
+    include_str!("done.html").replace("{{BASE_STYLES}}", BASE_STYLES)
 }
 
 /// Minimal HTML escaping for user-provided strings embedded in HTML.
@@ -256,15 +340,16 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// Extract the `secret` field from a `application/x-www-form-urlencoded` body.
+/// Parse all key=value pairs from a `application/x-www-form-urlencoded` body.
 #[cfg(feature = "cli")]
-fn parse_form_secret(body: &str) -> Option<String> {
+fn parse_form_fields(body: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
     for pair in body.split('&') {
-        if let Some(value) = pair.strip_prefix("secret=") {
-            return Some(url_decode(value));
+        if let Some((key, value)) = pair.split_once('=') {
+            map.insert(url_decode(key), url_decode(value));
         }
     }
-    None
+    map
 }
 
 /// Minimal percent-decoding for form values.

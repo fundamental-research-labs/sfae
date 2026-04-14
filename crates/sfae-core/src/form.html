@@ -5,25 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>sfae — enter credential</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: system-ui, -apple-system, sans-serif;
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #f5f5f5;
-    color: #1a1a1a;
-    padding: 16px;
-  }
-  .card {
-    background: #fff;
-    border: 1px solid #e0e0e0;
-    border-radius: 12px;
-    padding: 40px;
-    width: 100%;
-    max-width: 440px;
-  }
+  {{BASE_STYLES}}
   .logo {
     font-size: 0.85em;
     font-weight: 600;
@@ -52,6 +34,7 @@
   .url-hint a:hover {
     text-decoration: underline;
   }
+  .field { margin-bottom: 14px; }
   label {
     display: block;
     font-size: 0.85em;
@@ -59,7 +42,8 @@
     color: #555;
     margin-bottom: 6px;
   }
-  input[type="password"] {
+  input[type="password"],
+  input[type="text"] {
     width: 100%;
     padding: 10px 12px;
     border: 1px solid #d0d0d0;
@@ -69,7 +53,8 @@
     outline: none;
     transition: border-color 0.15s;
   }
-  input[type="password"]:focus {
+  input[type="password"]:focus,
+  input[type="text"]:focus {
     border-color: #1a73e8;
     box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
   }
@@ -101,8 +86,7 @@
   <h1>{{LABEL}}</h1>
   {{URL_SECTION}}
   <form method="POST" action="/">
-    <label for="secret">Credential</label>
-    <input type="password" id="secret" name="secret" autofocus placeholder="Paste your secret here">
+    {{FIELDS}}
     <button type="submit">Submit</button>
   </form>
   <p style="font-size:0.78em;color:#888;margin-top:16px;line-height:1.5;">Your secret is stored in the OS keychain and injected into requests at runtime. The agent never sees or has access to it.</p>
