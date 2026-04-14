@@ -59,7 +59,9 @@ fn terminal_prompt_fields(spec: &PromptSpec) -> anyhow::Result<HashMap<String, S
     // Collect common fields.
     if let Some(fields) = &spec.fields {
         for field in fields {
-            values.insert(field.name.clone(), prompt_field(&tp, field)?);
+            if let Some(v) = prompt_field(&tp, field)? {
+                values.insert(field.name.clone(), v);
+            }
         }
     }
 
@@ -87,7 +89,9 @@ fn terminal_prompt_fields(spec: &PromptSpec) -> anyhow::Result<HashMap<String, S
 
         if let Some(fields) = &group.fields {
             for field in fields {
-                values.insert(field.name.clone(), prompt_field(&tp, field)?);
+                if let Some(v) = prompt_field(&tp, field)? {
+                    values.insert(field.name.clone(), v);
+                }
             }
         }
     }
@@ -95,14 +99,19 @@ fn terminal_prompt_fields(spec: &PromptSpec) -> anyhow::Result<HashMap<String, S
     Ok(values)
 }
 
-fn prompt_field(prompt: &TerminalPrompt, field: &FieldSpec) -> anyhow::Result<String> {
+fn prompt_field(prompt: &TerminalPrompt, field: &FieldSpec) -> anyhow::Result<Option<String>> {
     let label = field.display_label();
+    let optional_hint = if field.is_optional() {
+        " (optional)"
+    } else {
+        ""
+    };
     let value = if field.is_secret() {
-        prompt.prompt_secret(&format!("Enter {label}"))?
+        prompt.prompt_secret(&format!("Enter {label}{optional_hint}"))?
     } else {
         let msg = match &field.default {
-            Some(d) => format!("{label} [{d}]"),
-            None => label.clone(),
+            Some(d) => format!("{label}{optional_hint} [{d}]"),
+            None => format!("{label}{optional_hint}"),
         };
         let v = prompt.prompt(&msg)?;
         if v.is_empty() {
@@ -112,7 +121,10 @@ fn prompt_field(prompt: &TerminalPrompt, field: &FieldSpec) -> anyhow::Result<St
         }
     };
     if value.is_empty() {
+        if field.is_optional() {
+            return Ok(None);
+        }
         anyhow::bail!("credential value for {} cannot be empty", field.name);
     }
-    Ok(value)
+    Ok(Some(value))
 }

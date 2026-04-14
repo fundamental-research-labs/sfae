@@ -45,7 +45,7 @@ impl PromptSpec {
 /// A single credential field in the spec.
 ///
 /// Supports a string shorthand: `"API_KEY"` deserializes to
-/// `FieldSpec { name: "API_KEY", label: None, default: None, secret: None }`.
+/// `FieldSpec { name: "API_KEY", label: None, default: None, secret: None, optional: None }`.
 #[derive(Debug, Clone, Serialize)]
 pub struct FieldSpec {
     /// Credential key — stored in the set and used in `{KEY}` placeholders.
@@ -63,6 +63,11 @@ pub struct FieldSpec {
     /// a known non-secret keyword (USERNAME, HOST, PORT, URL, EMAIL).
     #[serde(default)]
     pub secret: Option<bool>,
+
+    /// Whether this field is optional. Optional fields may be left empty
+    /// and will be omitted from the stored credential set when blank.
+    #[serde(default)]
+    pub optional: Option<bool>,
 }
 
 /// Names that are considered non-secret for `is_secret()` auto-detection.
@@ -79,6 +84,11 @@ impl FieldSpec {
         }
         let upper = self.name.to_uppercase();
         !NON_SECRET_KEYWORDS.iter().any(|kw| upper.contains(kw))
+    }
+
+    /// Whether this field is optional (may be left empty).
+    pub fn is_optional(&self) -> bool {
+        self.optional.unwrap_or(false)
     }
 
     /// Display label for this field.
@@ -133,6 +143,7 @@ impl<'de> Deserialize<'de> for FieldSpec {
                     label: None,
                     default: None,
                     secret: None,
+                    optional: None,
                 })
             }
 
@@ -149,6 +160,8 @@ impl<'de> Deserialize<'de> for FieldSpec {
                     default: Option<String>,
                     #[serde(default)]
                     secret: Option<bool>,
+                    #[serde(default)]
+                    optional: Option<bool>,
                 }
 
                 let obj = FieldSpecObj::deserialize(de::value::MapAccessDeserializer::new(map))?;
@@ -157,6 +170,7 @@ impl<'de> Deserialize<'de> for FieldSpec {
                     label: obj.label,
                     default: obj.default,
                     secret: obj.secret,
+                    optional: obj.optional,
                 })
             }
         }
@@ -270,6 +284,7 @@ mod tests {
             label: None,
             default: None,
             secret: None,
+            optional: None,
         };
         assert!(spec.is_secret());
     }
@@ -281,6 +296,7 @@ mod tests {
             label: None,
             default: None,
             secret: None,
+            optional: None,
         };
         // PASSWORD doesn't contain any NON_SECRET_KEYWORDS, so it's secret
         assert!(spec.is_secret());
@@ -294,6 +310,7 @@ mod tests {
                 label: None,
                 default: None,
                 secret: None,
+                optional: None,
             };
             assert!(
                 !spec.is_secret(),
@@ -309,6 +326,7 @@ mod tests {
             label: None,
             default: None,
             secret: None,
+            optional: None,
         };
         assert!(!spec.is_secret());
     }
@@ -320,8 +338,31 @@ mod tests {
             label: None,
             default: None,
             secret: Some(true),
+            optional: None,
         };
         assert!(spec.is_secret());
+    }
+
+    // --- is_optional() ---
+
+    #[test]
+    fn is_optional_default_false() {
+        let spec: FieldSpec = serde_json::from_str(r#""API_KEY""#).unwrap();
+        assert!(!spec.is_optional());
+    }
+
+    #[test]
+    fn is_optional_explicit_true() {
+        let spec: FieldSpec =
+            serde_json::from_str(r#"{"name": "PROJECT_ID", "optional": true}"#).unwrap();
+        assert!(spec.is_optional());
+    }
+
+    #[test]
+    fn is_optional_explicit_false() {
+        let spec: FieldSpec =
+            serde_json::from_str(r#"{"name": "API_KEY", "optional": false}"#).unwrap();
+        assert!(!spec.is_optional());
     }
 
     // --- display_label() ---
@@ -333,6 +374,7 @@ mod tests {
             label: None,
             default: None,
             secret: None,
+            optional: None,
         };
         assert_eq!(spec.display_label(), "Access Token");
     }
@@ -344,6 +386,7 @@ mod tests {
             label: None,
             default: None,
             secret: None,
+            optional: None,
         };
         assert_eq!(spec.display_label(), "Password");
     }
@@ -355,6 +398,7 @@ mod tests {
             label: Some("Server URL".into()),
             default: None,
             secret: None,
+            optional: None,
         };
         assert_eq!(spec.display_label(), "Server URL");
     }
@@ -366,6 +410,7 @@ mod tests {
             label: None,
             default: None,
             secret: None,
+            optional: None,
         };
         assert_eq!(spec.display_label(), "Smtp Server Host");
     }
@@ -571,6 +616,7 @@ mod tests {
             label: Some("My Key".into()),
             default: Some("default-val".into()),
             secret: Some(true),
+            optional: None,
         };
         let json = serde_json::to_string(&original).unwrap();
         let parsed: FieldSpec = serde_json::from_str(&json).unwrap();

@@ -59,6 +59,14 @@ const PROMPT_EXAMPLES: &str = r#"EXAMPLES:
       ]
     }'
 
+  Optional fields:
+    sfae prompt api.example.com --spec '{
+      "fields": [
+        {"name": "API_KEY"},
+        {"name": "PROJECT_ID", "optional": true}
+      ]
+    }'
+
   OAuth (Google):
     sfae prompt googleapis.com --spec '{
       "groups": [{
@@ -120,7 +128,7 @@ enum Command {
     },
     /// Prompt user for credentials
     #[cfg(feature = "keyring")]
-    #[command(after_long_help = PROMPT_EXAMPLES)]
+    #[command(after_help = PROMPT_EXAMPLES)]
     Prompt {
         /// Domain (e.g. github.com)
         domain: String,

@@ -409,8 +409,11 @@ pub fn browser_prompt_spec(
                     expected.extend(fields.iter().cloned());
                 }
 
-                // Validate no empty values for expected fields.
+                // Validate no empty values for expected required fields.
                 for field in &expected {
+                    if field.is_optional() {
+                        continue;
+                    }
                     let val = values.get(&field.name).map(|s| s.as_str()).unwrap_or("");
                     if val.is_empty() {
                         return Err(SfaeError::Other(format!(
@@ -421,9 +424,18 @@ pub fn browser_prompt_spec(
                 }
 
                 // Return expected field values plus any OAuth tokens.
+                // Omit empty optional fields from the result.
                 let mut result: HashMap<String, String> = expected
                     .iter()
-                    .filter_map(|f| values.remove(&f.name).map(|v| (f.name.clone(), v)))
+                    .filter_map(|f| {
+                        values.remove(&f.name).and_then(|v| {
+                            if v.is_empty() && f.is_optional() {
+                                None
+                            } else {
+                                Some((f.name.clone(), v))
+                            }
+                        })
+                    })
                     .collect();
 
                 if let Some(tokens) = oauth_tokens.take() {
@@ -457,6 +469,7 @@ pub fn browser_prompt(label: &str, url: Option<&str>) -> Result<String, SfaeErro
             label: Some("Credential".to_string()),
             default: None,
             secret: Some(true),
+            optional: None,
         }]),
         groups: None,
     };
@@ -571,9 +584,15 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
         } else {
             String::new()
         };
+        let required = if field.is_optional() { "" } else { " required" };
+        let optional_hint = if field.is_optional() {
+            r#" <span class="optional-hint">(optional)</span>"#
+        } else {
+            ""
+        };
 
         html.push_str(&format!(
-            r#"<div class="field"><label for="{id}">{label}</label><input type="{input_type}" id="{id}" name="{name}"{value}{autofocus}{placeholder}></div>"#,
+            r#"<div class="field"><label for="{id}">{label}{optional_hint}</label><input type="{input_type}" id="{id}" name="{name}"{value}{autofocus}{placeholder}{required}></div>"#,
         ));
     }
     html

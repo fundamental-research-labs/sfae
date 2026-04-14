@@ -30,7 +30,8 @@ type Field = string | {
   "name":     string,         // credential key (stored in the set, used in {KEY} placeholders)
   "label"?:   string,         // display name (defaults to humanized name)
   "default"?: string,         // pre-filled value
-  "secret"?:  boolean         // password input (auto-detected: true unless name contains USERNAME, HOST, PORT, URL, EMAIL)
+  "secret"?:  boolean,        // password input (auto-detected: true unless name contains USERNAME, HOST, PORT, URL, EMAIL)
+  "optional"?: boolean        // when true, field may be left empty (omitted from stored result)
 }
 
 type Group = {
@@ -251,5 +252,5 @@ Rename the ambiguous `"url"` field, add missing examples to `--help` and CLAUDE.
 
 Add optional field support and fix `-h` to show the full help output including examples.
 
-- [ ] 7a: Add `"optional": true` support to `FieldSpec`. In `spec.rs`: add `optional: Option<bool>` with `#[serde(default)]`, add `is_optional()` method, update the custom deserializer. In `browser.rs`: add `required` HTML attribute to non-optional inputs, skip empty-value validation for optional fields, add "(optional)" label hint, omit empty optionals from stored result. In `form.html`: add CSS for optional hint styling. In `prompt.rs`: skip empty-value bail for optional fields, show "(optional)" in terminal prompt, omit empty optionals from result HashMap. Add tests in `spec.rs`. Add an example with optional fields to `PROMPT_EXAMPLES` and CLAUDE.md. Update the `Field` type definition in this plan to include `"optional"?: boolean`.
-- [ ] 7b: Make `-h` show full help (same as `--help`). In `main.rs`: change `after_long_help = PROMPT_EXAMPLES` to `after_help = PROMPT_EXAMPLES` on the `Prompt` subcommand. This ensures AI agents see the examples regardless of which flag they use.
+- [x] 7a: Add `"optional": true` support to `FieldSpec`. In `spec.rs`: add `optional: Option<bool>` with `#[serde(default)]`, add `is_optional()` method, update the custom deserializer. In `browser.rs`: add `required` HTML attribute to non-optional inputs, skip empty-value validation for optional fields, add "(optional)" label hint, omit empty optionals from stored result. In `form.html`: add CSS for optional hint styling. In `prompt.rs`: skip empty-value bail for optional fields, show "(optional)" in terminal prompt, omit empty optionals from result HashMap. Add tests in `spec.rs`. Add an example with optional fields to `PROMPT_EXAMPLES` and CLAUDE.md. Update the `Field` type definition in this plan to include `"optional"?: boolean`.
+- [x] 7b: Make `-h` show full help (same as `--help`). In `main.rs`: change `after_long_help = PROMPT_EXAMPLES` to `after_help = PROMPT_EXAMPLES` on the `Prompt` subcommand. This ensures AI agents see the examples regardless of which flag they use.

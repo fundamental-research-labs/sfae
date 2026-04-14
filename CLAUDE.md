@@ -53,11 +53,12 @@ The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin s
 
    **Fields** can be a string shorthand (`"ACCESS_TOKEN"`) or an object:
    ```
-   {"name": "HOST", "label": "Server URL", "default": "https://...", "secret": false}
+   {"name": "HOST", "label": "Server URL", "default": "https://...", "secret": false, "optional": true}
    ```
    - `label` defaults to a humanized version of the name (e.g. `ACCESS_TOKEN` → "Access Token")
    - `secret` auto-detects: true unless name contains USERNAME, HOST, PORT, URL, or EMAIL
    - `default` pre-fills the input
+   - `optional` defaults to false; optional fields may be left empty and are omitted from the stored credential set when blank
 
    **Groups** let the user choose between alternatives (e.g. "Basic Auth" vs "API Key"):
    ```
