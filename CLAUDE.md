@@ -18,13 +18,57 @@ The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin s
 
 2. **If the needed credential is missing, prompt the human to provide it:**
    ```
-   sfae prompt <domain> <TYPE> [--url <URL_WHERE_HUMAN_CAN_GET_CREDENTIAL>]
+   sfae prompt <domain> --spec '<JSON>'
    ```
-   Example: `sfae prompt github.com ACCESS_TOKEN --url "https://github.com/settings/tokens"`
 
-   This opens a web page in the human's browser with a form to enter the credential. The `--url` value is shown as a helpful link on that page. The command blocks until the human submits the form, then stores the credential as a JSON blob in the OS keychain and returns the UUID.
+   The `--spec` flag takes a JSON object describing what credentials to collect. This opens a web page in the human's browser with a form. The command blocks until the human submits the form, then stores all fields as a JSON blob in the OS keychain and returns the UUID.
+
+   **Simple example** (single API key):
+   ```
+   sfae prompt github.com --spec '{"url": "https://github.com/settings/tokens", "fields": ["ACCESS_TOKEN"]}'
+   ```
+
+   **Multi-field example** (database connection):
+   ```
+   sfae prompt clickhouse.example.com --spec '{
+     "fields": [
+       {"name": "HOST", "default": "https://ch.example.com:8443"},
+       {"name": "USERNAME"},
+       {"name": "PASSWORD"}
+     ]
+   }'
+   ```
 
    **Do not** pass `--terminal` — that mode requires stdin access which you don't have.
+
+   ### Spec format
+
+   ```
+   {
+     "url"?:    string,    // help link shown on the page (not a form field)
+     "fields"?: Field[],   // common fields — always visible
+     "groups"?: Group[]    // alternative groups — user picks one
+   }
+   ```
+
+   **Fields** can be a string shorthand (`"ACCESS_TOKEN"`) or an object:
+   ```
+   {"name": "HOST", "label": "Server URL", "default": "https://...", "secret": false}
+   ```
+   - `label` defaults to a humanized version of the name (e.g. `ACCESS_TOKEN` → "Access Token")
+   - `secret` auto-detects: true unless name contains USERNAME, HOST, PORT, URL, or EMAIL
+   - `default` pre-fills the input
+
+   **Groups** let the user choose between alternatives (e.g. "Basic Auth" vs "API Key"):
+   ```
+   sfae prompt api.example.com --spec '{
+     "groups": [
+       {"label": "Basic Auth", "fields": ["USERNAME", "PASSWORD"]},
+       {"label": "API Key", "fields": ["API_KEY"]}
+     ]
+   }'
+   ```
+   Common `fields` at the top level are always visible; only the active group's fields are submitted.
 
 3. **Make the API request using `{KEY}` placeholders:**
    ```
@@ -58,36 +102,48 @@ A domain can have multiple credential sets (e.g., "Work GitHub" and "Personal Gi
 
 ### OAuth flow (for Google, GitHub Apps, etc.)
 
-For APIs that use OAuth 2.0 instead of static tokens:
+For APIs that use OAuth 2.0 instead of static tokens, use an OAuth group in the spec:
 
 1. **Set up the OAuth credential:**
 
    **Known providers (Google):** sfae has built-in OAuth presets — just specify the domain and scope:
    ```
-   sfae prompt <domain> ACCESS_TOKEN --oauth --scope "<SPACE_SEPARATED_SCOPES>"
+   sfae prompt googleapis.com --spec '{
+     "groups": [{"label": "OAuth", "oauth": {"scope": "https://www.googleapis.com/auth/gmail.readonly"}}]
+   }'
    ```
 
-   Example (Google Gmail):
-   ```
-   sfae prompt googleapis.com ACCESS_TOKEN --oauth \
-     --scope "https://www.googleapis.com/auth/gmail.readonly"
-   ```
+   Built-in presets: `googleapis.com` (covers all Google API subdomains). SFAE fills in `auth_url`/`token_url` automatically.
 
-   Built-in presets: `googleapis.com` (covers all Google API subdomains).
-
-   **Other providers:** pass all OAuth parameters explicitly:
+   **Other providers:** pass OAuth URLs explicitly in the spec:
    ```
-   sfae prompt <domain> ACCESS_TOKEN --oauth \
-     --client-id "<CLIENT_ID>" \
-     --auth-url "<AUTHORIZATION_URL>" \
-     --token-url "<TOKEN_URL>" \
-     --scope "<SPACE_SEPARATED_SCOPES>" \
-     --client-secret "<CLIENT_SECRET>"
+   sfae prompt api.custom-saas.com --spec '{
+     "groups": [{
+       "label": "OAuth",
+       "oauth": {
+         "auth_url": "https://login.custom-saas.com/oauth/authorize",
+         "token_url": "https://login.custom-saas.com/oauth/token",
+         "scope": "api.read api.write"
+       }
+     }]
+   }'
    ```
 
-   Explicit flags override built-in preset values. `--client-secret` is optional for public OAuth clients.
+   For unknown providers, `auth_url` and `token_url` are required. `revocation_url` is optional.
 
-   This opens the provider's consent page in the human's browser. After they authorize, sfae stores all tokens and metadata as a single JSON blob: `OAUTH_ACCESS_TOKEN`, `OAUTH_REFRESH_TOKEN`, `OAUTH_TOKEN_URL`, `OAUTH_REVOCATION_URL`.
+   **OAuth + API key alternative** — let the user choose:
+   ```
+   sfae prompt googleapis.com --spec '{
+     "groups": [
+       {"label": "API Key", "fields": ["API_KEY"]},
+       {"label": "OAuth", "oauth": {"scope": "https://www.googleapis.com/auth/gmail.readonly"}}
+     ]
+   }'
+   ```
+
+   OAuth app credentials (`client_id`, `client_secret`) are managed by SFAE internally — never in the spec.
+
+   This opens the provider's consent page in the human's browser. After they authorize, sfae stores `OAUTH_ACCESS_TOKEN`, `OAUTH_REFRESH_TOKEN`, `OAUTH_TOKEN_URL`, and `OAUTH_REVOCATION_URL` (if provided) in the credential set.
 
 2. **Make requests normally** — use `{OAUTH_ACCESS_TOKEN}` as the placeholder:
    ```

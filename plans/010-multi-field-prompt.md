@@ -236,5 +236,5 @@ Add OAuth as a group type — renders as scope display + "Authorize" button inst
 
 ## Phase 5: Cleanup
 
-- [ ] 5a: Remove the old `run_oauth()` function and its dedicated code path if not already removed in Phase 2. Remove OAuth-specific CLI flag definitions. Clean up dead code in `oauth.rs` that was only used by the old CLI flow (keep PKCE, code exchange, presets — those are reused).
-- [ ] 5b: Update CLAUDE.md prompt section to document the new `--spec` interface, remove references to the old positional type syntax and `--oauth` flags. Add spec examples for common use cases.
+- [x] 5a: Remove the old `run_oauth()` function and its dedicated code path if not already removed in Phase 2. Remove OAuth-specific CLI flag definitions. Clean up dead code in `oauth.rs` that was only used by the old CLI flow (keep PKCE, code exchange, presets — those are reused).
+- [x] 5b: Update CLAUDE.md prompt section to document the new `--spec` interface, remove references to the old positional type syntax and `--oauth` flags. Add spec examples for common use cases.
