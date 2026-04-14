@@ -77,7 +77,7 @@ Replace all hardcoded values with CSS variables and consolidate repeated pattern
 
 ## Phase 4: Verify and test
 
-- [ ] 4a: Build (`cargo build --bin sfae --release`) and manually test the prompt form with different spec configurations — single field, multiple fields, groups with tabs, OAuth group, OAuth-only flow — confirming the restyled pages render correctly and all interactions (tab switching, OAuth polling, form submission) still work.
+- [x] 4a: Build (`cargo build --bin sfae --release`) and manually test the prompt form with different spec configurations — single field, multiple fields, groups with tabs, OAuth group, OAuth-only flow — confirming the restyled pages render correctly and all interactions (tab switching, OAuth polling, form submission) still work.
 
 ---
 
