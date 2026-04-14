@@ -238,3 +238,18 @@ Add OAuth as a group type — renders as scope display + "Authorize" button inst
 
 - [x] 5a: Remove the old `run_oauth()` function and its dedicated code path if not already removed in Phase 2. Remove OAuth-specific CLI flag definitions. Clean up dead code in `oauth.rs` that was only used by the old CLI flow (keep PKCE, code exchange, presets — those are reused).
 - [x] 5b: Update CLAUDE.md prompt section to document the new `--spec` interface, remove references to the old positional type syntax and `--oauth` flags. Add spec examples for common use cases.
+
+## Phase 6: Spec naming and documentation
+
+Rename the ambiguous `"url"` field, add missing examples to `--help` and CLAUDE.md.
+
+- [ ] 6a: Rename `"url"` to `"help_url"` in `PromptSpec`. In `spec.rs`: rename the field and add `#[serde(alias = "url")]` for backward compatibility. Update all references in `browser.rs`, `prompt.rs` (terminal path), `main.rs` (`PROMPT_EXAMPLES`), `CLAUDE.md`, and this plan's type definition and examples.
+- [ ] 6b: Add a combined fields + groups example to `PROMPT_EXAMPLES` in `main.rs` and to CLAUDE.md. Use the plan's example 3 pattern: a common `URL` field always visible, with "Basic Auth" and "API Key" as alternative groups. Place it after the existing groups-only example.
+- [ ] 6c: Add a full OAuth example (custom provider with all fields) to `PROMPT_EXAMPLES` in `main.rs`: show `auth_url`, `token_url`, `revocation_url`, and `scope` all specified. Also add `revocation_url` to the CLAUDE.md custom provider example (currently missing).
+
+## Phase 7: Optional fields and help flag fix
+
+Add optional field support and fix `-h` to show the full help output including examples.
+
+- [ ] 7a: Add `"optional": true` support to `FieldSpec`. In `spec.rs`: add `optional: Option<bool>` with `#[serde(default)]`, add `is_optional()` method, update the custom deserializer. In `browser.rs`: add `required` HTML attribute to non-optional inputs, skip empty-value validation for optional fields, add "(optional)" label hint, omit empty optionals from stored result. In `form.html`: add CSS for optional hint styling. In `prompt.rs`: skip empty-value bail for optional fields, show "(optional)" in terminal prompt, omit empty optionals from result HashMap. Add tests in `spec.rs`. Add an example with optional fields to `PROMPT_EXAMPLES` and CLAUDE.md. Update the `Field` type definition in this plan to include `"optional"?: boolean`.
+- [ ] 7b: Make `-h` show full help (same as `--help`). In `main.rs`: change `after_long_help = PROMPT_EXAMPLES` to `after_help = PROMPT_EXAMPLES` on the `Prompt` subcommand. This ensures AI agents see the examples regardless of which flag they use.
