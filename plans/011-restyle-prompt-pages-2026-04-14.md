@@ -69,7 +69,7 @@ Replace all hardcoded values with CSS variables and consolidate repeated pattern
 
 `done.html` and `oauth_done.html` are nearly identical. Eliminate the duplication.
 
-- [ ] 3a: Move the shared success-page styles (`.card` text-align, `.check` circle, `.check svg`, `h1`, `p`) into base.css under a `.done` scope (e.g., `.done { text-align: center; }`, `.done .check { ... }`). Use CSS variables for colors (`--accent` for the check stroke, `--accent-light` for the check background, `--text-secondary` for the paragraph).
+- [x] 3a: Move the shared success-page styles (`.card` text-align, `.check` circle, `.check svg`, `h1`, `p`) into base.css under a `.done` scope (e.g., `.done { text-align: center; }`, `.done .check { ... }`). Use CSS variables for colors (`--accent` for the check stroke, `--accent-light` for the check background, `--text-secondary` for the paragraph).
 
 - [ ] 3b: Merge `done.html` and `oauth_done.html` into a single `done.html` template with `{{TITLE}}` and `{{HEADING}}` placeholders. Update `build_done_page()` and `build_oauth_done_page()` in `browser.rs` to pass appropriate values ("sfae — done" / "Credential saved" vs "sfae — authorized" / "Authorized"). Delete `oauth_done.html`.
 
