@@ -78,6 +78,42 @@
   button:active {
     background: #000;
   }
+  .groups { margin-top: 4px; }
+  .group-tabs {
+    display: flex;
+    border: 1px solid #d0d0d0;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+  .group-tab {
+    flex: 1;
+    margin-bottom: 0;
+    cursor: pointer;
+  }
+  .group-tab input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .group-tab span {
+    display: block;
+    padding: 8px 12px;
+    font-size: 0.9em;
+    font-weight: 500;
+    color: #555;
+    text-align: center;
+    background: #fafafa;
+    transition: background 0.15s, color 0.15s;
+    border-right: 1px solid #d0d0d0;
+  }
+  .group-tab:last-child span {
+    border-right: none;
+  }
+  .group-tab input[type="radio"]:checked + span {
+    background: #1a1a1a;
+    color: #fff;
+  }
 </style>
 </head>
 <body>
@@ -87,6 +123,7 @@
   {{URL_SECTION}}
   <form method="POST" action="/">
     {{FIELDS}}
+    {{GROUPS}}
     <button type="submit">Submit</button>
   </form>
   <p style="font-size:0.78em;color:#888;margin-top:16px;line-height:1.5;">Your secret is stored in the OS keychain and injected into requests at runtime. The agent never sees or has access to it.</p>

@@ -225,7 +225,7 @@ Replace all prompt-related flags with `--spec`, wire up both browser and termina
 
 Add group support to both browser and terminal rendering.
 
-- [ ] 3a: Extend browser form to render field groups: tab/radio selector, one `<fieldset>` per group, minimal inline JS for show/hide toggling, only active group's fields are submitted (disabled or removed from DOM). Common `fields` render above the group selector. Terminal mode: print numbered group menu, read choice, then prompt that group's fields (plus common fields). All stored in one credential set.
+- [x] 3a: Extend browser form to render field groups: tab/radio selector, one `<fieldset>` per group, minimal inline JS for show/hide toggling, only active group's fields are submitted (disabled or removed from DOM). Common `fields` render above the group selector. Terminal mode: print numbered group menu, read choice, then prompt that group's fields (plus common fields). All stored in one credential set.
 
 ## Phase 4: OAuth groups in the browser form
 

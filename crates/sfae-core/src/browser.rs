@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::error::SfaeError;
 #[cfg(feature = "cli")]
-use crate::spec::{FieldSpec, PromptSpec};
+use crate::spec::{FieldSpec, GroupSpec, PromptSpec};
 
 /// Shared CSS included in both form and done pages.
 const BASE_STYLES: &str = include_str!("base.css");
@@ -161,7 +161,6 @@ pub fn browser_prompt_spec(
     label: &str,
     spec: &PromptSpec,
 ) -> Result<HashMap<String, String>, SfaeError> {
-    let fields = collect_spec_fields(spec);
     let server = LocalServer::new()?;
     let local_url = format!("http://127.0.0.1:{}/", server.port());
     server.open_browser(&local_url)?;
@@ -171,15 +170,26 @@ pub fn browser_prompt_spec(
 
         match (req.method.as_str(), req.path.as_str()) {
             ("GET", "/") => {
-                let html = build_form_page(label, spec.url.as_deref(), &fields);
+                let html = build_form_page(label, spec);
                 req.respond(200, &html);
             }
             ("POST", "/") => {
-                let values = parse_form_fields(&req.body);
+                let mut values = parse_form_fields(&req.body);
                 req.respond(200, &build_done_page());
 
-                // Validate no empty values.
-                for field in &fields {
+                // Determine expected fields: common + active group.
+                let mut expected = collect_common_fields(spec);
+                if let Some(groups) = &spec.groups
+                    && let Some(group_idx) = values.remove("_group")
+                    && let Ok(idx) = group_idx.parse::<usize>()
+                    && let Some(group) = groups.get(idx)
+                    && let Some(fields) = &group.fields
+                {
+                    expected.extend(fields.iter().cloned());
+                }
+
+                // Validate no empty values for expected fields.
+                for field in &expected {
                     let val = values.get(&field.name).map(|s| s.as_str()).unwrap_or("");
                     if val.is_empty() {
                         return Err(SfaeError::Other(format!(
@@ -189,7 +199,13 @@ pub fn browser_prompt_spec(
                     }
                 }
 
-                return Ok(values);
+                // Return only expected field values.
+                let result = expected
+                    .iter()
+                    .filter_map(|f| values.remove(&f.name).map(|v| (f.name.clone(), v)))
+                    .collect();
+
+                return Ok(result);
             }
             _ => {
                 req.respond(404, "");
@@ -255,10 +271,9 @@ pub fn oauth_callback(server: &LocalServer) -> Result<(String, String), SfaeErro
     }
 }
 
-/// Collect all fields from a PromptSpec (common fields only for now;
-/// group fields are added in Phase 3).
+/// Collect common (non-group) fields from a PromptSpec.
 #[cfg(feature = "cli")]
-fn collect_spec_fields(spec: &PromptSpec) -> Vec<FieldSpec> {
+fn collect_common_fields(spec: &PromptSpec) -> Vec<FieldSpec> {
     let mut fields = Vec::new();
     if let Some(ref f) = spec.fields {
         fields.extend(f.iter().cloned());
@@ -277,10 +292,10 @@ fn extract_query_param(path: &str, key: &str) -> Option<String> {
     None
 }
 
-/// Build the HTML form page with data-driven fields.
+/// Build the HTML form page with data-driven fields and optional groups.
 #[cfg(feature = "cli")]
-fn build_form_page(label: &str, url: Option<&str>, fields: &[FieldSpec]) -> String {
-    let url_section = match url {
+fn build_form_page(label: &str, spec: &PromptSpec) -> String {
+    let url_section = match spec.url.as_deref() {
         Some(u) => format!(
             r#"<p class="url-hint">Obtain your credential here:<br><a href="{}" target="_blank">{}</a></p>"#,
             html_escape(u),
@@ -289,25 +304,38 @@ fn build_form_page(label: &str, url: Option<&str>, fields: &[FieldSpec]) -> Stri
         None => String::new(),
     };
 
-    let fields_html = build_fields_html(fields);
+    let common_fields = collect_common_fields(spec);
+    let has_common = !common_fields.is_empty();
+    let fields_html = build_fields_html(&common_fields, true);
+    let groups = spec.groups.as_deref().unwrap_or(&[]);
+    let groups_html = build_groups_html(groups, !has_common);
 
     include_str!("form.html")
         .replace("{{BASE_STYLES}}", BASE_STYLES)
         .replace("{{LABEL}}", &html_escape(label))
         .replace("{{URL_SECTION}}", &url_section)
         .replace("{{FIELDS}}", &fields_html)
+        .replace("{{GROUPS}}", &groups_html)
 }
 
 /// Generate HTML for a list of field specs.
 #[cfg(feature = "cli")]
-fn build_fields_html(fields: &[FieldSpec]) -> String {
+fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
     let mut html = String::new();
     for (i, field) in fields.iter().enumerate() {
-        let input_type = if field.is_secret() { "password" } else { "text" };
+        let input_type = if field.is_secret() {
+            "password"
+        } else {
+            "text"
+        };
         let label = html_escape(&field.display_label());
         let name = html_escape(&field.name);
         let id = format!("field_{}", html_escape(&field.name));
-        let autofocus = if i == 0 { " autofocus" } else { "" };
+        let autofocus = if autofocus_first && i == 0 {
+            " autofocus"
+        } else {
+            ""
+        };
         let value = field
             .default
             .as_ref()
@@ -323,6 +351,61 @@ fn build_fields_html(fields: &[FieldSpec]) -> String {
             r#"<div class="field"><label for="{id}">{label}</label><input type="{input_type}" id="{id}" name="{name}"{value}{autofocus}{placeholder}></div>"#,
         ));
     }
+    html
+}
+
+/// Generate HTML for alternative field groups with tab selector and toggle script.
+#[cfg(feature = "cli")]
+fn build_groups_html(groups: &[GroupSpec], autofocus_first_group: bool) -> String {
+    if groups.is_empty() {
+        return String::new();
+    }
+
+    let mut html = String::from(r#"<div class="groups"><div class="group-tabs">"#);
+
+    for (i, group) in groups.iter().enumerate() {
+        let checked = if i == 0 { " checked" } else { "" };
+        let label = html_escape(&group.label);
+        html.push_str(&format!(
+            r#"<label class="group-tab"><input type="radio" name="_group" value="{i}"{checked}><span>{label}</span></label>"#,
+        ));
+    }
+    html.push_str("</div>");
+
+    for (i, group) in groups.iter().enumerate() {
+        let hidden = if i == 0 {
+            ""
+        } else {
+            r#" style="display:none""#
+        };
+        html.push_str(&format!(
+            r#"<div class="group-panel" data-group="{i}"{hidden}>"#,
+        ));
+        if let Some(fields) = &group.fields {
+            html.push_str(&build_fields_html(fields, autofocus_first_group && i == 0));
+        }
+        html.push_str("</div>");
+    }
+
+    html.push_str("</div>");
+
+    // Inline JS for group toggling: show/hide panels and disable inactive inputs.
+    html.push_str(concat!(
+        "<script>(function(){",
+        "function u(v){",
+        "document.querySelectorAll('.group-panel').forEach(function(p){",
+        "var a=p.dataset.group===v;",
+        "p.style.display=a?'':'none';",
+        "p.querySelectorAll('input').forEach(function(i){i.disabled=!a})",
+        "})}",
+        "var c=document.querySelector('input[name=\"_group\"]:checked');",
+        "if(c)u(c.value);",
+        "document.querySelectorAll('input[name=\"_group\"]').forEach(function(r){",
+        "r.addEventListener('change',function(){u(r.value)})",
+        "})",
+        "})()</script>",
+    ));
+
     html
 }
 

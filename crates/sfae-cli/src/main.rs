@@ -174,9 +174,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             let prompt_spec: sfae_core::spec::PromptSpec = serde_json::from_str(&spec)
                 .map_err(|e| anyhow::anyhow!("invalid --spec JSON: {e}"))?;
-            prompt_spec
-                .validate()
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            prompt_spec.validate().map_err(|e| anyhow::anyhow!("{e}"))?;
             commands::prompt::run(&domain, &prompt_spec, user.as_deref(), terminal)?;
         }
         #[cfg(feature = "keyring")]

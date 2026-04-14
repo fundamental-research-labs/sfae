@@ -122,7 +122,9 @@ impl<'de> Deserialize<'de> for FieldSpec {
             type Value = FieldSpec;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a string like \"API_KEY\" or an object with at least a \"name\" field")
+                formatter.write_str(
+                    "a string like \"API_KEY\" or an object with at least a \"name\" field",
+                )
             }
 
             fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
@@ -149,8 +151,7 @@ impl<'de> Deserialize<'de> for FieldSpec {
                     secret: Option<bool>,
                 }
 
-                let obj =
-                    FieldSpecObj::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                let obj = FieldSpecObj::deserialize(de::value::MapAccessDeserializer::new(map))?;
                 Ok(FieldSpec {
                     name: obj.name,
                     label: obj.label,
@@ -373,19 +374,15 @@ mod tests {
 
     #[test]
     fn validate_fields_only() {
-        let spec: PromptSpec = serde_json::from_str(
-            r#"{"fields": ["API_KEY"]}"#,
-        )
-        .unwrap();
+        let spec: PromptSpec = serde_json::from_str(r#"{"fields": ["API_KEY"]}"#).unwrap();
         assert!(spec.validate().is_ok());
     }
 
     #[test]
     fn validate_groups_only() {
-        let spec: PromptSpec = serde_json::from_str(
-            r#"{"groups": [{"label": "OAuth", "oauth": {"scope": "read"}}]}"#,
-        )
-        .unwrap();
+        let spec: PromptSpec =
+            serde_json::from_str(r#"{"groups": [{"label": "OAuth", "oauth": {"scope": "read"}}]}"#)
+                .unwrap();
         assert!(spec.validate().is_ok());
     }
 
@@ -422,10 +419,7 @@ mod tests {
 
     #[test]
     fn validate_group_with_neither_fields_nor_oauth() {
-        let spec: PromptSpec = serde_json::from_str(
-            r#"{"groups": [{"label": "Empty"}]}"#,
-        )
-        .unwrap();
+        let spec: PromptSpec = serde_json::from_str(r#"{"groups": [{"label": "Empty"}]}"#).unwrap();
         let err = spec.validate().unwrap_err();
         assert!(err.to_string().contains("must have either"));
     }
@@ -434,13 +428,18 @@ mod tests {
 
     #[test]
     fn example_1_simple_api_key() {
-        let spec: PromptSpec = serde_json::from_str(r#"{
+        let spec: PromptSpec = serde_json::from_str(
+            r#"{
             "url": "https://github.com/settings/tokens",
             "fields": ["ACCESS_TOKEN"]
-        }"#)
+        }"#,
+        )
         .unwrap();
         spec.validate().unwrap();
-        assert_eq!(spec.url.as_deref(), Some("https://github.com/settings/tokens"));
+        assert_eq!(
+            spec.url.as_deref(),
+            Some("https://github.com/settings/tokens")
+        );
         let fields = spec.fields.unwrap();
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].name, "ACCESS_TOKEN");
@@ -468,7 +467,8 @@ mod tests {
 
     #[test]
     fn example_3_alternative_groups() {
-        let spec: PromptSpec = serde_json::from_str(r#"{
+        let spec: PromptSpec = serde_json::from_str(
+            r#"{
             "url": "https://example.com/developers",
             "fields": [
                 {"name": "URL", "label": "API Endpoint", "default": "https://api.example.com/v2"}
@@ -477,7 +477,8 @@ mod tests {
                 {"label": "Basic Auth", "fields": ["USERNAME", "PASSWORD"]},
                 {"label": "API Key", "fields": [{"name": "API_KEY", "label": "Developer API Key"}]}
             ]
-        }"#)
+        }"#,
+        )
         .unwrap();
         spec.validate().unwrap();
         let groups = spec.groups.unwrap();
@@ -508,7 +509,8 @@ mod tests {
 
     #[test]
     fn example_5_custom_oauth_provider() {
-        let spec: PromptSpec = serde_json::from_str(r#"{
+        let spec: PromptSpec = serde_json::from_str(
+            r#"{
             "groups": [
                 {
                     "label": "OAuth",
@@ -520,14 +522,24 @@ mod tests {
                     }
                 }
             ]
-        }"#)
+        }"#,
+        )
         .unwrap();
         spec.validate().unwrap();
         let groups = spec.groups.unwrap();
         let oauth = groups[0].oauth.as_ref().unwrap();
-        assert_eq!(oauth.auth_url.as_deref(), Some("https://login.custom-saas.com/oauth/authorize"));
-        assert_eq!(oauth.token_url.as_deref(), Some("https://login.custom-saas.com/oauth/token"));
-        assert_eq!(oauth.revocation_url.as_deref(), Some("https://login.custom-saas.com/oauth/revoke"));
+        assert_eq!(
+            oauth.auth_url.as_deref(),
+            Some("https://login.custom-saas.com/oauth/authorize")
+        );
+        assert_eq!(
+            oauth.token_url.as_deref(),
+            Some("https://login.custom-saas.com/oauth/token")
+        );
+        assert_eq!(
+            oauth.revocation_url.as_deref(),
+            Some("https://login.custom-saas.com/oauth/revoke")
+        );
         assert_eq!(oauth.scope, "api.read api.write");
     }
 
@@ -544,7 +556,10 @@ mod tests {
         let oauth = groups[0].oauth.as_ref().unwrap();
         assert!(oauth.auth_url.is_none());
         assert!(oauth.token_url.is_none());
-        assert_eq!(oauth.scope, "https://www.googleapis.com/auth/calendar.readonly");
+        assert_eq!(
+            oauth.scope,
+            "https://www.googleapis.com/auth/calendar.readonly"
+        );
     }
 
     // --- FieldSpec serialization roundtrip ---
