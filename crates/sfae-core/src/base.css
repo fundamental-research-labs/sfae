@@ -1,4 +1,17 @@
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+:root {
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --border: #e2e2e2;
+  --text: #1a1a1a;
+  --text-secondary: #555555;
+  --text-tertiary: #888888;
+  --accent: #2a6b4a;
+  --accent-light: #e8f5ee;
+  --code-bg: #f0f0f0;
+  --link: #1a73e8;
+  --focus-ring: rgba(26, 115, 232, 0.1);
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
   font-family: 'JetBrains Mono', monospace;
@@ -7,14 +20,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f5f5f5;
-  color: #1a1a1a;
+  background: var(--bg);
+  color: var(--text);
   line-height: 1.6;
   padding: 16px;
 }
 .card {
-  background: #fff;
-  border: 1px solid #e0e0e0;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 40px;
   width: 100%;

@@ -38,7 +38,7 @@ Establish a shared design system that all pages inherit.
 
 - [x] 1a: Add Google Fonts `<link>` for JetBrains Mono to base.css (as an `@import` rule at the top, since base.css is inlined into `<style>` blocks — `@import` must come first). Switch `font-family` to `'JetBrains Mono', monospace`. Add `-webkit-font-smoothing: antialiased` and `line-height: 1.6` to body.
 
-- [ ] 1b: Define `:root` CSS variables in base.css matching the website palette:
+- [x] 1b: Define `:root` CSS variables in base.css matching the website palette:
   ```
   --bg: #fafafa          --surface: #ffffff
   --border: #e2e2e2      --text: #1a1a1a
