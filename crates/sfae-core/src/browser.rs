@@ -710,12 +710,18 @@ fn build_oauth_panel_html(oauth: &OAuthSpec, group_idx: usize) -> String {
 
 /// Build the page shown in the OAuth popup after authorization completes.
 fn build_oauth_done_page() -> String {
-    include_str!("oauth_done.html").replace("{{BASE_STYLES}}", BASE_STYLES)
+    include_str!("done.html")
+        .replace("{{BASE_STYLES}}", BASE_STYLES)
+        .replace("{{TITLE}}", "sfae \u{2014} authorized")
+        .replace("{{HEADING}}", "Authorized")
 }
 
 /// Build the confirmation page shown after the secret is submitted or OAuth completes.
 fn build_done_page() -> String {
-    include_str!("done.html").replace("{{BASE_STYLES}}", BASE_STYLES)
+    include_str!("done.html")
+        .replace("{{BASE_STYLES}}", BASE_STYLES)
+        .replace("{{TITLE}}", "sfae \u{2014} done")
+        .replace("{{HEADING}}", "Credential saved")
 }
 
 /// Minimal HTML escaping for user-provided strings embedded in HTML.
