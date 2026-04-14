@@ -548,12 +548,24 @@ fn build_form_page(label: &str, spec: &PromptSpec) -> String {
     let groups = spec.groups.as_deref().unwrap_or(&[]);
     let groups_html = build_groups_html(groups, !has_common);
 
+    // Hide the submit button when the only content is OAuth (no input fields).
+    let has_any_input_fields = has_common
+        || groups
+            .iter()
+            .any(|g| g.fields.as_ref().is_some_and(|f| !f.is_empty()));
+    let submit_button = if has_any_input_fields {
+        r#"<button type="submit">Submit</button>"#
+    } else {
+        ""
+    };
+
     include_str!("form.html")
         .replace("{{BASE_STYLES}}", BASE_STYLES)
         .replace("{{LABEL}}", &html_escape(label))
         .replace("{{URL_SECTION}}", &url_section)
         .replace("{{FIELDS}}", &fields_html)
         .replace("{{GROUPS}}", &groups_html)
+        .replace("{{SUBMIT_BUTTON}}", submit_button)
 }
 
 /// Generate HTML for a list of field specs.
@@ -605,16 +617,23 @@ fn build_groups_html(groups: &[GroupSpec], autofocus_first_group: bool) -> Strin
         return String::new();
     }
 
-    let mut html = String::from(r#"<div class="groups"><div class="group-tabs">"#);
+    let mut html = String::from(r#"<div class="groups">"#);
 
-    for (i, group) in groups.iter().enumerate() {
-        let checked = if i == 0 { " checked" } else { "" };
-        let label = html_escape(&group.label);
-        html.push_str(&format!(
-            r#"<label class="group-tab"><input type="radio" name="_group" value="{i}"{checked}><span>{label}</span></label>"#,
-        ));
+    // Only show the tab bar when there are multiple groups to choose between.
+    if groups.len() > 1 {
+        html.push_str(r#"<div class="group-tabs">"#);
+        for (i, group) in groups.iter().enumerate() {
+            let checked = if i == 0 { " checked" } else { "" };
+            let label = html_escape(&group.label);
+            html.push_str(&format!(
+                r#"<label class="group-tab"><input type="radio" name="_group" value="{i}"{checked}><span>{label}</span></label>"#,
+            ));
+        }
+        html.push_str("</div>");
+    } else {
+        // Single group: emit a hidden input so the server still knows which group.
+        html.push_str(r#"<input type="hidden" name="_group" value="0">"#);
     }
-    html.push_str("</div>");
 
     for (i, group) in groups.iter().enumerate() {
         let hidden = if i == 0 {
@@ -657,7 +676,10 @@ fn build_groups_html(groups: &[GroupSpec], autofocus_first_group: bool) -> Strin
         "if(d.authorized){",
         "clearInterval(t);",
         "document.querySelectorAll('.oauth-btn').forEach(function(b){b.style.display='none'});",
-        "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex'})",
+        "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex'});",
+        // Auto-submit when there are no input fields to fill (OAuth-only flow).
+        "var inputs=document.querySelectorAll('input[type=\"text\"]:not(:disabled),input[type=\"password\"]:not(:disabled)');",
+        "if(!inputs.length){document.querySelector('form').submit()}",
         "}",
         "}).catch(function(){})",
         "},1500)}",
