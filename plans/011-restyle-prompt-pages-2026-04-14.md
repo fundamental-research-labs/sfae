@@ -49,7 +49,7 @@ Establish a shared design system that all pages inherit.
   ```
   Update existing body/card styles in base.css to use these variables (`background: var(--bg)`, `border: 1px solid var(--border)`, etc.).
 
-- [ ] 1c: Add the subtle SVG noise overlay from the website (the `body::before` pseudo-element with fractal noise at 0.03 opacity). This is a pure CSS/inline-SVG technique — no external assets.
+- [x] 1c: Add the subtle SVG noise overlay from the website (the `body::before` pseudo-element with fractal noise at 0.03 opacity). This is a pure CSS/inline-SVG technique — no external assets.
 
 ---
 
