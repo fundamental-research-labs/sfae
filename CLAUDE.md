@@ -70,6 +70,20 @@ The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin s
    ```
    Common `fields` at the top level are always visible; only the active group's fields are submitted.
 
+   **Common fields + alternative groups** (endpoint always visible, auth method toggleable):
+   ```
+   sfae prompt api.example.com --spec '{
+     "help_url": "https://example.com/developers",
+     "fields": [
+       {"name": "URL", "label": "API Endpoint", "default": "https://api.example.com/v2"}
+     ],
+     "groups": [
+       {"label": "Basic Auth", "fields": ["USERNAME", "PASSWORD"]},
+       {"label": "API Key", "fields": [{"name": "API_KEY", "label": "Developer API Key"}]}
+     ]
+   }'
+   ```
+
 3. **Make the API request using `{KEY}` placeholders:**
    ```
    sfae request <METHOD> <URL> -H "Header: {KEY}"

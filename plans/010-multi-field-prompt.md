@@ -244,7 +244,7 @@ Add OAuth as a group type — renders as scope display + "Authorize" button inst
 Rename the ambiguous `"url"` field, add missing examples to `--help` and CLAUDE.md.
 
 - [x] 6a: Rename `"url"` to `"help_url"` in `PromptSpec`. In `spec.rs`: rename the field and add `#[serde(alias = "url")]` for backward compatibility. Update all references in `browser.rs`, `prompt.rs` (terminal path), `main.rs` (`PROMPT_EXAMPLES`), `CLAUDE.md`, and this plan's type definition and examples.
-- [ ] 6b: Add a combined fields + groups example to `PROMPT_EXAMPLES` in `main.rs` and to CLAUDE.md. Use the plan's example 3 pattern: a common `URL` field always visible, with "Basic Auth" and "API Key" as alternative groups. Place it after the existing groups-only example.
+- [x] 6b: Add a combined fields + groups example to `PROMPT_EXAMPLES` in `main.rs` and to CLAUDE.md. Use the plan's example 3 pattern: a common `URL` field always visible, with "Basic Auth" and "API Key" as alternative groups. Place it after the existing groups-only example.
 - [ ] 6c: Add a full OAuth example (custom provider with all fields) to `PROMPT_EXAMPLES` in `main.rs`: show `auth_url`, `token_url`, `revocation_url`, and `scope` all specified. Also add `revocation_url` to the CLAUDE.md custom provider example (currently missing).
 
 ## Phase 7: Optional fields and help flag fix

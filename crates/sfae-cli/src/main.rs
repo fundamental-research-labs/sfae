@@ -47,6 +47,18 @@ const PROMPT_EXAMPLES: &str = r#"EXAMPLES:
       ]
     }'
 
+  Common fields + alternative groups:
+    sfae prompt api.example.com --spec '{
+      "help_url": "https://example.com/developers",
+      "fields": [
+        {"name": "URL", "label": "API Endpoint", "default": "https://api.example.com/v2"}
+      ],
+      "groups": [
+        {"label": "Basic Auth", "fields": ["USERNAME", "PASSWORD"]},
+        {"label": "API Key", "fields": [{"name": "API_KEY", "label": "Developer API Key"}]}
+      ]
+    }'
+
   OAuth (Google):
     sfae prompt googleapis.com --spec '{
       "groups": [{
