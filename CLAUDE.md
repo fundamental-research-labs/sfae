@@ -137,6 +137,7 @@ For APIs that use OAuth 2.0 instead of static tokens, use an OAuth group in the 
        "oauth": {
          "auth_url": "https://login.custom-saas.com/oauth/authorize",
          "token_url": "https://login.custom-saas.com/oauth/token",
+         "revocation_url": "https://login.custom-saas.com/oauth/revoke",
          "scope": "api.read api.write"
        }
      }]

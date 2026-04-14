@@ -65,6 +65,19 @@ const PROMPT_EXAMPLES: &str = r#"EXAMPLES:
         "label": "OAuth",
         "oauth": {"scope": "https://www.googleapis.com/auth/gmail.readonly"}
       }]
+    }'
+
+  OAuth (custom provider with explicit URLs):
+    sfae prompt api.custom-saas.com --spec '{
+      "groups": [{
+        "label": "OAuth",
+        "oauth": {
+          "auth_url": "https://login.custom-saas.com/oauth/authorize",
+          "token_url": "https://login.custom-saas.com/oauth/token",
+          "revocation_url": "https://login.custom-saas.com/oauth/revoke",
+          "scope": "api.read api.write"
+        }
+      }]
     }'"#;
 
 #[derive(Subcommand)]
