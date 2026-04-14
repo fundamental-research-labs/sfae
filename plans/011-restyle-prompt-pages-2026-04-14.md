@@ -61,7 +61,7 @@ Replace all hardcoded values with CSS variables and consolidate repeated pattern
 
 - [x] 2b: Consolidate button styles. Extract shared properties (width, padding, font-size, font-weight, font-family, border, border-radius, cursor, transition) into the existing `button` base rule. The `.oauth-btn` becomes a modifier that only overrides `background` and `text-decoration`. The submit button uses `var(--text)` background (dark) to maintain hierarchy — primary action is dark, OAuth is blue.
 
-- [ ] 2c: Replace the inline `style` attribute on the footer `<p>` element with a proper CSS class (e.g., `.footer-note`). Define it using CSS variables.
+- [x] 2c: Replace the inline `style` attribute on the footer `<p>` element with a proper CSS class (e.g., `.footer-note`). Define it using CSS variables.
 
 ---
 

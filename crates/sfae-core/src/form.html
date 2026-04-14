@@ -151,6 +151,12 @@
     color: var(--accent);
     font-weight: 500;
   }
+  .footer-note {
+    font-size: 0.78em;
+    color: var(--text-tertiary);
+    margin-top: 16px;
+    line-height: 1.5;
+  }
 </style>
 </head>
 <body>
@@ -163,7 +169,7 @@
     {{GROUPS}}
     {{SUBMIT_BUTTON}}
   </form>
-  <p style="font-size:0.78em;color:#888;margin-top:16px;line-height:1.5;">Your secret is stored in the OS keychain and injected into requests at runtime. The agent never sees or has access to it.</p>
+  <p class="footer-note">Your secret is stored in the OS keychain and injected into requests at runtime. The agent never sees or has access to it.</p>
 </div>
 </body>
 </html>
