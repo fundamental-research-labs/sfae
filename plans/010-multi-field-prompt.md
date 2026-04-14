@@ -219,7 +219,7 @@ Define the JSON spec as serde structs in sfae-core. Refactor the form layer from
 
 Replace all prompt-related flags with `--spec`, wire up both browser and terminal paths.
 
-- [ ] 2a: Rewrite the `Prompt` command in `main.rs`: remove positional `cred_type`, `--url`, and all OAuth flags. Add `--spec <JSON>` (required). Add a rich `after_long_help` string to the clap command with inline JSON examples covering: single field, multi-field with defaults, alternative groups, and OAuth — this is the primary reference for AI agents. Parse JSON into `PromptSpec`, validate. Browser path calls `browser_prompt_spec()`. Terminal path loops over fields calling `prompt()`/`prompt_secret()` per field (show defaults, respect `secret` flag). Store result with `store_credential_set()`. Remove `run_oauth()` as a separate code path — OAuth is now just another group type handled by the spec. Clean up dispatch in `main.rs`.
+- [x] 2a: Rewrite the `Prompt` command in `main.rs`: remove positional `cred_type`, `--url`, and all OAuth flags. Add `--spec <JSON>` (required). Add a rich `after_long_help` string to the clap command with inline JSON examples covering: single field, multi-field with defaults, alternative groups, and OAuth — this is the primary reference for AI agents. Parse JSON into `PromptSpec`, validate. Browser path calls `browser_prompt_spec()`. Terminal path loops over fields calling `prompt()`/`prompt_secret()` per field (show defaults, respect `secret` flag). Store result with `store_credential_set()`. Remove `run_oauth()` as a separate code path — OAuth is now just another group type handled by the spec. Clean up dispatch in `main.rs`.
 
 ## Phase 3: Alternative groups with toggle UI
 
