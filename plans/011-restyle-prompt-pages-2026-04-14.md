@@ -59,7 +59,7 @@ Replace all hardcoded values with CSS variables and consolidate repeated pattern
 
 - [x] 2a: Replace every hardcoded color in form.html's `<style>` block with the corresponding CSS variable from phase 1. Map: `#888` → `var(--text-tertiary)`, `#555` → `var(--text-secondary)`, `#1a73e8` → `var(--link)`, `#d0d0d0` → `var(--border)`, `#fafafa` → `var(--bg)`, `#f0f0f0` → `var(--code-bg)`, `#1a1a1a` → `var(--text)`, `#e8f5e9` → `var(--accent-light)`, `#2e7d32` → `var(--accent)`. Adjust success green references: the done-page checkmark and `.oauth-status` color should use `--accent` (the website's green `#2a6b4a`) instead of `#2e7d32`.
 
-- [ ] 2b: Consolidate button styles. Extract shared properties (width, padding, font-size, font-weight, font-family, border, border-radius, cursor, transition) into the existing `button` base rule. The `.oauth-btn` becomes a modifier that only overrides `background` and `text-decoration`. The submit button uses `var(--text)` background (dark) to maintain hierarchy — primary action is dark, OAuth is blue.
+- [x] 2b: Consolidate button styles. Extract shared properties (width, padding, font-size, font-weight, font-family, border, border-radius, cursor, transition) into the existing `button` base rule. The `.oauth-btn` becomes a modifier that only overrides `background` and `text-decoration`. The submit button uses `var(--text)` background (dark) to maintain hierarchy — primary action is dark, OAuth is blue.
 
 - [ ] 2c: Replace the inline `style` attribute on the footer `<p>` element with a proper CSS class (e.g., `.footer-note`). Define it using CSS variables.
 
