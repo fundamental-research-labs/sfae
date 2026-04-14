@@ -11,7 +11,7 @@
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #888;
+    color: var(--text-tertiary);
     margin-bottom: 24px;
   }
   h1 {
@@ -22,12 +22,12 @@
   }
   .url-hint {
     font-size: 0.9em;
-    color: #555;
+    color: var(--text-secondary);
     margin-bottom: 20px;
     line-height: 1.5;
   }
   .url-hint a {
-    color: #1a73e8;
+    color: var(--link);
     text-decoration: none;
     word-break: break-all;
   }
@@ -37,21 +37,21 @@
   .field { margin-bottom: 14px; }
   .optional-hint {
     font-weight: 400;
-    color: #999;
+    color: var(--text-tertiary);
     font-size: 0.9em;
   }
   label {
     display: block;
     font-size: 0.85em;
     font-weight: 500;
-    color: #555;
+    color: var(--text-secondary);
     margin-bottom: 6px;
   }
   input[type="password"],
   input[type="text"] {
     width: 100%;
     padding: 10px 12px;
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--border);
     border-radius: 6px;
     font-size: 1em;
     font-family: inherit;
@@ -60,8 +60,8 @@
   }
   input[type="password"]:focus,
   input[type="text"]:focus {
-    border-color: #1a73e8;
-    box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+    border-color: var(--link);
+    box-shadow: 0 0 0 3px var(--focus-ring);
   }
   button {
     margin-top: 16px;
@@ -70,8 +70,8 @@
     font-size: 1em;
     font-weight: 500;
     font-family: inherit;
-    background: #1a1a1a;
-    color: #fff;
+    background: var(--text);
+    color: var(--surface);
     border: none;
     border-radius: 6px;
     cursor: pointer;
@@ -86,7 +86,7 @@
   .groups { margin-top: 4px; }
   .group-tabs {
     display: flex;
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--border);
     border-radius: 6px;
     overflow: hidden;
     margin-bottom: 14px;
@@ -106,29 +106,29 @@
     padding: 8px 12px;
     font-size: 0.9em;
     font-weight: 500;
-    color: #555;
+    color: var(--text-secondary);
     text-align: center;
-    background: #fafafa;
+    background: var(--bg);
     transition: background 0.15s, color 0.15s;
-    border-right: 1px solid #d0d0d0;
+    border-right: 1px solid var(--border);
   }
   .group-tab:last-child span {
     border-right: none;
   }
   .group-tab input[type="radio"]:checked + span {
-    background: #1a1a1a;
-    color: #fff;
+    background: var(--text);
+    color: var(--surface);
   }
   .oauth-content { padding: 4px 0; }
   .oauth-scope {
     font-size: 0.85em;
-    color: #555;
+    color: var(--text-secondary);
     margin-bottom: 14px;
     line-height: 1.5;
   }
   .oauth-scope code {
     font-size: 0.95em;
-    background: #f0f0f0;
+    background: var(--code-bg);
     padding: 2px 6px;
     border-radius: 3px;
     word-break: break-all;
@@ -140,8 +140,8 @@
     font-size: 1em;
     font-weight: 500;
     font-family: inherit;
-    background: #1a73e8;
-    color: #fff;
+    background: var(--link);
+    color: var(--surface);
     border: none;
     border-radius: 6px;
     cursor: pointer;
@@ -157,7 +157,7 @@
     gap: 8px;
     padding: 10px 0;
     font-size: 0.95em;
-    color: #2e7d32;
+    color: var(--accent);
     font-weight: 500;
   }
 </style>
