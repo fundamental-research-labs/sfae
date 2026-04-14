@@ -40,9 +40,10 @@ type Group = {
 }
 
 type OAuthSpec = {
-  "auth_url"?:  string,       // authorization endpoint (defaulted by SFAE for known providers)
-  "token_url"?: string,       // token endpoint — used for both code exchange and refresh
-  "scope":      string        // requested scopes (always specified by the agent)
+  "auth_url"?:       string,  // authorization endpoint (defaulted by SFAE for known providers)
+  "token_url"?:      string,  // token endpoint — used for both code exchange and refresh
+  "revocation_url"?: string,  // token revocation endpoint (optional, enables clean re-auth)
+  "scope":           string   // requested scopes (always specified by the agent)
 }
 ```
 
@@ -54,7 +55,7 @@ A group has either `fields` or `oauth`, not both. At least one of top-level `fie
 - Built-in apps: SFAE provides its own registered OAuth apps for common providers (Google, etc.)
 - Custom apps: users configure their own app credentials separately (server config, env vars, or a registration step) — outside this plan's scope.
 
-**OAuth stored result:** `OAUTH_ACCESS_TOKEN` and `OAUTH_REFRESH_TOKEN` in the credential set. SFAE also persists `OAUTH_TOKEN_URL` in the set for future token refresh.
+**OAuth stored result:** `OAUTH_ACCESS_TOKEN` and `OAUTH_REFRESH_TOKEN` in the credential set. SFAE also persists `OAUTH_TOKEN_URL` in the set for future token refresh, and `OAUTH_REVOCATION_URL` if provided (used to revoke tokens before re-authorization).
 
 ### JSON examples
 
@@ -137,6 +138,7 @@ sfae prompt api.custom-saas.com --spec '{
       "oauth": {
         "auth_url": "https://login.custom-saas.com/oauth/authorize",
         "token_url": "https://login.custom-saas.com/oauth/token",
+        "revocation_url": "https://login.custom-saas.com/oauth/revoke",
         "scope": "api.read api.write"
       }
     }
@@ -144,7 +146,7 @@ sfae prompt api.custom-saas.com --spec '{
 }'
 ```
 
-No SFAE preset for this domain, so `auth_url` and `token_url` are required. The user must have configured their custom OAuth app credentials separately.
+No SFAE preset for this domain, so `auth_url` and `token_url` are required. `revocation_url` is optional — when provided, SFAE revokes the old token before re-authorization to force a fresh grant. The user must have configured their custom OAuth app credentials separately.
 
 **6. OAuth-only with SFAE defaults (simplest OAuth case):**
 
@@ -195,7 +197,7 @@ Removed: positional `<TYPE>` arg, `--url`, `--oauth`, `--client-id`, `--auth-url
 - Only active group's fields (plus common fields) are submitted and stored
 - Defaults pre-fill inputs, labels override auto-generated names, `secret` auto-detection works
 - `--terminal` mode: sequential prompts per field, group selection when groups present (OAuth groups require browser — fall back or error in terminal mode)
-- `sfae prompt --help` is concise and shows the spec format briefly
+- `sfae prompt --help` includes inline JSON spec examples (simple field, multi-field, groups, OAuth) — AI agents read `--help` directly rather than opening docs, so this is the primary reference
 - No new external dependencies
 
 ### Open questions
@@ -217,7 +219,7 @@ Define the JSON spec as serde structs in sfae-core. Refactor the form layer from
 
 Replace all prompt-related flags with `--spec`, wire up both browser and terminal paths.
 
-- [ ] 2a: Rewrite the `Prompt` command in `main.rs`: remove positional `cred_type`, `--url`, and all OAuth flags. Add `--spec <JSON>` (required). Parse JSON into `PromptSpec`, validate. Browser path calls `browser_prompt_spec()`. Terminal path loops over fields calling `prompt()`/`prompt_secret()` per field (show defaults, respect `secret` flag). Store result with `store_credential_set()`. Remove `run_oauth()` as a separate code path — OAuth is now just another group type handled by the spec. Clean up dispatch in `main.rs`.
+- [ ] 2a: Rewrite the `Prompt` command in `main.rs`: remove positional `cred_type`, `--url`, and all OAuth flags. Add `--spec <JSON>` (required). Add a rich `after_long_help` string to the clap command with inline JSON examples covering: single field, multi-field with defaults, alternative groups, and OAuth — this is the primary reference for AI agents. Parse JSON into `PromptSpec`, validate. Browser path calls `browser_prompt_spec()`. Terminal path loops over fields calling `prompt()`/`prompt_secret()` per field (show defaults, respect `secret` flag). Store result with `store_credential_set()`. Remove `run_oauth()` as a separate code path — OAuth is now just another group type handled by the spec. Clean up dispatch in `main.rs`.
 
 ## Phase 3: Alternative groups with toggle UI
 
@@ -230,7 +232,7 @@ Add group support to both browser and terminal rendering.
 Add OAuth as a group type — renders as scope display + "Authorize" button instead of input fields.
 
 - [ ] 4a: Resolve `OAuthSpec` URLs: look up SFAE presets by domain (reuse existing `get_provider_preset()` with parent-domain walkup), merge with spec-provided URLs, error if no preset and URLs missing. Render the OAuth group in the form: display requested scope, show an "Authorize with [provider]" button. Button click opens the provider's consent page (same PKCE flow as current `run_oauth()`, but triggered from the form instead of CLI flags).
-- [ ] 4b: Handle the OAuth callback within the browser form flow: after authorization completes, store `OAUTH_ACCESS_TOKEN`, `OAUTH_REFRESH_TOKEN`, and `OAUTH_TOKEN_URL` in the credential set. Show success state in the form (checkmark, "Authorized" message). If common fields exist, the user still needs to submit those — OAuth tokens are collected alongside them.
+- [ ] 4b: Handle the OAuth callback within the browser form flow: after authorization completes, store `OAUTH_ACCESS_TOKEN`, `OAUTH_REFRESH_TOKEN`, `OAUTH_TOKEN_URL`, and `OAUTH_REVOCATION_URL` (if provided) in the credential set. Show success state in the form (checkmark, "Authorized" message). If common fields exist, the user still needs to submit those — OAuth tokens are collected alongside them.
 
 ## Phase 5: Cleanup
 
