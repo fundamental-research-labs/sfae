@@ -232,7 +232,7 @@ Add group support to both browser and terminal rendering.
 Add OAuth as a group type — renders as scope display + "Authorize" button instead of input fields.
 
 - [x] 4a: Resolve `OAuthSpec` URLs: look up SFAE presets by domain (reuse existing `get_provider_preset()` with parent-domain walkup), merge with spec-provided URLs, error if no preset and URLs missing. Render the OAuth group in the form: display requested scope, show an "Authorize with [provider]" button. Button click opens the provider's consent page (same PKCE flow as current `run_oauth()`, but triggered from the form instead of CLI flags).
-- [ ] 4b: Handle the OAuth callback within the browser form flow: after authorization completes, store `OAUTH_ACCESS_TOKEN`, `OAUTH_REFRESH_TOKEN`, `OAUTH_TOKEN_URL`, and `OAUTH_REVOCATION_URL` (if provided) in the credential set. Show success state in the form (checkmark, "Authorized" message). If common fields exist, the user still needs to submit those — OAuth tokens are collected alongside them.
+- [x] 4b: Handle the OAuth callback within the browser form flow: after authorization completes, store `OAUTH_ACCESS_TOKEN`, `OAUTH_REFRESH_TOKEN`, `OAUTH_TOKEN_URL`, and `OAUTH_REVOCATION_URL` (if provided) in the credential set. Show success state in the form (checkmark, "Authorized" message). If common fields exist, the user still needs to submit those — OAuth tokens are collected alongside them.
 
 ## Phase 5: Cleanup
 
