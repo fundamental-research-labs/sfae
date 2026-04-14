@@ -451,7 +451,7 @@ pub fn browser_prompt_spec(
 pub fn browser_prompt(label: &str, url: Option<&str>) -> Result<String, SfaeError> {
     // Build a single-field spec and delegate.
     let spec = PromptSpec {
-        url: url.map(|s| s.to_string()),
+        help_url: url.map(|s| s.to_string()),
         fields: Some(vec![FieldSpec {
             name: "secret".to_string(),
             label: Some("Credential".to_string()),
@@ -520,7 +520,7 @@ fn extract_query_param(path: &str, key: &str) -> Option<String> {
 /// Build the HTML form page with data-driven fields and optional groups.
 #[cfg(feature = "cli")]
 fn build_form_page(label: &str, spec: &PromptSpec) -> String {
-    let url_section = match spec.url.as_deref() {
+    let url_section = match spec.help_url.as_deref() {
         Some(u) => format!(
             r#"<p class="url-hint">Obtain your credential here:<br><a href="{}" target="_blank">{}</a></p>"#,
             html_escape(u),

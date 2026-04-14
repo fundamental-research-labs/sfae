@@ -26,7 +26,7 @@ fn bin_name() -> Option<&'static str> {
 const PROMPT_EXAMPLES: &str = r#"EXAMPLES:
   Single field (API key):
     sfae prompt github.com --spec '{
-      "url": "https://github.com/settings/tokens",
+      "help_url": "https://github.com/settings/tokens",
       "fields": ["ACCESS_TOKEN"]
     }'
 

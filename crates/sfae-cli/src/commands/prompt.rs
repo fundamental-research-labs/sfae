@@ -25,7 +25,7 @@ pub fn run(
     };
 
     let values = if terminal {
-        if let Some(u) = &spec.url {
+        if let Some(u) = &spec.help_url {
             eprintln!("Obtain your credential here: {u}");
         }
         terminal_prompt_fields(spec)?

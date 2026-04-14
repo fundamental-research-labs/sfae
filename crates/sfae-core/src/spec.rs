@@ -8,8 +8,8 @@ use crate::error::SfaeError;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptSpec {
     /// Help link shown on the page (not a form field).
-    #[serde(default)]
-    pub url: Option<String>,
+    #[serde(default, alias = "url")]
+    pub help_url: Option<String>,
 
     /// Common fields — always visible above any group selector.
     #[serde(default)]
@@ -430,14 +430,14 @@ mod tests {
     fn example_1_simple_api_key() {
         let spec: PromptSpec = serde_json::from_str(
             r#"{
-            "url": "https://github.com/settings/tokens",
+            "help_url": "https://github.com/settings/tokens",
             "fields": ["ACCESS_TOKEN"]
         }"#,
         )
         .unwrap();
         spec.validate().unwrap();
         assert_eq!(
-            spec.url.as_deref(),
+            spec.help_url.as_deref(),
             Some("https://github.com/settings/tokens")
         );
         let fields = spec.fields.unwrap();
@@ -469,7 +469,7 @@ mod tests {
     fn example_3_alternative_groups() {
         let spec: PromptSpec = serde_json::from_str(
             r#"{
-            "url": "https://example.com/developers",
+            "help_url": "https://example.com/developers",
             "fields": [
                 {"name": "URL", "label": "API Endpoint", "default": "https://api.example.com/v2"}
             ],

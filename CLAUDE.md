@@ -25,7 +25,7 @@ The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin s
 
    **Simple example** (single API key):
    ```
-   sfae prompt github.com --spec '{"url": "https://github.com/settings/tokens", "fields": ["ACCESS_TOKEN"]}'
+   sfae prompt github.com --spec '{"help_url": "https://github.com/settings/tokens", "fields": ["ACCESS_TOKEN"]}'
    ```
 
    **Multi-field example** (database connection):
@@ -45,7 +45,7 @@ The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin s
 
    ```
    {
-     "url"?:    string,    // help link shown on the page (not a form field)
+     "help_url"?: string,  // help link shown on the page (not a form field)
      "fields"?: Field[],   // common fields — always visible
      "groups"?: Group[]    // alternative groups — user picks one
    }
