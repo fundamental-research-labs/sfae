@@ -206,6 +206,7 @@ function sfaeSubmit(){
   var missing=[];
   inputs.forEach(function(i){
     if(!i.name)return;
+    if(i.type==='radio'&&!i.checked)return;
     body.append(i.name,i.value);
     if(i.dataset.required==='true'&&!i.value.trim())missing.push(i);
   });
