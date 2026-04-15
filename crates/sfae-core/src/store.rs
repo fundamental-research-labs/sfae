@@ -131,9 +131,9 @@ pub fn list_credential_types(
 // --- Credential index file ---
 
 fn config_dir() -> Result<PathBuf, SfaeError> {
-    let base = dirs::config_dir()
-        .ok_or_else(|| SfaeError::ConfigError("cannot determine config directory".into()))?;
-    Ok(base.join("sfae"))
+    let home = dirs::home_dir()
+        .ok_or_else(|| SfaeError::ConfigError("cannot determine home directory".into()))?;
+    Ok(home.join(".sfae"))
 }
 
 fn index_path() -> Result<PathBuf, SfaeError> {
@@ -224,7 +224,7 @@ mod keyring_store {
     /// same signing identity across builds.
     ///
     /// Credential keys are tracked in a local index file
-    /// (`~/.config/sfae/credentials.json`). Only keys live in the index; actual
+    /// (`~/.sfae/credentials.json`). Only keys live in the index; actual
     /// secret values stay exclusively in the keychain.
     #[derive(Default)]
     pub struct KeyringStore;
@@ -360,7 +360,7 @@ mod keyring_store {
     /// Secret store backed by the OS keychain via the `keyring` crate.
     ///
     /// Credential keys are tracked in a local index file
-    /// (`~/.config/sfae/credentials.json`). Only keys live in the index; actual
+    /// (`~/.sfae/credentials.json`). Only keys live in the index; actual
     /// secret values stay exclusively in the keychain.
     #[derive(Default)]
     pub struct KeyringStore;
