@@ -54,7 +54,6 @@
     color: var(--text-secondary);
     margin-bottom: 6px;
   }
-  input[type="password"],
   input[type="text"] {
     width: 100%;
     padding: 10px 12px;
@@ -65,7 +64,10 @@
     outline: none;
     transition: border-color 0.15s;
   }
-  input[type="password"]:focus,
+  input[type="text"].secret {
+    -webkit-text-security: disc;
+    text-security: disc;
+  }
   input[type="text"]:focus {
     border-color: var(--link);
     box-shadow: 0 0 0 3px var(--focus-ring);

@@ -562,11 +562,10 @@ fn build_form_page(label: &str, spec: &PromptSpec) -> String {
 fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
     let mut html = String::new();
     for (i, field) in fields.iter().enumerate() {
-        let input_type = if field.is_secret() {
-            "password"
-        } else {
-            "text"
-        };
+        // Always use type="text" — type="password" triggers the macOS Passwords
+        // "Save Password?" dialog. Secret fields are visually masked with CSS
+        // (-webkit-text-security: disc) instead.
+        let input_type = "text";
         let autocomplete = "off";
         let label = html_escape(&field.display_label());
         let name = html_escape(&field.name);
@@ -593,8 +592,13 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
             ""
         };
 
+        let secret_class = if field.is_secret() {
+            r#" class="secret""#
+        } else {
+            ""
+        };
         html.push_str(&format!(
-            r#"<div class="field"><label for="{id}">{label}{optional_hint}</label><input type="{input_type}" id="{id}" name="{name}"{value}{autofocus}{placeholder}{required} autocomplete="{autocomplete}"></div>"#,
+            r#"<div class="field"><label for="{id}">{label}{optional_hint}</label><input type="{input_type}"{secret_class} id="{id}" name="{name}"{value}{autofocus}{placeholder}{required} autocomplete="{autocomplete}"></div>"#,
         ));
     }
     html
@@ -668,7 +672,7 @@ fn build_groups_html(groups: &[GroupSpec], autofocus_first_group: bool) -> Strin
         "document.querySelectorAll('.oauth-btn').forEach(function(b){b.style.display='none'});",
         "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex'});",
         // Auto-submit when there are no input fields to fill (OAuth-only flow).
-        "var inputs=document.querySelectorAll('input[type=\"text\"]:not(:disabled),input[type=\"password\"]:not(:disabled)');",
+        "var inputs=document.querySelectorAll('input[type=\"text\"]:not(:disabled)');",
         "if(!inputs.length){document.querySelector('form').requestSubmit()}",
         "}",
         "}).catch(function(){})",
