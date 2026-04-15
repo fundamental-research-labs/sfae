@@ -543,7 +543,7 @@ fn build_form_page(label: &str, spec: &PromptSpec) -> String {
             .iter()
             .any(|g| g.fields.as_ref().is_some_and(|f| !f.is_empty()));
     let submit_button = if has_any_input_fields {
-        r#"<button type="submit">Submit</button>"#
+        r#"<button type="button" onclick="sfaeSubmit()">Submit</button>"#
     } else {
         ""
     };
@@ -562,11 +562,9 @@ fn build_form_page(label: &str, spec: &PromptSpec) -> String {
 fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
     let mut html = String::new();
     for (i, field) in fields.iter().enumerate() {
-        // Always use type="text" — type="password" triggers the macOS Passwords
-        // "Save Password?" dialog. Secret fields are visually masked with CSS
-        // (-webkit-text-security: disc) instead.
-        let input_type = "text";
-        let autocomplete = "off";
+        // No <form>, no type="password", no autocomplete — Safari/macOS Passwords
+        // detects credential forms via heuristics on all of these. Inputs live in
+        // a plain <div> and are submitted programmatically via fetch().
         let label = html_escape(&field.display_label());
         let name = html_escape(&field.name);
         let id = format!("field_{}", html_escape(&field.name));
@@ -585,7 +583,11 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
         } else {
             String::new()
         };
-        let required = if field.is_optional() { "" } else { " required" };
+        let data_required = if field.is_optional() {
+            ""
+        } else {
+            r#" data-required="true""#
+        };
         let optional_hint = if field.is_optional() {
             r#" <span class="optional-hint">(optional)</span>"#
         } else {
@@ -598,7 +600,7 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
             ""
         };
         html.push_str(&format!(
-            r#"<div class="field"><label for="{id}">{label}{optional_hint}</label><input type="{input_type}"{secret_class} id="{id}" name="{name}"{value}{autofocus}{placeholder}{required} autocomplete="{autocomplete}"></div>"#,
+            r#"<div class="field"><label for="{id}">{label}{optional_hint}</label><input type="text"{secret_class} id="{id}" name="{name}"{value}{autofocus}{placeholder}{data_required}></div>"#,
         ));
     }
     html
@@ -673,7 +675,7 @@ fn build_groups_html(groups: &[GroupSpec], autofocus_first_group: bool) -> Strin
         "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex'});",
         // Auto-submit when there are no input fields to fill (OAuth-only flow).
         "var inputs=document.querySelectorAll('input[type=\"text\"]:not(:disabled)');",
-        "if(!inputs.length){document.querySelector('form').requestSubmit()}",
+        "if(!inputs.length){sfaeSubmit()}",
         "}",
         "}).catch(function(){})",
         "},1500)}",
