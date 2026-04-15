@@ -66,7 +66,7 @@ Replace the `keyring` crate (which wraps deprecated `SecKeychain*` APIs on macOS
 
 - [x] 2b: Rewrite the keychain operations in `store.rs` on macOS to use `security_framework::passwords::{set_generic_password, get_generic_password, delete_generic_password}` instead of `keyring::Entry`. Use `#[cfg(target_os = "macos")]` to select the implementation, with the `keyring`-based code as fallback on other platforms. The `SecretStore` trait interface is unchanged — all callers continue to work without modification.
 
-- [ ] 2c: Verify backward compatibility — existing credential sets stored by the legacy API must still be readable. The modern APIs use the same item attributes (`kSecClassGenericPassword`, service=`"sfae"`, account=key), so items are inherently compatible. Test by reading a previously stored credential after the migration.
+- [x] 2c: Verify backward compatibility — existing credential sets stored by the legacy API must still be readable. The modern APIs use the same item attributes (`kSecClassGenericPassword`, service=`"sfae"`, account=key), so items are inherently compatible. Test by reading a previously stored credential after the migration.
 
 ---
 
