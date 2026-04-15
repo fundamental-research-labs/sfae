@@ -578,6 +578,11 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
         } else {
             "text"
         };
+        let autocomplete = if field.is_secret() {
+            "new-password"
+        } else {
+            "off"
+        };
         let label = html_escape(&field.display_label());
         let name = html_escape(&field.name);
         let id = format!("field_{}", html_escape(&field.name));
@@ -604,7 +609,7 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
         };
 
         html.push_str(&format!(
-            r#"<div class="field"><label for="{id}">{label}{optional_hint}</label><input type="{input_type}" id="{id}" name="{name}"{value}{autofocus}{placeholder}{required}></div>"#,
+            r#"<div class="field"><label for="{id}">{label}{optional_hint}</label><input type="{input_type}" id="{id}" name="{name}"{value}{autofocus}{placeholder}{required} autocomplete="{autocomplete}"></div>"#,
         ));
     }
     html
@@ -679,7 +684,7 @@ fn build_groups_html(groups: &[GroupSpec], autofocus_first_group: bool) -> Strin
         "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex'});",
         // Auto-submit when there are no input fields to fill (OAuth-only flow).
         "var inputs=document.querySelectorAll('input[type=\"text\"]:not(:disabled),input[type=\"password\"]:not(:disabled)');",
-        "if(!inputs.length){document.querySelector('form').submit()}",
+        "if(!inputs.length){document.querySelector('form').requestSubmit()}",
         "}",
         "}).catch(function(){})",
         "},1500)}",
