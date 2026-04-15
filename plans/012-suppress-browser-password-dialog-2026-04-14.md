@@ -1,18 +1,29 @@
-# Plan 012: Suppress Browser "Save Password?" Dialog
+# Plan 012: Suppress Browser "Save Password?" Dialog & Migrate to Modern Keychain APIs
 
-**Goal:** Prevent the macOS Passwords app "Save Password?" dialog from appearing when the user submits the credential form in the browser.
+**Goal:** (1) Prevent the macOS Passwords app "Save Password?" dialog from appearing when the user submits the credential form in the browser. (2) Replace the deprecated legacy keychain APIs with Apple's modern SecItem APIs for storing credential blobs.
 
 ---
 
-## Root Cause
+## Root Cause (Browser Dialog)
 
-The dialog is **not** from the keychain API — it's from the **browser** (Safari on macOS Sequoia). When a `<form method="POST">` containing `type="password"` inputs is submitted natively, Safari detects this as a credential form and routes the save offer through the Passwords app.
-
-The keychain code (via `keyring` crate → `SecKeychainAddGenericPassword` legacy API) already stores items silently in the file-based login keychain. That path is fine and needs no changes.
+The dialog is from the **browser** (Safari on macOS Sequoia). When a `<form method="POST">` containing `type="password"` inputs is submitted natively, Safari detects this as a credential form and routes the save offer through the Passwords app.
 
 **Current mitigations** (in working tree, not yet committed) are ineffective:
 - `autocomplete="off"` on `<form>` — ignored by modern browsers for password fields
 - `autocomplete="new-password"` on password inputs — actively *encourages* saving (tells the browser "this is a new password, please save it")
+
+## Keychain API Status
+
+The `keyring` crate on macOS uses **legacy** `SecKeychain*` APIs (deprecated by Apple):
+
+| Operation | Legacy (current) | Modern (target) |
+|-----------|-------------------|------------------|
+| Create | `SecKeychainAddGenericPassword` | `SecItemAdd` |
+| Read | `SecKeychainFindGenericPassword` | `SecItemCopyMatching` |
+| Update | `SecKeychainItemModifyAttributesAndData` | `SecItemUpdate` |
+| Delete | `SecKeychainItemDelete` | `SecItemDelete` |
+
+The `security-framework` crate (already a transitive dependency via `keyring`) exposes the modern APIs through its `passwords` module: `set_generic_password`, `get_generic_password`, `delete_generic_password`. These use identical item attributes (`kSecClassGenericPassword` + `kSecAttrService` + `kSecAttrAccount`), so existing keychain items are fully compatible — the keychain matches on attributes, not which API created them.
 
 ---
 
@@ -22,11 +33,16 @@ The keychain code (via `keyring` crate → `SecKeychainAddGenericPassword` legac
 - `crates/sfae-core/src/form.html` — HTML template with `<form method="POST" action="/">`
 - `crates/sfae-core/src/browser.rs` — Rust server; `build_fields_html()` generates `<input>` elements; `build_groups_html()` emits inline JS for group toggling and OAuth auto-submit (including `form.submit()`)
 - `crates/sfae-core/src/done.html` — success page returned after form submission
+- `crates/sfae-core/src/store.rs` — `KeyringStore` implementation (lines 208–343) wraps `keyring::Entry` for all keychain operations
+- `crates/sfae-core/Cargo.toml` — `keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"], optional = true }`
 
-**Submission flow today:**
+**Browser submission flow today:**
 1. User fills form → browser does native POST to `/`
 2. Rust server parses fields, responds with done page HTML
 3. Browser renders done page AND shows "Save Password?" dialog
+
+**Keychain call chain today:**
+`KeyringStore::set()` → `keyring::Entry::new("sfae", key).set_password(value)` → `SecKeychainAddGenericPassword` (legacy)
 
 ---
 
@@ -42,9 +58,21 @@ The browser's password-save detection hooks into native form submissions. A prog
 
 ---
 
-## Phase 2: Verify
+## Phase 2: Migrate macOS keychain backend to modern SecItem APIs
 
-- [ ] 2a: Build (`cargo build --bin sfae --release`) and manually test the form by running `sfae prompt` with a spec that includes password fields. Confirm the "Save Password?" dialog no longer appears.
+Replace the `keyring` crate (which wraps deprecated `SecKeychain*` APIs on macOS) with direct use of the `security-framework` crate's modern `passwords` module (`SecItemAdd`/`SecItemCopyMatching`/`SecItemUpdate`/`SecItemDelete`).
+
+- [ ] 2a: Update `Cargo.toml` — add `security-framework` as a direct optional dependency for macOS. Keep `keyring` available for non-macOS platforms (Windows/Linux). The `security-framework` crate is already compiled as a transitive dep, so this adds no new build cost.
+
+- [ ] 2b: Rewrite the keychain operations in `store.rs` on macOS to use `security_framework::passwords::{set_generic_password, get_generic_password, delete_generic_password}` instead of `keyring::Entry`. Use `#[cfg(target_os = "macos")]` to select the implementation, with the `keyring`-based code as fallback on other platforms. The `SecretStore` trait interface is unchanged — all callers continue to work without modification.
+
+- [ ] 2c: Verify backward compatibility — existing credential sets stored by the legacy API must still be readable. The modern APIs use the same item attributes (`kSecClassGenericPassword`, service=`"sfae"`, account=key), so items are inherently compatible. Test by reading a previously stored credential after the migration.
+
+---
+
+## Phase 3: Verify
+
+- [ ] 3a: Build (`cargo build --bin sfae --release`) and manually test: (1) the form submission no longer triggers the "Save Password?" dialog, (2) `sfae prompt` stores credentials successfully, (3) `sfae request` can read them back, (4) `sfae credentials` lists them, (5) `sfae delete` removes them.
 
 ---
 
@@ -53,8 +81,11 @@ The browser's password-save detection hooks into native form submissions. A prog
 - The macOS Passwords app "Save Password?" dialog does not appear during form submission
 - All existing form functionality is preserved: field validation, group switching, OAuth flow, auto-submit on OAuth-only specs
 - No-JS fallback: if JavaScript is disabled, native form POST still works (dialog may appear, but credentials are still stored)
-- No new dependencies
+- macOS keychain operations use modern `SecItem*` APIs (`SecItemAdd`, `SecItemCopyMatching`, `SecItemUpdate`, `SecItemDelete`)
+- Non-macOS platforms (Windows/Linux) continue to work via `keyring` crate fallback
+- Existing keychain items stored by the legacy API are readable after migration
+- `security-framework` is already a transitive dep — no new crate added to the build graph
 
 ## Open Questions
 
-None — the three research agents all converged on the same root cause (browser form submission detection) and the same fix approach (JavaScript fetch).
+1. **Feature naming:** The current feature is called `keyring`. Should it be renamed to something platform-neutral (e.g., `native-keychain`) since macOS will no longer use the `keyring` crate? Or keep `keyring` for backward compatibility?
