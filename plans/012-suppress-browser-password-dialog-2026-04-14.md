@@ -54,7 +54,7 @@ The browser's password-save detection hooks into native form submissions. A prog
 
 - [x] 1b: In `build_groups_html()` (`browser.rs`), change the OAuth auto-submit from `document.querySelector('form').submit()` to `document.querySelector('form').requestSubmit()` so it fires the `submit` event and goes through the same fetch-based path. (`requestSubmit()` fires the event; `submit()` does not.)
 
-- [ ] 1c: In `build_fields_html()` (`browser.rs`), change `autocomplete="new-password"` to `autocomplete="off"` for secret fields. `new-password` actively encourages the browser to offer password saving. Combined with the fetch-based submission, `autocomplete="off"` is the correct signal.
+- [x] 1c: In `build_fields_html()` (`browser.rs`), change `autocomplete="new-password"` to `autocomplete="off"` for secret fields. `new-password` actively encourages the browser to offer password saving. Combined with the fetch-based submission, `autocomplete="off"` is the correct signal.
 
 ---
 

@@ -578,11 +578,7 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
         } else {
             "text"
         };
-        let autocomplete = if field.is_secret() {
-            "new-password"
-        } else {
-            "off"
-        };
+        let autocomplete = "off";
         let label = html_escape(&field.display_label());
         let name = html_escape(&field.name);
         let id = format!("field_{}", html_escape(&field.name));
