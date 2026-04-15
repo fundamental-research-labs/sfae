@@ -21,7 +21,7 @@ cargo build --bin sfae --release
 Optionally, embed the Google OAuth client secret at build time:
 
 ```
-SFAE_GOOGLE_CLIENT_SECRET="your-secret-here" cargo build --bin sfae --release
+SFAE_OAUTH_GOOGLE_CLIENT_SECRET="your-secret-here" cargo build --bin sfae --release
 ```
 
 Without the env var, the build succeeds but Google OAuth will require `--client-secret` at runtime.

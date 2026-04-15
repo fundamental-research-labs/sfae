@@ -8,7 +8,7 @@ sfae-core's `build.rs` loads environment variables from a `.env.secrets` file at
 
    ```
    # Compile-time secrets for sfae-core
-   SFAE_GOOGLE_CLIENT_SECRET=your-secret-here
+   SFAE_OAUTH_GOOGLE_CLIENT_SECRET=your-secret-here
    ```
 
 2. Make sure `.env.secrets` is gitignored. If your project's `.gitignore` already has `.env*`, you're covered.
@@ -25,11 +25,11 @@ The walk-up search means the file works regardless of which workspace triggers t
 
 | Variable | Used by | Purpose |
 |---|---|---|
-| `SFAE_GOOGLE_CLIENT_SECRET` | `oauth.rs` → `get_provider_preset()` | Google OAuth client secret for the built-in `googleapis.com` preset |
+| `SFAE_OAUTH_GOOGLE_CLIENT_SECRET` | `oauth.rs` → `get_provider_preset()` | Google OAuth client secret for the built-in `googleapis.com` preset |
 
 ## Alternatives
 
-- **Inline env var**: `SFAE_GOOGLE_CLIENT_SECRET="..." cargo build` — works but must be repeated every build.
+- **Inline env var**: `SFAE_OAUTH_GOOGLE_CLIENT_SECRET="..." cargo build` — works but must be repeated every build.
 - **Shell profile**: Export the var in `.bashrc`/`.zshrc` — works but pollutes the global environment.
 - **CI**: Set the variable in your CI environment — `build.rs` skips silently when the file is absent, so `option_env!()` falls back to the process environment as usual.
 
