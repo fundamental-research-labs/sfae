@@ -612,14 +612,15 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool, index_offset: 
         } else {
             ""
         };
-        let data_mask = if field.is_secret() {
-            r#" data-m="1""#
+        if field.is_secret() {
+            html.push_str(&format!(
+                r#"<div class="field"><label>{label}{optional_hint}</label><div style="position:relative"><input type="text" name="{opaque_name}"{value}{autofocus}{data_required} data-m="1"><span class="dots" aria-hidden="true"></span></div></div>"#,
+            ));
         } else {
-            ""
-        };
-        html.push_str(&format!(
-            r#"<div class="field"><label>{label}{optional_hint}</label><input type="text" name="{opaque_name}"{value}{autofocus}{data_required}{data_mask}></div>"#,
-        ));
+            html.push_str(&format!(
+                r#"<div class="field"><label>{label}{optional_hint}</label><input type="text" name="{opaque_name}"{value}{autofocus}{data_required}></div>"#,
+            ));
+        }
     }
     html
 }

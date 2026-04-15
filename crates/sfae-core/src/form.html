@@ -64,9 +64,19 @@
     outline: none;
     transition: border-color 0.15s;
   }
-  input[data-m] {
-    -webkit-text-security: disc;
-    text-security: disc;
+  input[data-m] { color: transparent; caret-color: var(--text); }
+  .dots {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    padding: 10px 12px;
+    font-size: 1em;
+    font-family: inherit;
+    pointer-events: none;
+    user-select: none;
+    overflow: hidden;
+    white-space: nowrap;
+    color: var(--text);
+    line-height: normal;
   }
   input[type="text"]:focus {
     border-color: var(--link);
@@ -181,6 +191,13 @@
   <p class="footer-note">Your secret is stored in the OS keychain and injected into requests at runtime. The agent never sees or has access to it.</p>
 </div>
 <script>
+// Dot overlay for masked fields — real value stays in input.value (transparent).
+document.querySelectorAll('input[data-m]').forEach(function(el){
+  var d=el.nextElementSibling;
+  if(!d)return;
+  if(el.value)d.textContent='\u2022'.repeat(el.value.length);
+  el.addEventListener('input',function(){d.textContent='\u2022'.repeat(el.value.length)});
+});
 function sfaeSubmit(){
   var c=document.getElementById('credential-form');
   if(!c)return;
@@ -188,15 +205,22 @@ function sfaeSubmit(){
   var body=new URLSearchParams();
   var missing=[];
   inputs.forEach(function(i){
-    if(i.name){
-      body.append(i.name,i.value);
-      if(i.dataset.required==='true'&&!i.value.trim())missing.push(i);
-    }
+    if(!i.name)return;
+    body.append(i.name,i.value);
+    if(i.dataset.required==='true'&&!i.value.trim())missing.push(i);
   });
   if(missing.length){missing[0].focus();return}
   fetch('/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
   .then(function(r){return r.text()})
-  .then(function(html){document.open();document.write(html);document.close()})
+  .then(function(html){
+    // Replace DOM in-place — document.write() triggers navigation events
+    // which Safari uses to prompt "Save Password?"
+    var doc=new DOMParser().parseFromString(html,'text/html');
+    document.title=doc.title||'';
+    document.body.innerHTML=doc.body.innerHTML;
+    var s=doc.querySelector('style');
+    if(s){var os=document.querySelector('style');if(os)os.textContent=s.textContent}
+  })
 }
 document.addEventListener('keydown',function(e){
   if(e.key==='Enter'&&e.target.tagName==='INPUT')sfaeSubmit();
