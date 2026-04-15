@@ -273,12 +273,7 @@ pub fn browser_prompt_spec(
 
     loop {
         let mut req = server.accept_request()?;
-        let path = req
-            .path
-            .split('?')
-            .next()
-            .unwrap_or(&req.path)
-            .to_string();
+        let path = req.path.split('?').next().unwrap_or(&req.path).to_string();
 
         match (req.method.as_str(), path.as_str()) {
             ("GET", "/") => {
@@ -286,8 +281,8 @@ pub fn browser_prompt_spec(
                 req.respond(200, &html);
             }
             ("GET", "/auth") => {
-                let group_idx = extract_query_param(&req.path, "group")
-                    .and_then(|s| s.parse::<usize>().ok());
+                let group_idx =
+                    extract_query_param(&req.path, "group").and_then(|s| s.parse::<usize>().ok());
                 let Some(idx) = group_idx else {
                     req.respond(400, "missing group parameter");
                     continue;
@@ -368,17 +363,11 @@ pub fn browser_prompt_spec(
                 )?;
 
                 let mut tokens = HashMap::new();
-                tokens.insert(
-                    "OAUTH_ACCESS_TOKEN".to_string(),
-                    token_resp.access_token,
-                );
+                tokens.insert("OAUTH_ACCESS_TOKEN".to_string(), token_resp.access_token);
                 if let Some(rt) = token_resp.refresh_token {
                     tokens.insert("OAUTH_REFRESH_TOKEN".to_string(), rt);
                 }
-                tokens.insert(
-                    "OAUTH_TOKEN_URL".to_string(),
-                    resolved.token_url.clone(),
-                );
+                tokens.insert("OAUTH_TOKEN_URL".to_string(), resolved.token_url.clone());
                 if let Some(rev) = &resolved.revocation_url {
                     tokens.insert("OAUTH_REVOCATION_URL".to_string(), rev.clone());
                 }
