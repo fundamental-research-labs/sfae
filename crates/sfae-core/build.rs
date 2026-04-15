@@ -1,5 +1,5 @@
 /// Load compile-time env vars from `.env.secrets` at the repo root.
-/// This lets developers put secrets like `SFAE_GOOGLE_CLIENT_SECRET` in a
+/// This lets developers put secrets like `SFAE_OAUTH_GOOGLE_CLIENT_SECRET` in a
 /// gitignored file that gets picked up by `option_env!()` in the crate source.
 fn main() {
     // Walk up from CARGO_MANIFEST_DIR looking for .env.secrets.
