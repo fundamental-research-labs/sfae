@@ -50,7 +50,7 @@ The `security-framework` crate (already a transitive dependency via `keyring`) e
 
 The browser's password-save detection hooks into native form submissions. A programmatic `fetch()` call bypasses this entirely.
 
-- [ ] 1a: Add a `<script>` block at the end of `form.html` that intercepts the form's `submit` event, collects field data via `FormData`, sends it via `fetch('/', { method: 'POST' })`, and replaces the page content with the server response (done page HTML) on success. The native `method="POST" action="/"` remains as a no-JS fallback.
+- [x] 1a: Add a `<script>` block at the end of `form.html` that intercepts the form's `submit` event, collects field data via `FormData`, sends it via `fetch('/', { method: 'POST' })`, and replaces the page content with the server response (done page HTML) on success. The native `method="POST" action="/"` remains as a no-JS fallback.
 
 - [ ] 1b: In `build_groups_html()` (`browser.rs`), change the OAuth auto-submit from `document.querySelector('form').submit()` to `document.querySelector('form').requestSubmit()` so it fires the `submit` event and goes through the same fetch-based path. (`requestSubmit()` fires the event; `submit()` does not.)
 
