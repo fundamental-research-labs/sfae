@@ -211,12 +211,17 @@ fn write_index(keys: &[String]) -> Result<(), SfaeError> {
 mod keyring_store {
     use super::*;
     use security_framework::passwords::{
-        delete_generic_password, get_generic_password, set_generic_password,
+        delete_generic_password_options, generic_password, set_generic_password_options,
+        PasswordOptions,
     };
 
     const KEYRING_SERVICE: &str = "sfae";
 
     /// Secret store backed by the macOS keychain via modern SecItem APIs.
+    ///
+    /// Uses the data protection keychain (`kSecUseDataProtectionKeychain`)
+    /// which has no per-application ACLs — any process running as the current
+    /// user can access items without password prompts.
     ///
     /// Credential keys are tracked in a local index file
     /// (`~/.config/sfae/credentials.json`). Only keys live in the index; actual
@@ -230,6 +235,13 @@ mod keyring_store {
         }
     }
 
+    /// Build a query targeting the data protection keychain.
+    fn options(account: &str) -> PasswordOptions {
+        let mut opts = PasswordOptions::new_generic_password(KEYRING_SERVICE, account);
+        opts.use_protected_keychain();
+        opts
+    }
+
     /// `errSecItemNotFound` (-25300)
     const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
@@ -239,7 +251,7 @@ mod keyring_store {
 
     impl SecretStore for KeyringStore {
         fn set(&mut self, key: &str, value: &str) -> Result<(), SfaeError> {
-            set_generic_password(KEYRING_SERVICE, key, value.as_bytes())
+            set_generic_password_options(value.as_bytes(), options(key))
                 .map_err(|e| SfaeError::StoreError(e.to_string()))?;
 
             let mut keys = read_index()?;
@@ -252,7 +264,7 @@ mod keyring_store {
         }
 
         fn get(&self, key: &str) -> Result<String, SfaeError> {
-            match get_generic_password(KEYRING_SERVICE, key) {
+            match generic_password(options(key)) {
                 Ok(bytes) => String::from_utf8(bytes)
                     .map_err(|e| SfaeError::StoreError(format!("invalid UTF-8: {e}"))),
                 Err(e) if is_not_found(&e) => Err(SfaeError::CredentialNotFound(key.to_string())),
@@ -261,7 +273,7 @@ mod keyring_store {
         }
 
         fn delete(&mut self, key: &str) -> Result<(), SfaeError> {
-            let keychain_result = delete_generic_password(KEYRING_SERVICE, key);
+            let keychain_result = delete_generic_password_options(options(key));
 
             // Always clean the index, even if the keychain entry is already gone.
             let mut keys = read_index()?;
@@ -298,7 +310,7 @@ mod keyring_store {
 
             let json = serde_json::to_string(values)
                 .map_err(|e| SfaeError::StoreError(format!("failed to serialize: {e}")))?;
-            set_generic_password(KEYRING_SERVICE, &id, json.as_bytes())
+            set_generic_password_options(json.as_bytes(), options(&id))
                 .map_err(|e| SfaeError::StoreError(e.to_string()))?;
 
             let mut index = read_credential_index()?;
@@ -333,7 +345,7 @@ mod keyring_store {
             }
 
             // Remove from keychain (ignore if already gone)
-            let _ = delete_generic_password(KEYRING_SERVICE, id);
+            let _ = delete_generic_password_options(options(id));
 
             index.sets.retain(|s| s.id != id);
             index.version = 2;
