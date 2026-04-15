@@ -62,7 +62,7 @@ The browser's password-save detection hooks into native form submissions. A prog
 
 Replace the `keyring` crate (which wraps deprecated `SecKeychain*` APIs on macOS) with direct use of the `security-framework` crate's modern `passwords` module (`SecItemAdd`/`SecItemCopyMatching`/`SecItemUpdate`/`SecItemDelete`).
 
-- [ ] 2a: Update `Cargo.toml` — add `security-framework` as a direct optional dependency for macOS. Keep `keyring` available for non-macOS platforms (Windows/Linux). The `security-framework` crate is already compiled as a transitive dep, so this adds no new build cost.
+- [ ] 2a: Update `Cargo.toml` — add `security-framework` as a direct optional dependency for macOS. Keep `keyring` available for non-macOS platforms (Windows/Linux). Rename the feature from `keyring` to `native-keychain` (more platform-neutral since macOS will no longer use the `keyring` crate). Update all references to the old feature name (`Cargo.toml` features, `#[cfg(feature = "...")]` guards, dependent crate feature flags). The `security-framework` crate is already compiled as a transitive dep, so this adds no new build cost.
 
 - [ ] 2b: Rewrite the keychain operations in `store.rs` on macOS to use `security_framework::passwords::{set_generic_password, get_generic_password, delete_generic_password}` instead of `keyring::Entry`. Use `#[cfg(target_os = "macos")]` to select the implementation, with the `keyring`-based code as fallback on other platforms. The `SecretStore` trait interface is unchanged — all callers continue to work without modification.
 
@@ -88,4 +88,4 @@ Replace the `keyring` crate (which wraps deprecated `SecKeychain*` APIs on macOS
 
 ## Open Questions
 
-1. **Feature naming:** The current feature is called `keyring`. Should it be renamed to something platform-neutral (e.g., `native-keychain`) since macOS will no longer use the `keyring` crate? Or keep `keyring` for backward compatibility?
+None — feature will be renamed from `keyring` to `native-keychain` (resolved).
