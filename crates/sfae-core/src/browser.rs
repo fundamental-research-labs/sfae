@@ -384,18 +384,41 @@ pub fn browser_prompt_spec(
                 req.respond_json(json);
             }
             ("POST", "/") => {
-                let mut values = parse_form_fields(&req.body);
+                let raw = parse_form_fields(&req.body);
                 req.respond(200, &build_done_page());
 
-                // Determine expected fields: common + active group.
-                let mut expected = collect_common_fields(spec);
+                // Determine expected fields: common fields first, then
+                // the active group's fields.  The HTML used opaque names
+                // `_f0`, `_f1`, … — the index matches this ordered list.
+                let common = collect_common_fields(spec);
+                let mut expected = common.clone();
                 if let Some(groups) = &spec.groups
-                    && let Some(group_idx) = values.remove("_group")
+                    && let Some(group_idx) = raw.get("_group")
                     && let Ok(idx) = group_idx.parse::<usize>()
                     && let Some(group) = groups.get(idx)
                     && let Some(fields) = &group.fields
                 {
                     expected.extend(fields.iter().cloned());
+                }
+
+                // Map opaque `_fN` keys back to real field names.
+                // Common fields: _f0 … _f(common.len()-1)
+                // Group fields:  _f(common.len()) … _f(common.len()+group.len()-1)
+                let mut values: HashMap<String, String> = HashMap::new();
+                for (i, field) in common.iter().enumerate() {
+                    if let Some(v) = raw.get(&format!("_f{i}")) {
+                        values.insert(field.name.clone(), v.clone());
+                    }
+                }
+                let offset = common.len();
+                for (i, field) in expected.iter().skip(offset).enumerate() {
+                    if let Some(v) = raw.get(&format!("_f{}", offset + i)) {
+                        values.insert(field.name.clone(), v.clone());
+                    }
+                }
+                // Pass through the _group selector as-is.
+                if let Some(g) = raw.get("_group") {
+                    values.insert("_group".to_string(), g.clone());
                 }
 
                 // Validate no empty values for expected required fields.
@@ -533,9 +556,9 @@ fn build_form_page(label: &str, spec: &PromptSpec) -> String {
 
     let common_fields = collect_common_fields(spec);
     let has_common = !common_fields.is_empty();
-    let fields_html = build_fields_html(&common_fields, true);
+    let fields_html = build_fields_html(&common_fields, true, 0);
     let groups = spec.groups.as_deref().unwrap_or(&[]);
-    let groups_html = build_groups_html(groups, !has_common);
+    let groups_html = build_groups_html(groups, !has_common, common_fields.len());
 
     // Hide the submit button when the only content is OAuth (no input fields).
     let has_any_input_fields = has_common
@@ -559,15 +582,16 @@ fn build_form_page(label: &str, spec: &PromptSpec) -> String {
 
 /// Generate HTML for a list of field specs.
 #[cfg(feature = "cli")]
-fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
+fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool, index_offset: usize) -> String {
     let mut html = String::new();
     for (i, field) in fields.iter().enumerate() {
-        // No <form>, no type="password", no autocomplete — Safari/macOS Passwords
-        // detects credential forms via heuristics on all of these. Inputs live in
-        // a plain <div> and are submitted programmatically via fetch().
+        // All field identifiers are opaque to defeat Safari/macOS Passwords
+        // heuristics. Names like "PASSWORD" or "ACCESS_TOKEN" trigger the
+        // "Save Password?" dialog. We use `_f0`, `_f1`, … and the server
+        // maps them back by index.
+        let idx = index_offset + i;
+        let opaque_name = format!("_f{idx}");
         let label = html_escape(&field.display_label());
-        let name = html_escape(&field.name);
-        let id = format!("field_{}", html_escape(&field.name));
         let autofocus = if autofocus_first && i == 0 {
             " autofocus"
         } else {
@@ -578,11 +602,6 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
             .as_ref()
             .map(|d| format!(r#" value="{}""#, html_escape(d)))
             .unwrap_or_default();
-        let placeholder = if field.is_secret() {
-            format!(r#" placeholder="Enter {}""#, label)
-        } else {
-            String::new()
-        };
         let data_required = if field.is_optional() {
             ""
         } else {
@@ -593,14 +612,13 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
         } else {
             ""
         };
-
-        let secret_class = if field.is_secret() {
-            r#" class="secret""#
+        let data_mask = if field.is_secret() {
+            r#" data-m="1""#
         } else {
             ""
         };
         html.push_str(&format!(
-            r#"<div class="field"><label for="{id}">{label}{optional_hint}</label><input type="text"{secret_class} id="{id}" name="{name}"{value}{autofocus}{placeholder}{data_required}></div>"#,
+            r#"<div class="field"><label>{label}{optional_hint}</label><input type="text" name="{opaque_name}"{value}{autofocus}{data_required}{data_mask}></div>"#,
         ));
     }
     html
@@ -608,7 +626,7 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool) -> String {
 
 /// Generate HTML for alternative field groups with tab selector and toggle script.
 #[cfg(feature = "cli")]
-fn build_groups_html(groups: &[GroupSpec], autofocus_first_group: bool) -> String {
+fn build_groups_html(groups: &[GroupSpec], autofocus_first_group: bool, field_index_offset: usize) -> String {
     if groups.is_empty() {
         return String::new();
     }
@@ -643,7 +661,7 @@ fn build_groups_html(groups: &[GroupSpec], autofocus_first_group: bool) -> Strin
         if let Some(oauth) = &group.oauth {
             html.push_str(&build_oauth_panel_html(oauth, i));
         } else if let Some(fields) = &group.fields {
-            html.push_str(&build_fields_html(fields, autofocus_first_group && i == 0));
+            html.push_str(&build_fields_html(fields, autofocus_first_group && i == 0, field_index_offset));
         }
         html.push_str("</div>");
     }
