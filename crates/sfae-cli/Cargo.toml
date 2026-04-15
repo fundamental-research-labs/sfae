@@ -10,8 +10,8 @@ name = "sfae"
 path = "src/main.rs"
 
 [features]
-default = ["keyring"]
-keyring = ["sfae-core/keyring"]
+default = ["native-keychain"]
+native-keychain = ["sfae-core/native-keychain"]
 
 [dev-dependencies]
 assert_cmd = "2"

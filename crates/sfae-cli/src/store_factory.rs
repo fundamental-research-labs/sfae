@@ -9,17 +9,17 @@ pub fn create_store() -> Box<dyn SecretStore> {
         return Box::new(store);
     }
 
-    #[cfg(feature = "keyring")]
+    #[cfg(feature = "native-keychain")]
     {
         Box::new(sfae_core::store::KeyringStore::new())
     }
 
-    #[cfg(not(feature = "keyring"))]
+    #[cfg(not(feature = "native-keychain"))]
     {
         panic!(
             "No credential store available — missing env vars. \
              Set SFAE_STORE_URL and SFAE_STORE_TOKEN for API store mode, \
-             or build with the keyring feature for OS keychain mode."
+             or build with the native-keychain feature for OS keychain mode."
         );
     }
 }

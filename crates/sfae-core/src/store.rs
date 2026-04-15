@@ -205,7 +205,7 @@ fn write_index(keys: &[String]) -> Result<(), SfaeError> {
     write_credential_index(&index)
 }
 
-#[cfg(feature = "keyring")]
+#[cfg(feature = "native-keychain")]
 mod keyring_store {
     use super::*;
 
@@ -341,7 +341,7 @@ mod keyring_store {
         }
     }
 }
-#[cfg(feature = "keyring")]
+#[cfg(feature = "native-keychain")]
 pub use keyring_store::KeyringStore;
 
 /// In-memory secret store for testing.

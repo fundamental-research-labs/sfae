@@ -22,7 +22,7 @@ fn bin_name() -> Option<&'static str> {
     })
 }
 
-#[cfg(feature = "keyring")]
+#[cfg(feature = "native-keychain")]
 const PROMPT_EXAMPLES: &str = r#"EXAMPLES:
   Single field (API key):
     sfae prompt github.com --spec '{
@@ -127,7 +127,7 @@ enum Command {
         verbose: bool,
     },
     /// Prompt user for credentials
-    #[cfg(feature = "keyring")]
+    #[cfg(feature = "native-keychain")]
     #[command(after_help = PROMPT_EXAMPLES)]
     Prompt {
         /// Domain (e.g. github.com)
@@ -143,7 +143,7 @@ enum Command {
         terminal: bool,
     },
     /// Delete a credential set by UUID or legacy credentials by domain
-    #[cfg(feature = "keyring")]
+    #[cfg(feature = "native-keychain")]
     Delete {
         /// Credential set UUID or domain (e.g. github.com)
         target: String,
@@ -155,7 +155,7 @@ enum Command {
         user: Option<String>,
     },
     /// Delete all stored credentials
-    #[cfg(feature = "keyring")]
+    #[cfg(feature = "native-keychain")]
     Flush {
         /// Show what would be deleted without actually deleting
         #[arg(long)]
@@ -198,7 +198,7 @@ fn main() -> anyhow::Result<()> {
                 },
             )?;
         }
-        #[cfg(feature = "keyring")]
+        #[cfg(feature = "native-keychain")]
         Command::Prompt {
             domain,
             spec,
@@ -210,7 +210,7 @@ fn main() -> anyhow::Result<()> {
             prompt_spec.validate().map_err(|e| anyhow::anyhow!("{e}"))?;
             commands::prompt::run(&domain, &prompt_spec, user.as_deref(), terminal)?;
         }
-        #[cfg(feature = "keyring")]
+        #[cfg(feature = "native-keychain")]
         Command::Delete {
             target,
             cred_type,
@@ -218,7 +218,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             commands::delete::run(&target, cred_type.as_deref(), user.as_deref())?;
         }
-        #[cfg(feature = "keyring")]
+        #[cfg(feature = "native-keychain")]
         Command::Flush { dry_run } => {
             commands::flush::run(dry_run)?;
         }
