@@ -627,7 +627,11 @@ fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool, index_offset: 
 
 /// Generate HTML for alternative field groups with tab selector and toggle script.
 #[cfg(feature = "cli")]
-fn build_groups_html(groups: &[GroupSpec], autofocus_first_group: bool, field_index_offset: usize) -> String {
+fn build_groups_html(
+    groups: &[GroupSpec],
+    autofocus_first_group: bool,
+    field_index_offset: usize,
+) -> String {
     if groups.is_empty() {
         return String::new();
     }
@@ -662,7 +666,11 @@ fn build_groups_html(groups: &[GroupSpec], autofocus_first_group: bool, field_in
         if let Some(oauth) = &group.oauth {
             html.push_str(&build_oauth_panel_html(oauth, i));
         } else if let Some(fields) = &group.fields {
-            html.push_str(&build_fields_html(fields, autofocus_first_group && i == 0, field_index_offset));
+            html.push_str(&build_fields_html(
+                fields,
+                autofocus_first_group && i == 0,
+                field_index_offset,
+            ));
         }
         html.push_str("</div>");
     }
