@@ -22,6 +22,72 @@ fn bin_name() -> Option<&'static str> {
     })
 }
 
+#[cfg(feature = "native-keychain")]
+const PROMPT_EXAMPLES: &str = r#"EXAMPLES:
+  Single field (API key):
+    sfae prompt github.com --spec '{
+      "help_url": "https://github.com/settings/tokens",
+      "fields": ["ACCESS_TOKEN"]
+    }'
+
+  Multi-field with defaults:
+    sfae prompt clickhouse.example.com --spec '{
+      "fields": [
+        {"name": "HOST", "default": "https://ch.example.com:8443"},
+        {"name": "USERNAME"},
+        {"name": "PASSWORD"}
+      ]
+    }'
+
+  Alternative groups (basic auth OR API key):
+    sfae prompt api.example.com --spec '{
+      "groups": [
+        {"label": "Basic Auth", "fields": ["USERNAME", "PASSWORD"]},
+        {"label": "API Key", "fields": ["API_KEY"]}
+      ]
+    }'
+
+  Common fields + alternative groups:
+    sfae prompt api.example.com --spec '{
+      "help_url": "https://example.com/developers",
+      "fields": [
+        {"name": "URL", "label": "API Endpoint", "default": "https://api.example.com/v2"}
+      ],
+      "groups": [
+        {"label": "Basic Auth", "fields": ["USERNAME", "PASSWORD"]},
+        {"label": "API Key", "fields": [{"name": "API_KEY", "label": "Developer API Key"}]}
+      ]
+    }'
+
+  Optional fields:
+    sfae prompt api.example.com --spec '{
+      "fields": [
+        {"name": "API_KEY"},
+        {"name": "PROJECT_ID", "optional": true}
+      ]
+    }'
+
+  OAuth (Google):
+    sfae prompt googleapis.com --spec '{
+      "groups": [{
+        "label": "OAuth",
+        "oauth": {"scope": "https://www.googleapis.com/auth/gmail.readonly"}
+      }]
+    }'
+
+  OAuth (custom provider with explicit URLs):
+    sfae prompt api.custom-saas.com --spec '{
+      "groups": [{
+        "label": "OAuth",
+        "oauth": {
+          "auth_url": "https://login.custom-saas.com/oauth/authorize",
+          "token_url": "https://login.custom-saas.com/oauth/token",
+          "revocation_url": "https://login.custom-saas.com/oauth/revoke",
+          "scope": "api.read api.write"
+        }
+      }]
+    }'"#;
+
 #[derive(Subcommand)]
 enum Command {
     /// List credential sets (optionally filtered by domain)
@@ -61,46 +127,23 @@ enum Command {
         verbose: bool,
     },
     /// Prompt user for credentials
-    #[cfg(feature = "keyring")]
+    #[cfg(feature = "native-keychain")]
+    #[command(after_help = PROMPT_EXAMPLES)]
     Prompt {
         /// Domain (e.g. github.com)
         domain: String,
-        /// Credential type (ACCESS_TOKEN, REFRESH_TOKEN, API_KEY, PASSWORD)
-        #[arg(name = "type")]
-        cred_type: String,
-        /// URL where the user can obtain the credential (e.g. settings page, OAuth login)
+        /// Credential spec as JSON (see examples with --help)
         #[arg(long)]
-        url: Option<String>,
-        /// Username (optional)
+        spec: String,
+        /// Label for credential set storage (e.g. "Work", "Personal")
         #[arg(long)]
         user: Option<String>,
         /// Use terminal stdin instead of browser-based prompt
-        #[arg(long, conflicts_with = "oauth")]
-        terminal: bool,
-        /// Use OAuth2 authorization code flow with PKCE
         #[arg(long)]
-        oauth: bool,
-        /// OAuth2 client ID (required with --oauth)
-        #[arg(long, requires = "oauth")]
-        client_id: Option<String>,
-        /// OAuth2 authorization URL (required with --oauth)
-        #[arg(long, requires = "oauth")]
-        auth_url: Option<String>,
-        /// OAuth2 token exchange URL (required with --oauth)
-        #[arg(long, requires = "oauth")]
-        token_url: Option<String>,
-        /// OAuth2 scopes (comma-separated)
-        #[arg(long, requires = "oauth")]
-        scope: Option<String>,
-        /// OAuth2 client secret (for confidential clients)
-        #[arg(long, requires = "oauth")]
-        client_secret: Option<String>,
-        /// OAuth2 token revocation URL (optional, enables pre-flow revocation)
-        #[arg(long, requires = "oauth")]
-        revocation_url: Option<String>,
+        terminal: bool,
     },
     /// Delete a credential set by UUID or legacy credentials by domain
-    #[cfg(feature = "keyring")]
+    #[cfg(feature = "native-keychain")]
     Delete {
         /// Credential set UUID or domain (e.g. github.com)
         target: String,
@@ -112,7 +155,7 @@ enum Command {
         user: Option<String>,
     },
     /// Delete all stored credentials
-    #[cfg(feature = "keyring")]
+    #[cfg(feature = "native-keychain")]
     Flush {
         /// Show what would be deleted without actually deleting
         #[arg(long)]
@@ -155,77 +198,19 @@ fn main() -> anyhow::Result<()> {
                 },
             )?;
         }
-        #[cfg(feature = "keyring")]
+        #[cfg(feature = "native-keychain")]
         Command::Prompt {
             domain,
-            cred_type,
-            url,
+            spec,
             user,
             terminal,
-            oauth,
-            client_id,
-            auth_url,
-            token_url,
-            scope,
-            client_secret,
-            revocation_url,
         } => {
-            if oauth {
-                let preset = sfae_core::oauth::get_provider_preset(&domain);
-
-                let client_id =
-                    client_id.or_else(|| preset.as_ref().map(|p| p.client_id.to_string()));
-                let auth_url = auth_url.or_else(|| preset.as_ref().map(|p| p.auth_url.to_string()));
-                let token_url =
-                    token_url.or_else(|| preset.as_ref().map(|p| p.token_url.to_string()));
-                let client_secret = client_secret.or_else(|| {
-                    preset
-                        .as_ref()
-                        .and_then(|p| p.client_secret.map(|s| s.to_string()))
-                });
-                let revocation_url = revocation_url.or_else(|| {
-                    preset
-                        .as_ref()
-                        .and_then(|p| p.revocation_url.map(|s| s.to_string()))
-                });
-
-                let Some(client_id) = client_id else {
-                    anyhow::bail!(
-                        "--client-id is required with --oauth (no built-in preset for this domain)"
-                    );
-                };
-                let Some(auth_url) = auth_url else {
-                    anyhow::bail!(
-                        "--auth-url is required with --oauth (no built-in preset for this domain)"
-                    );
-                };
-                let Some(token_url) = token_url else {
-                    anyhow::bail!(
-                        "--token-url is required with --oauth (no built-in preset for this domain)"
-                    );
-                };
-                commands::prompt::run_oauth(
-                    &domain,
-                    &cred_type,
-                    user.as_deref(),
-                    &client_id,
-                    &auth_url,
-                    &token_url,
-                    scope.as_deref(),
-                    client_secret.as_deref(),
-                    revocation_url.as_deref(),
-                )?;
-            } else {
-                commands::prompt::run(
-                    &domain,
-                    &cred_type,
-                    url.as_deref(),
-                    user.as_deref(),
-                    terminal,
-                )?;
-            }
+            let prompt_spec: sfae_core::spec::PromptSpec = serde_json::from_str(&spec)
+                .map_err(|e| anyhow::anyhow!("invalid --spec JSON: {e}"))?;
+            prompt_spec.validate().map_err(|e| anyhow::anyhow!("{e}"))?;
+            commands::prompt::run(&domain, &prompt_spec, user.as_deref(), terminal)?;
         }
-        #[cfg(feature = "keyring")]
+        #[cfg(feature = "native-keychain")]
         Command::Delete {
             target,
             cred_type,
@@ -233,7 +218,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             commands::delete::run(&target, cred_type.as_deref(), user.as_deref())?;
         }
-        #[cfg(feature = "keyring")]
+        #[cfg(feature = "native-keychain")]
         Command::Flush { dry_run } => {
             commands::flush::run(dry_run)?;
         }

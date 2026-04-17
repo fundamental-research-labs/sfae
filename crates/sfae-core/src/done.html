@@ -3,62 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>sfae — done</title>
+<title>{{TITLE}}</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: system-ui, -apple-system, sans-serif;
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #f5f5f5;
-    color: #1a1a1a;
-    padding: 16px;
-  }
-  .card {
-    background: #fff;
-    border: 1px solid #e0e0e0;
-    border-radius: 12px;
-    padding: 40px;
-    width: 100%;
-    max-width: 440px;
-    text-align: center;
-  }
-  .check {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: #e8f5e9;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 20px;
-  }
-  .check svg {
-    width: 24px;
-    height: 24px;
-    stroke: #2e7d32;
-    fill: none;
-    stroke-width: 2.5;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-  h1 {
-    font-size: 1.25em;
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
-  p {
-    font-size: 0.95em;
-    color: #555;
-  }
+  {{BASE_STYLES}}
 </style>
 </head>
 <body>
-<div class="card">
+<div class="card done">
   <div class="check"><svg viewBox="0 0 24 24"><polyline points="4 12 10 18 20 6"/></svg></div>
-  <h1>Credential saved</h1>
+  <h1>{{HEADING}}</h1>
   <p>You can close this tab.</p>
 </div>
 </body>

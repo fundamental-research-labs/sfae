@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 #[cfg(feature = "cli")]
@@ -5,6 +6,11 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::error::SfaeError;
+#[cfg(feature = "cli")]
+use crate::spec::{FieldSpec, GroupSpec, OAuthSpec, PromptSpec};
+
+/// Shared CSS included in both form and done pages.
+const BASE_STYLES: &str = include_str!("base.css");
 
 /// A temporary local HTTP server bound to `127.0.0.1` on a random port.
 ///
@@ -144,6 +150,317 @@ impl HttpRequest {
         let _ = self.stream.write_all(response.as_bytes());
         let _ = self.stream.flush();
     }
+
+    /// Send an HTTP 302 redirect response.
+    pub fn redirect(&mut self, url: &str) {
+        let response = format!(
+            "HTTP/1.1 302 Found\r\nLocation: {url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        let _ = self.stream.write_all(response.as_bytes());
+        let _ = self.stream.flush();
+    }
+
+    /// Send a JSON response.
+    pub fn respond_json(&mut self, json: &str) {
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json}",
+            json.len(),
+        );
+        let _ = self.stream.write_all(response.as_bytes());
+        let _ = self.stream.flush();
+    }
+}
+
+/// Resolved OAuth configuration with all URLs and app credentials populated.
+#[cfg(feature = "cli")]
+struct ResolvedOAuth {
+    auth_url: String,
+    token_url: String,
+    revocation_url: Option<String>,
+    scope: String,
+    client_id: String,
+    client_secret: Option<String>,
+}
+
+/// Resolve an OAuthSpec against provider presets for the given domain.
+///
+/// Merges spec-provided URLs with preset defaults. Errors if required URLs
+/// or app credentials are missing and no preset covers this domain.
+#[cfg(feature = "cli")]
+fn resolve_oauth_spec(domain: &str, spec: &OAuthSpec) -> Result<ResolvedOAuth, SfaeError> {
+    let preset = crate::oauth::get_provider_preset(domain);
+
+    let auth_url = spec
+        .auth_url
+        .clone()
+        .or_else(|| preset.as_ref().map(|p| p.auth_url.to_string()))
+        .ok_or_else(|| {
+            SfaeError::ConfigError(format!(
+                "OAuth auth_url is required (no built-in preset for \"{domain}\")"
+            ))
+        })?;
+
+    let token_url = spec
+        .token_url
+        .clone()
+        .or_else(|| preset.as_ref().map(|p| p.token_url.to_string()))
+        .ok_or_else(|| {
+            SfaeError::ConfigError(format!(
+                "OAuth token_url is required (no built-in preset for \"{domain}\")"
+            ))
+        })?;
+
+    let revocation_url = spec.revocation_url.clone().or_else(|| {
+        preset
+            .as_ref()
+            .and_then(|p| p.revocation_url.map(|s| s.to_string()))
+    });
+
+    let client_id = preset
+        .as_ref()
+        .map(|p| p.client_id.to_string())
+        .ok_or_else(|| {
+            SfaeError::ConfigError(format!(
+                "no OAuth app configured for \"{domain}\" — register app credentials or use a supported provider"
+            ))
+        })?;
+
+    let client_secret = preset
+        .as_ref()
+        .and_then(|p| p.client_secret.map(|s| s.to_string()));
+
+    Ok(ResolvedOAuth {
+        auth_url,
+        token_url,
+        revocation_url,
+        scope: spec.scope.clone(),
+        client_id,
+        client_secret,
+    })
+}
+
+/// Collect credentials from the user via a spec-driven form in the default browser.
+///
+/// Returns a map of field names to values collected from the form.
+/// Times out after 120 seconds with `SfaeError::Cancelled`.
+#[cfg(feature = "cli")]
+pub fn browser_prompt_spec(
+    domain: &str,
+    label: &str,
+    spec: &PromptSpec,
+) -> Result<HashMap<String, String>, SfaeError> {
+    // Resolve OAuth specs for all groups upfront.
+    let groups = spec.groups.as_deref().unwrap_or(&[]);
+    let resolved_oauth: Vec<Option<ResolvedOAuth>> = groups
+        .iter()
+        .map(|g| {
+            g.oauth
+                .as_ref()
+                .map(|oauth_spec| resolve_oauth_spec(domain, oauth_spec))
+                .transpose()
+        })
+        .collect::<Result<_, _>>()?;
+
+    let server = LocalServer::new()?;
+    let local_url = format!("http://127.0.0.1:{}/", server.port());
+    server.open_browser(&local_url)?;
+
+    // Mutable state for the ongoing OAuth flow.
+    let mut pending_verifier: Option<String> = None;
+    let mut pending_state: Option<String> = None;
+    let mut pending_group: Option<usize> = None;
+    let mut oauth_tokens: Option<HashMap<String, String>> = None;
+
+    loop {
+        let mut req = server.accept_request()?;
+        let path = req.path.split('?').next().unwrap_or(&req.path).to_string();
+
+        match (req.method.as_str(), path.as_str()) {
+            ("GET", "/") => {
+                let html = build_form_page(label, spec);
+                req.respond(200, &html);
+            }
+            ("GET", "/auth") => {
+                let group_idx =
+                    extract_query_param(&req.path, "group").and_then(|s| s.parse::<usize>().ok());
+                let Some(idx) = group_idx else {
+                    req.respond(400, "missing group parameter");
+                    continue;
+                };
+                let Some(Some(resolved)) = resolved_oauth.get(idx) else {
+                    req.respond(400, "invalid group or not an OAuth group");
+                    continue;
+                };
+
+                let verifier = crate::oauth::generate_code_verifier();
+                let challenge = crate::oauth::compute_code_challenge(&verifier);
+                let state = crate::oauth::generate_state();
+                let redirect_uri = format!("http://127.0.0.1:{}/callback", server.port());
+
+                let auth_url = crate::oauth::build_authorization_url(
+                    &resolved.auth_url,
+                    &resolved.client_id,
+                    &redirect_uri,
+                    &challenge,
+                    Some(&resolved.scope),
+                    &state,
+                );
+
+                pending_verifier = Some(verifier);
+                pending_state = Some(state);
+                pending_group = Some(idx);
+
+                req.redirect(&auth_url);
+            }
+            ("GET", "/callback") => {
+                let code = extract_query_param(&req.path, "code");
+                let state = extract_query_param(&req.path, "state");
+
+                let (Some(code), Some(state)) = (code, state) else {
+                    req.respond(400, "missing code or state parameter");
+                    continue;
+                };
+
+                // Validate state matches the pending OAuth flow.
+                if pending_state.as_deref() != Some(&state) {
+                    req.respond(400, "invalid state parameter");
+                    continue;
+                }
+
+                let Some(verifier) = pending_verifier.take() else {
+                    req.respond(400, "no pending OAuth flow");
+                    continue;
+                };
+                let Some(idx) = pending_group.take() else {
+                    req.respond(400, "no pending OAuth flow");
+                    continue;
+                };
+                let Some(Some(resolved)) = resolved_oauth.get(idx) else {
+                    req.respond(400, "invalid OAuth group");
+                    continue;
+                };
+                pending_state = None;
+
+                let redirect_uri = format!("http://127.0.0.1:{}/callback", server.port());
+                let token_resp = crate::oauth::exchange_code(
+                    &resolved.token_url,
+                    &code,
+                    &redirect_uri,
+                    &resolved.client_id,
+                    resolved.client_secret.as_deref(),
+                    &verifier,
+                )?;
+
+                // Save OAuth metadata for future token refresh.
+                crate::oauth::save_oauth_metadata(
+                    domain,
+                    None,
+                    crate::oauth::OAuthMetadata {
+                        token_url: resolved.token_url.clone(),
+                        client_id: resolved.client_id.clone(),
+                        revocation_url: resolved.revocation_url.clone(),
+                    },
+                )?;
+
+                let mut tokens = HashMap::new();
+                tokens.insert("OAUTH_ACCESS_TOKEN".to_string(), token_resp.access_token);
+                if let Some(rt) = token_resp.refresh_token {
+                    tokens.insert("OAUTH_REFRESH_TOKEN".to_string(), rt);
+                }
+                tokens.insert("OAUTH_TOKEN_URL".to_string(), resolved.token_url.clone());
+                if let Some(rev) = &resolved.revocation_url {
+                    tokens.insert("OAUTH_REVOCATION_URL".to_string(), rev.clone());
+                }
+                oauth_tokens = Some(tokens);
+
+                req.respond(200, &build_oauth_done_page());
+            }
+            ("GET", "/oauth-status") => {
+                let json = if oauth_tokens.is_some() {
+                    r#"{"authorized":true}"#
+                } else {
+                    r#"{"authorized":false}"#
+                };
+                req.respond_json(json);
+            }
+            ("POST", "/") => {
+                let raw = parse_form_fields(&req.body);
+                req.respond(200, &build_done_page());
+
+                // Determine expected fields: common fields first, then
+                // the active group's fields.  The HTML used opaque names
+                // `_f0`, `_f1`, … — the index matches this ordered list.
+                let common = collect_common_fields(spec);
+                let mut expected = common.clone();
+                if let Some(groups) = &spec.groups
+                    && let Some(group_idx) = raw.get("_group")
+                    && let Ok(idx) = group_idx.parse::<usize>()
+                    && let Some(group) = groups.get(idx)
+                    && let Some(fields) = &group.fields
+                {
+                    expected.extend(fields.iter().cloned());
+                }
+
+                // Map opaque `_fN` keys back to real field names.
+                // Common fields: _f0 … _f(common.len()-1)
+                // Group fields:  _f(common.len()) … _f(common.len()+group.len()-1)
+                let mut values: HashMap<String, String> = HashMap::new();
+                for (i, field) in common.iter().enumerate() {
+                    if let Some(v) = raw.get(&format!("_f{i}")) {
+                        values.insert(field.name.clone(), v.clone());
+                    }
+                }
+                let offset = common.len();
+                for (i, field) in expected.iter().skip(offset).enumerate() {
+                    if let Some(v) = raw.get(&format!("_f{}", offset + i)) {
+                        values.insert(field.name.clone(), v.clone());
+                    }
+                }
+                // Pass through the _group selector as-is.
+                if let Some(g) = raw.get("_group") {
+                    values.insert("_group".to_string(), g.clone());
+                }
+
+                // Validate no empty values for expected required fields.
+                for field in &expected {
+                    if field.is_optional() {
+                        continue;
+                    }
+                    let val = values.get(&field.name).map(|s| s.as_str()).unwrap_or("");
+                    if val.is_empty() {
+                        return Err(SfaeError::Other(format!(
+                            "credential value for {} cannot be empty",
+                            field.name
+                        )));
+                    }
+                }
+
+                // Return expected field values plus any OAuth tokens.
+                // Omit empty optional fields from the result.
+                let mut result: HashMap<String, String> = expected
+                    .iter()
+                    .filter_map(|f| {
+                        values.remove(&f.name).and_then(|v| {
+                            if v.is_empty() && f.is_optional() {
+                                None
+                            } else {
+                                Some((f.name.clone(), v))
+                            }
+                        })
+                    })
+                    .collect();
+
+                if let Some(tokens) = oauth_tokens.take() {
+                    result.extend(tokens);
+                }
+
+                return Ok(result);
+            }
+            _ => {
+                req.respond(404, "");
+            }
+        }
+    }
 }
 
 /// Collect a secret from the user via a local web page opened in the default browser.
@@ -156,32 +473,22 @@ impl HttpRequest {
 /// Times out after 120 seconds with `SfaeError::Cancelled`.
 #[cfg(feature = "cli")]
 pub fn browser_prompt(label: &str, url: Option<&str>) -> Result<String, SfaeError> {
-    let server = LocalServer::new()?;
-    let local_url = format!("http://127.0.0.1:{}/", server.port());
-    server.open_browser(&local_url)?;
-
-    loop {
-        let mut req = server.accept_request()?;
-
-        match (req.method.as_str(), req.path.as_str()) {
-            ("GET", "/") => {
-                let html = build_form_page(label, url);
-                req.respond(200, &html);
-            }
-            ("POST", "/") => {
-                let secret = parse_form_secret(&req.body).unwrap_or_default();
-                req.respond(200, &build_done_page());
-
-                if secret.is_empty() {
-                    return Err(SfaeError::Other("credential value cannot be empty".into()));
-                }
-                return Ok(secret);
-            }
-            _ => {
-                req.respond(404, "");
-            }
-        }
-    }
+    // Build a single-field spec and delegate.
+    let spec = PromptSpec {
+        help_url: url.map(|s| s.to_string()),
+        fields: Some(vec![FieldSpec {
+            name: "secret".to_string(),
+            label: Some("Credential".to_string()),
+            default: None,
+            secret: Some(true),
+            optional: None,
+        }]),
+        groups: None,
+    };
+    let mut values = browser_prompt_spec("", label, &spec)?;
+    values
+        .remove("secret")
+        .ok_or_else(|| SfaeError::Other("credential value cannot be empty".into()))
 }
 
 /// Run the OAuth2 callback server: wait for the provider to redirect back with an auth code.
@@ -214,6 +521,16 @@ pub fn oauth_callback(server: &LocalServer) -> Result<(String, String), SfaeErro
     }
 }
 
+/// Collect common (non-group) fields from a PromptSpec.
+#[cfg(feature = "cli")]
+fn collect_common_fields(spec: &PromptSpec) -> Vec<FieldSpec> {
+    let mut fields = Vec::new();
+    if let Some(ref f) = spec.fields {
+        fields.extend(f.iter().cloned());
+    }
+    fields
+}
+
 /// Extract a query parameter value from a path like `/callback?code=abc&state=xyz`.
 fn extract_query_param(path: &str, key: &str) -> Option<String> {
     let query = path.split('?').nth(1)?;
@@ -225,10 +542,10 @@ fn extract_query_param(path: &str, key: &str) -> Option<String> {
     None
 }
 
-/// Build the HTML form page.
+/// Build the HTML form page with data-driven fields and optional groups.
 #[cfg(feature = "cli")]
-fn build_form_page(label: &str, url: Option<&str>) -> String {
-    let url_section = match url {
+fn build_form_page(label: &str, spec: &PromptSpec) -> String {
+    let url_section = match spec.help_url.as_deref() {
         Some(u) => format!(
             r#"<p class="url-hint">Obtain your credential here:<br><a href="{}" target="_blank">{}</a></p>"#,
             html_escape(u),
@@ -237,14 +554,197 @@ fn build_form_page(label: &str, url: Option<&str>) -> String {
         None => String::new(),
     };
 
+    let common_fields = collect_common_fields(spec);
+    let has_common = !common_fields.is_empty();
+    let fields_html = build_fields_html(&common_fields, true, 0);
+    let groups = spec.groups.as_deref().unwrap_or(&[]);
+    let groups_html = build_groups_html(groups, !has_common, common_fields.len());
+
+    // Hide the submit button when the only content is OAuth (no input fields).
+    let has_any_input_fields = has_common
+        || groups
+            .iter()
+            .any(|g| g.fields.as_ref().is_some_and(|f| !f.is_empty()));
+    let submit_button = if has_any_input_fields {
+        r#"<button type="button" onclick="sfaeSubmit()">Submit</button>"#
+    } else {
+        ""
+    };
+
     include_str!("form.html")
+        .replace("{{BASE_STYLES}}", BASE_STYLES)
         .replace("{{LABEL}}", &html_escape(label))
         .replace("{{URL_SECTION}}", &url_section)
+        .replace("{{FIELDS}}", &fields_html)
+        .replace("{{GROUPS}}", &groups_html)
+        .replace("{{SUBMIT_BUTTON}}", submit_button)
+}
+
+/// Generate HTML for a list of field specs.
+#[cfg(feature = "cli")]
+fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool, index_offset: usize) -> String {
+    let mut html = String::new();
+    for (i, field) in fields.iter().enumerate() {
+        // All field identifiers are opaque to defeat Safari/macOS Passwords
+        // heuristics. Names like "PASSWORD" or "ACCESS_TOKEN" trigger the
+        // "Save Password?" dialog. We use `_f0`, `_f1`, … and the server
+        // maps them back by index.
+        let idx = index_offset + i;
+        let opaque_name = format!("_f{idx}");
+        let label = html_escape(&field.display_label());
+        let autofocus = if autofocus_first && i == 0 {
+            " autofocus"
+        } else {
+            ""
+        };
+        let value = field
+            .default
+            .as_ref()
+            .map(|d| format!(r#" value="{}""#, html_escape(d)))
+            .unwrap_or_default();
+        let data_required = if field.is_optional() {
+            ""
+        } else {
+            r#" data-required="true""#
+        };
+        let optional_hint = if field.is_optional() {
+            r#" <span class="optional-hint">(optional)</span>"#
+        } else {
+            ""
+        };
+        if field.is_secret() {
+            html.push_str(&format!(
+                r#"<div class="field"><label>{label}{optional_hint}</label><div style="position:relative"><input type="text" name="{opaque_name}"{value}{autofocus}{data_required} data-m="1"><span class="dots" aria-hidden="true"></span></div></div>"#,
+            ));
+        } else {
+            html.push_str(&format!(
+                r#"<div class="field"><label>{label}{optional_hint}</label><input type="text" name="{opaque_name}"{value}{autofocus}{data_required}></div>"#,
+            ));
+        }
+    }
+    html
+}
+
+/// Generate HTML for alternative field groups with tab selector and toggle script.
+#[cfg(feature = "cli")]
+fn build_groups_html(
+    groups: &[GroupSpec],
+    autofocus_first_group: bool,
+    field_index_offset: usize,
+) -> String {
+    if groups.is_empty() {
+        return String::new();
+    }
+
+    let mut html = String::from(r#"<div class="groups">"#);
+
+    // Only show the tab bar when there are multiple groups to choose between.
+    if groups.len() > 1 {
+        html.push_str(r#"<div class="group-tabs">"#);
+        for (i, group) in groups.iter().enumerate() {
+            let checked = if i == 0 { " checked" } else { "" };
+            let label = html_escape(&group.label);
+            html.push_str(&format!(
+                r#"<label class="group-tab"><input type="radio" name="_group" value="{i}"{checked}><span>{label}</span></label>"#,
+            ));
+        }
+        html.push_str("</div>");
+    } else {
+        // Single group: emit a hidden input so the server still knows which group.
+        html.push_str(r#"<input type="hidden" name="_group" value="0">"#);
+    }
+
+    for (i, group) in groups.iter().enumerate() {
+        let hidden = if i == 0 {
+            ""
+        } else {
+            r#" style="display:none""#
+        };
+        html.push_str(&format!(
+            r#"<div class="group-panel" data-group="{i}"{hidden}>"#,
+        ));
+        if let Some(oauth) = &group.oauth {
+            html.push_str(&build_oauth_panel_html(oauth, i));
+        } else if let Some(fields) = &group.fields {
+            html.push_str(&build_fields_html(
+                fields,
+                autofocus_first_group && i == 0,
+                field_index_offset,
+            ));
+        }
+        html.push_str("</div>");
+    }
+
+    html.push_str("</div>");
+
+    // Inline JS for group toggling and OAuth status polling.
+    html.push_str(concat!(
+        "<script>(function(){",
+        // Toggle function: show/hide panels, disable inactive inputs.
+        "function u(v){",
+        "document.querySelectorAll('.group-panel').forEach(function(p){",
+        "var a=p.dataset.group===v;",
+        "p.style.display=a?'':'none';",
+        "p.querySelectorAll('input:not([name=\"_group\"])').forEach(function(i){i.disabled=!a})",
+        "})}",
+        "var c=document.querySelector('input[name=\"_group\"]:checked');",
+        "if(c)u(c.value);",
+        "document.querySelectorAll('input[name=\"_group\"]').forEach(function(r){",
+        "r.addEventListener('change',function(){u(r.value)})",
+        "});",
+        // Poll for OAuth completion when an OAuth group exists.
+        "var oa=document.querySelector('.oauth-content');",
+        "if(oa){var t=setInterval(function(){",
+        "fetch('/oauth-status').then(function(r){return r.json()}).then(function(d){",
+        "if(d.authorized){",
+        "clearInterval(t);",
+        "document.querySelectorAll('.oauth-btn').forEach(function(b){b.style.display='none'});",
+        "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex'});",
+        // Auto-submit when there are no input fields to fill (OAuth-only flow).
+        "var inputs=document.querySelectorAll('input[type=\"text\"]:not(:disabled)');",
+        "if(!inputs.length){sfaeSubmit()}",
+        "}",
+        "}).catch(function(){})",
+        "},1500)}",
+        "})()</script>",
+    ));
+
+    html
+}
+
+/// Generate HTML for an OAuth group panel: scope display + "Authorize" button.
+#[cfg(feature = "cli")]
+fn build_oauth_panel_html(oauth: &OAuthSpec, group_idx: usize) -> String {
+    let scope = html_escape(&oauth.scope);
+    let mut html = String::new();
+    html.push_str(r#"<div class="oauth-content">"#);
+    html.push_str(&format!(
+        r#"<p class="oauth-scope">Scope: <code>{scope}</code></p>"#,
+    ));
+    html.push_str(&format!(
+        r#"<a href="/auth?group={group_idx}" target="_blank" class="oauth-btn" id="oauth-btn-{group_idx}">Authorize</a>"#,
+    ));
+    html.push_str(&format!(
+        r#"<div class="oauth-status" id="oauth-status-{group_idx}" style="display:none">&#10003; Authorized</div>"#,
+    ));
+    html.push_str("</div>");
+    html
+}
+
+/// Build the page shown in the OAuth popup after authorization completes.
+fn build_oauth_done_page() -> String {
+    include_str!("done.html")
+        .replace("{{BASE_STYLES}}", BASE_STYLES)
+        .replace("{{TITLE}}", "sfae \u{2014} authorized")
+        .replace("{{HEADING}}", "Authorized")
 }
 
 /// Build the confirmation page shown after the secret is submitted or OAuth completes.
 fn build_done_page() -> String {
-    include_str!("done.html").to_string()
+    include_str!("done.html")
+        .replace("{{BASE_STYLES}}", BASE_STYLES)
+        .replace("{{TITLE}}", "sfae \u{2014} done")
+        .replace("{{HEADING}}", "Credential saved")
 }
 
 /// Minimal HTML escaping for user-provided strings embedded in HTML.
@@ -256,15 +756,16 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// Extract the `secret` field from a `application/x-www-form-urlencoded` body.
+/// Parse all key=value pairs from a `application/x-www-form-urlencoded` body.
 #[cfg(feature = "cli")]
-fn parse_form_secret(body: &str) -> Option<String> {
+fn parse_form_fields(body: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
     for pair in body.split('&') {
-        if let Some(value) = pair.strip_prefix("secret=") {
-            return Some(url_decode(value));
+        if let Some((key, value)) = pair.split_once('=') {
+            map.insert(url_decode(key), url_decode(value));
         }
     }
-    None
+    map
 }
 
 /// Minimal percent-decoding for form values.

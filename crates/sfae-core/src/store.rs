@@ -131,9 +131,9 @@ pub fn list_credential_types(
 // --- Credential index file ---
 
 fn config_dir() -> Result<PathBuf, SfaeError> {
-    let base = dirs::config_dir()
-        .ok_or_else(|| SfaeError::ConfigError("cannot determine config directory".into()))?;
-    Ok(base.join("sfae"))
+    let home = dirs::home_dir()
+        .ok_or_else(|| SfaeError::ConfigError("cannot determine home directory".into()))?;
+    Ok(home.join(".sfae"))
 }
 
 fn index_path() -> Result<PathBuf, SfaeError> {
@@ -205,16 +205,162 @@ fn write_index(keys: &[String]) -> Result<(), SfaeError> {
     write_credential_index(&index)
 }
 
-#[cfg(feature = "keyring")]
+// --- macOS: use security-framework (modern SecItem APIs) ---
+
+#[cfg(all(feature = "native-keychain", target_os = "macos"))]
+mod keyring_store {
+    use super::*;
+    use security_framework::passwords::{
+        delete_generic_password, get_generic_password, set_generic_password,
+    };
+
+    const KEYRING_SERVICE: &str = "sfae";
+
+    /// Secret store backed by the macOS login keychain via modern SecItem APIs.
+    ///
+    /// The login keychain ties item access to the app's **code signing identity**.
+    /// When the binary is signed with a stable identity (see `make build`),
+    /// rebuilds don't trigger password prompts — the keychain recognizes the
+    /// same signing identity across builds.
+    ///
+    /// Credential keys are tracked in a local index file
+    /// (`~/.sfae/credentials.json`). Only keys live in the index; actual
+    /// secret values stay exclusively in the keychain.
+    #[derive(Default)]
+    pub struct KeyringStore;
+
+    impl KeyringStore {
+        pub fn new() -> Self {
+            Self
+        }
+    }
+
+    /// `errSecItemNotFound` (-25300)
+    const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+
+    fn is_not_found(e: &security_framework::base::Error) -> bool {
+        e.code() == ERR_SEC_ITEM_NOT_FOUND
+    }
+
+    impl SecretStore for KeyringStore {
+        fn set(&mut self, key: &str, value: &str) -> Result<(), SfaeError> {
+            set_generic_password(KEYRING_SERVICE, key, value.as_bytes())
+                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+
+            let mut keys = read_index()?;
+            if !keys.contains(&key.to_string()) {
+                keys.push(key.to_string());
+                keys.sort();
+                write_index(&keys)?;
+            }
+            Ok(())
+        }
+
+        fn get(&self, key: &str) -> Result<String, SfaeError> {
+            match get_generic_password(KEYRING_SERVICE, key) {
+                Ok(bytes) => String::from_utf8(bytes)
+                    .map_err(|e| SfaeError::StoreError(format!("invalid UTF-8: {e}"))),
+                Err(e) if is_not_found(&e) => Err(SfaeError::CredentialNotFound(key.to_string())),
+                Err(e) => Err(SfaeError::StoreError(e.to_string())),
+            }
+        }
+
+        fn delete(&mut self, key: &str) -> Result<(), SfaeError> {
+            let keychain_result = delete_generic_password(KEYRING_SERVICE, key);
+
+            // Always clean the index, even if the keychain entry is already gone.
+            let mut keys = read_index()?;
+            let had_key = keys.contains(&key.to_string());
+            keys.retain(|k| k != key);
+            if had_key {
+                write_index(&keys)?;
+            }
+
+            match keychain_result {
+                Ok(()) => Ok(()),
+                Err(e) if is_not_found(&e) => Err(SfaeError::CredentialNotFound(key.to_string())),
+                Err(e) => Err(SfaeError::StoreError(e.to_string())),
+            }
+        }
+
+        fn list_keys(&self) -> Result<Vec<String>, SfaeError> {
+            read_index()
+        }
+
+        fn supports_credential_sets(&self) -> bool {
+            true
+        }
+
+        fn store_credential_set(
+            &mut self,
+            domain: &str,
+            label: Option<&str>,
+            values: &HashMap<String, String>,
+        ) -> Result<String, SfaeError> {
+            let id = uuid::Uuid::new_v4().to_string();
+            let mut keys: Vec<String> = values.keys().cloned().collect();
+            keys.sort();
+
+            let json = serde_json::to_string(values)
+                .map_err(|e| SfaeError::StoreError(format!("failed to serialize: {e}")))?;
+            set_generic_password(KEYRING_SERVICE, &id, json.as_bytes())
+                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+
+            let mut index = read_credential_index()?;
+            index.sets.push(CredentialSetInfo {
+                id: id.clone(),
+                domain: domain.to_string(),
+                label: label.map(String::from),
+                keys,
+            });
+            index.version = 2;
+            write_credential_index(&index)?;
+
+            Ok(id)
+        }
+
+        fn list_credential_sets(
+            &self,
+            domain: Option<&str>,
+        ) -> Result<Vec<CredentialSetInfo>, SfaeError> {
+            let index = read_credential_index()?;
+            let sets = match domain {
+                Some(d) => index.sets.into_iter().filter(|s| s.domain == d).collect(),
+                None => index.sets,
+            };
+            Ok(sets)
+        }
+
+        fn delete_credential_set(&mut self, id: &str) -> Result<(), SfaeError> {
+            let mut index = read_credential_index()?;
+            if !index.sets.iter().any(|s| s.id == id) {
+                return Err(SfaeError::CredentialNotFound(id.to_string()));
+            }
+
+            // Remove from keychain (ignore if already gone)
+            let _ = delete_generic_password(KEYRING_SERVICE, id);
+
+            index.sets.retain(|s| s.id != id);
+            index.version = 2;
+            write_credential_index(&index)?;
+
+            Ok(())
+        }
+    }
+}
+
+// --- Non-macOS: use keyring crate (Windows/Linux) ---
+
+#[cfg(all(feature = "native-keychain", not(target_os = "macos")))]
 mod keyring_store {
     use super::*;
 
     const KEYRING_SERVICE: &str = "sfae";
 
-    /// Secret store backed by the OS keychain (macOS Passwords).
+    /// Secret store backed by the OS keychain via the `keyring` crate.
     ///
     /// Credential keys are tracked in a local index file
-    /// (`~/.config/sfae/credentials.json`). Only keys live in the index; actual
+    /// (`~/.sfae/credentials.json`). Only keys live in the index; actual
     /// secret values stay exclusively in the keychain.
     #[derive(Default)]
     pub struct KeyringStore;
@@ -341,7 +487,8 @@ mod keyring_store {
         }
     }
 }
-#[cfg(feature = "keyring")]
+
+#[cfg(feature = "native-keychain")]
 pub use keyring_store::KeyringStore;
 
 /// In-memory secret store for testing.

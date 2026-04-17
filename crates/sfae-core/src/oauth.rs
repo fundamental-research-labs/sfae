@@ -26,11 +26,11 @@ pub struct OAuthMetadata {
     pub revocation_url: Option<String>,
 }
 
-/// Returns the path to `~/.config/sfae/oauth.json`.
+/// Returns the path to `~/.sfae/oauth.json`.
 pub fn oauth_metadata_path() -> Result<PathBuf, SfaeError> {
-    let base = dirs::config_dir()
-        .ok_or_else(|| SfaeError::ConfigError("cannot determine config directory".into()))?;
-    Ok(base.join("sfae").join("oauth.json"))
+    let home = dirs::home_dir()
+        .ok_or_else(|| SfaeError::ConfigError("cannot determine home directory".into()))?;
+    Ok(home.join(".sfae").join("oauth.json"))
 }
 
 /// Build the metadata key: `domain` or `domain:username`.
