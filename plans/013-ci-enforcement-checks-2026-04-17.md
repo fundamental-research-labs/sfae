@@ -90,7 +90,7 @@ Since we can't use `syn`, use a deliberately simple scanner — good enough to e
 - [x] 1b: Implement `checks/file_lines.rs` with a unit test in-module that feeds synthetic content.
 - [x] 1c: Implement `checks/file_docs.rs` with unit tests for: missing, too-short, attribute-before-docstring (`#![...]` allowed), normal pass.
 - [x] 1d: Implement `checks/function_params.rs` with unit tests covering: plain free fn, method with `&self`, multi-line signature, generics with internal commas, `pub(crate)` + `async fn`, trait fn with default body, lifetime on `&self`. Make sure at least one test asserts the count for a 5-param function matches 5.
-- [ ] 1e: Run `cargo xtask lint` locally, capture the full violation list, commit it as a checked-in snapshot at `plans/013-violations-baseline.txt` (this becomes the work list for Phases 2–4).
+- [x] 1e: Run `cargo xtask lint` locally, capture the full violation list, commit it as a checked-in snapshot at `plans/013-violations-baseline.txt` (this becomes the work list for Phases 2–4).
 
 **Success check for Phase 1:** violation list is non-empty, stable across runs, and matches the pre-audit above within ±3 items per rule.
 
