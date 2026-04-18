@@ -1,5 +1,7 @@
 use std::process::{Command, ExitCode};
 
+mod checks;
+
 const STEPS: &[(&str, &[&str])] = &[
     ("fmt", &["cargo", "fmt", "--all", "--check"]),
     (
@@ -15,6 +17,7 @@ fn main() -> ExitCode {
 
     match args.first().map(String::as_str) {
         Some("ci") => run_ci(),
+        Some("lint") => run_lint(),
         Some(name) => match STEPS.iter().find(|(n, _)| *n == name) {
             Some((name, cmd)) => run_step(name, cmd),
             None => {
@@ -31,6 +34,7 @@ fn usage() -> ExitCode {
     eprintln!();
     eprintln!("commands:");
     eprintln!("  ci       Run all CI checks (fmt, clippy, test, doc)");
+    eprintln!("  lint     Run xtask lint checks (file length, docstring, fn params)");
     for (name, _) in STEPS {
         eprintln!("  {name:<8} Run {name} only");
     }
@@ -63,5 +67,22 @@ fn run_step(name: &str, cmd: &[&str]) -> ExitCode {
             eprintln!("✗ {name} failed to run: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn run_lint() -> ExitCode {
+    eprintln!("\n--- lint ---");
+    let files = checks::walk();
+    let violations = checks::run_all(&files);
+
+    if violations.is_empty() {
+        eprintln!("✓ lint: no violations ({} files scanned)", files.len());
+        ExitCode::SUCCESS
+    } else {
+        for v in &violations {
+            eprintln!("{}:{} — {}", v.path.display(), v.line, v.message);
+        }
+        eprintln!("\n✗ lint: {} violation(s)", violations.len());
+        ExitCode::FAILURE
     }
 }

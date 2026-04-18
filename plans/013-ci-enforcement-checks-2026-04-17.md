@@ -86,7 +86,7 @@ Since we can't use `syn`, use a deliberately simple scanner — good enough to e
 
 ## Phase 1: Scanner (no enforcement yet)
 
-- [ ] 1a: Create `crates/xtask/src/checks/mod.rs` with `Violation`, `walk()`, and module re-exports. Wire a new `lint` subcommand in `main.rs` that calls the three checks, prints all violations, returns `SUCCESS` if empty else `FAILURE`. Do **not** add `lint` to `STEPS` yet.
+- [x] 1a: Create `crates/xtask/src/checks/mod.rs` with `Violation`, `walk()`, and module re-exports. Wire a new `lint` subcommand in `main.rs` that calls the three checks, prints all violations, returns `SUCCESS` if empty else `FAILURE`. Do **not** add `lint` to `STEPS` yet.
 - [ ] 1b: Implement `checks/file_lines.rs` with a unit test in-module that feeds synthetic content.
 - [ ] 1c: Implement `checks/file_docs.rs` with unit tests for: missing, too-short, attribute-before-docstring (`#![...]` allowed), normal pass.
 - [ ] 1d: Implement `checks/function_params.rs` with unit tests covering: plain free fn, method with `&self`, multi-line signature, generics with internal commas, `pub(crate)` + `async fn`, trait fn with default body, lifetime on `&self`. Make sure at least one test asserts the count for a 5-param function matches 5.
