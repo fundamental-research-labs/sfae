@@ -96,7 +96,7 @@ Since we can't use `syn`, use a deliberately simple scanner — good enough to e
 
 ## Phase 2: File length (Rule 1)
 
-- [ ] 2a: Split `crates/sfae-server/src/main.rs` into submodules. Proposed layout (adjust during implementation to follow the natural seams):
+- [x] 2a: Split `crates/sfae-server/src/main.rs` into submodules. Proposed layout (adjust during implementation to follow the natural seams):
   - `crates/sfae-server/src/auth.rs` — `AuthInfo`, `Claims`, `extract_auth`, plus an `fn require_auth(...)` helper to replace the 9× inline `extract_auth → check internal` block.
   - `crates/sfae-server/src/types.rs` — `StoreCredentialReq`, `UpdateCredentialReq`, `CredentialEntry`, `PendingOAuthRow`, etc.
   - `crates/sfae-server/src/handlers.rs` — all async handler fns. If still too long, split by resource (`handlers/credentials.rs`, `handlers/oauth.rs`).
