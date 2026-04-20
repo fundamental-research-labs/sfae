@@ -1,4 +1,4 @@
-use sfae_core::credential::{CredentialType, credential_key};
+use sfae_core::credential::{CredentialKey, CredentialType, credential_key};
 use sfae_core::oauth;
 use sfae_core::store::SecretStore;
 
@@ -43,7 +43,11 @@ pub fn run(
 
     if let Some(ct_str) = cred_type_str {
         let cred_type: CredentialType = ct_str.parse().map_err(|e: String| anyhow::anyhow!(e))?;
-        let key = credential_key(domain, username, cred_type);
+        let key = credential_key(CredentialKey {
+            domain,
+            username,
+            cred_type,
+        });
         store.delete(&key)?;
         eprintln!("Deleted: {key}");
 
@@ -55,7 +59,11 @@ pub fn run(
     } else {
         let mut deleted = 0;
         for ct in CredentialType::all() {
-            let key = credential_key(domain, username, *ct);
+            let key = credential_key(CredentialKey {
+                domain,
+                username,
+                cred_type: *ct,
+            });
             if store.delete(&key).is_ok() {
                 eprintln!("Deleted: {key}");
                 deleted += 1;
@@ -80,7 +88,11 @@ fn cleanup_oauth(domain: &str, username: Option<&str>, store: &mut dyn SecretSto
     if let Err(e) = (oauth::MetadataKey { domain, username }.remove()) {
         eprintln!("Warning: failed to remove OAuth metadata: {e}");
     }
-    let cs_key = credential_key(domain, username, CredentialType::ClientSecret);
+    let cs_key = credential_key(CredentialKey {
+        domain,
+        username,
+        cred_type: CredentialType::ClientSecret,
+    });
     if store.delete(&cs_key).is_ok() {
         eprintln!("Deleted: {cs_key}");
     }

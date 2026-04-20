@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::credential::{CredentialType, credential_key};
+use crate::credential::{CredentialKey, CredentialType, credential_key};
 use crate::error::SfaeError;
 use crate::store::{CredentialTypesQuery, SecretStore, list_credential_types};
 
@@ -253,13 +253,21 @@ impl<'a> CredentialLookup<'a> {
             let map = self.get_credentials_map()?;
             let key_name = cred_type.as_str();
             return map.get(key_name).cloned().ok_or_else(|| {
-                SfaeError::CredentialNotFound(credential_key(self.domain, self.username, cred_type))
+                SfaeError::CredentialNotFound(credential_key(CredentialKey {
+                    domain: self.domain,
+                    username: self.username,
+                    cred_type,
+                }))
             });
         }
 
         // Legacy path: flat domain_TYPE keys
         for d in walk_parent_domains(self.domain) {
-            let key = credential_key(&d, self.username, cred_type);
+            let key = credential_key(CredentialKey {
+                domain: &d,
+                username: self.username,
+                cred_type,
+            });
             match self.store.get(&key) {
                 Ok(value) => return Ok(value),
                 Err(SfaeError::CredentialNotFound(_)) => continue,
@@ -268,9 +276,11 @@ impl<'a> CredentialLookup<'a> {
         }
 
         Err(SfaeError::CredentialNotFound(credential_key(
-            self.domain,
-            self.username,
-            cred_type,
+            CredentialKey {
+                domain: self.domain,
+                username: self.username,
+                cred_type,
+            },
         )))
     }
 

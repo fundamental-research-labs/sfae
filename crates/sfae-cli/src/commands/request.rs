@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use sfae_core::credential::{CredentialType, credential_key};
+use sfae_core::credential::{CredentialKey, CredentialType, credential_key};
 use sfae_core::error::SfaeError;
 use sfae_core::oauth;
 use sfae_core::proxy::{
@@ -217,7 +217,11 @@ fn try_refresh_and_retry(
     };
 
     // Update the access token in the store.
-    let access_key = credential_key(domain, username, CredentialType::AccessToken);
+    let access_key = credential_key(CredentialKey {
+        domain,
+        username,
+        cred_type: CredentialType::AccessToken,
+    });
     store.set(sfae_core::store::StoreEntry {
         key: &access_key,
         value: &token_response.access_token,
@@ -225,7 +229,11 @@ fn try_refresh_and_retry(
 
     // If the provider rotated the refresh token, update it too.
     if let Some(new_refresh) = &token_response.refresh_token {
-        let refresh_key = credential_key(domain, username, CredentialType::RefreshToken);
+        let refresh_key = credential_key(CredentialKey {
+            domain,
+            username,
+            cred_type: CredentialType::RefreshToken,
+        });
         store.set(sfae_core::store::StoreEntry {
             key: &refresh_key,
             value: new_refresh,

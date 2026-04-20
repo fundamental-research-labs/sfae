@@ -63,14 +63,28 @@ impl FromStr for CredentialType {
     }
 }
 
-/// Build the keychain key for a credential.
-///
-/// Format: `<domain>_<TYPE>` or `<domain>_<username>_<TYPE>`
-pub fn credential_key(domain: &str, username: Option<&str>, cred_type: CredentialType) -> String {
-    match username {
-        Some(user) => format!("{domain}_{user}_{}", cred_type.as_str()),
-        None => format!("{domain}_{}", cred_type.as_str()),
+/// The inputs needed to build a legacy flat-key credential key.
+pub struct CredentialKey<'a> {
+    pub domain: &'a str,
+    pub username: Option<&'a str>,
+    pub cred_type: CredentialType,
+}
+
+impl<'a> CredentialKey<'a> {
+    /// Build the keychain key string for this credential.
+    ///
+    /// Format: `<domain>_<TYPE>` or `<domain>_<username>_<TYPE>`.
+    pub fn as_string(&self) -> String {
+        match self.username {
+            Some(user) => format!("{}_{user}_{}", self.domain, self.cred_type.as_str()),
+            None => format!("{}_{}", self.domain, self.cred_type.as_str()),
+        }
     }
+}
+
+/// Thin wrapper for legacy call sites: build the key string for a credential.
+pub fn credential_key(key: CredentialKey<'_>) -> String {
+    key.as_string()
 }
 
 #[cfg(test)]
@@ -80,7 +94,11 @@ mod tests {
     #[test]
     fn credential_key_without_username() {
         assert_eq!(
-            credential_key("github.com", None, CredentialType::ApiKey),
+            credential_key(CredentialKey {
+                domain: "github.com",
+                username: None,
+                cred_type: CredentialType::ApiKey,
+            }),
             "github.com_API_KEY"
         );
     }
@@ -88,7 +106,11 @@ mod tests {
     #[test]
     fn credential_key_with_username() {
         assert_eq!(
-            credential_key("github.com", Some("aduermael"), CredentialType::Password),
+            credential_key(CredentialKey {
+                domain: "github.com",
+                username: Some("aduermael"),
+                cred_type: CredentialType::Password,
+            }),
             "github.com_aduermael_PASSWORD"
         );
     }
