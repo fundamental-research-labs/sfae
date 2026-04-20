@@ -9,7 +9,11 @@ fn populated_store() -> InMemoryStore {
     creds.insert("ACCESS_TOKEN".to_string(), "ghp_abc123".to_string());
     creds.insert("API_KEY".to_string(), "key-xyz-789".to_string());
     store
-        .store_credential_set(sfae_core::store::CredentialSetInput { domain: "api.example.com", label: None, values: &creds })
+        .store_credential_set(sfae_core::store::CredentialSetInput {
+            domain: "api.example.com",
+            label: None,
+            values: &creds,
+        })
         .unwrap();
     store
 }
@@ -114,7 +118,11 @@ fn credential_set_lifecycle() {
     creds.insert("API_KEY".to_string(), "aaa".to_string());
     creds.insert("ACCESS_TOKEN".to_string(), "bbb".to_string());
     let id = store
-        .store_credential_set(sfae_core::store::CredentialSetInput { domain: "github.com", label: None, values: &creds })
+        .store_credential_set(sfae_core::store::CredentialSetInput {
+            domain: "github.com",
+            label: None,
+            values: &creds,
+        })
         .unwrap();
 
     let sets = store.list_credential_sets(None).unwrap();
@@ -156,13 +164,21 @@ fn label_scoped_credentials() {
     let mut shared = HashMap::new();
     shared.insert("API_KEY".to_string(), "shared_key".to_string());
     store
-        .store_credential_set(sfae_core::store::CredentialSetInput { domain: "github.com", label: None, values: &shared })
+        .store_credential_set(sfae_core::store::CredentialSetInput {
+            domain: "github.com",
+            label: None,
+            values: &shared,
+        })
         .unwrap();
 
     let mut user_creds = HashMap::new();
     user_creds.insert("PASSWORD".to_string(), "user_pw".to_string());
     store
-        .store_credential_set(sfae_core::store::CredentialSetInput { domain: "github.com", label: Some("aduermael"), values: &user_creds })
+        .store_credential_set(sfae_core::store::CredentialSetInput {
+            domain: "github.com",
+            label: Some("aduermael"),
+            values: &user_creds,
+        })
         .unwrap();
 
     // Resolve with label filter — gets the labeled set

@@ -219,10 +219,7 @@ impl SecretStore for ApiStore {
         true
     }
 
-    fn store_credential_set(
-        &mut self,
-        input: CredentialSetInput<'_>,
-    ) -> Result<String, SfaeError> {
+    fn store_credential_set(&mut self, input: CredentialSetInput<'_>) -> Result<String, SfaeError> {
         let CredentialSetInput {
             domain,
             label,

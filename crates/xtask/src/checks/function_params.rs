@@ -125,10 +125,10 @@ impl<'a> Cursor<'a> {
         if end > self.bytes.len() || &self.bytes[self.pos..end] != kw {
             return false;
         }
-        if let Some(&b) = self.bytes.get(end) {
-            if b.is_ascii_alphanumeric() || b == b'_' {
-                return false;
-            }
+        if let Some(&b) = self.bytes.get(end)
+            && (b.is_ascii_alphanumeric() || b == b'_')
+        {
+            return false;
         }
         self.pos = end;
         true
@@ -430,7 +430,8 @@ mod tests {
 
     #[test]
     fn end_to_end_method_with_generics_passes() {
-        let text = "impl Foo {\n    fn bar(&self, m: HashMap<String, Vec<u8>>) -> R { todo!() }\n}\n";
+        let text =
+            "impl Foo {\n    fn bar(&self, m: HashMap<String, Vec<u8>>) -> R { todo!() }\n}\n";
         let path = PathBuf::from("synthetic.rs");
         let scan = FileScan { path: &path, text };
         assert!(scan.scan().is_empty());
@@ -438,8 +439,7 @@ mod tests {
 
     #[test]
     fn allow_marker_suppresses_violation() {
-        let text =
-            "// xtask: allow-multi-param\nfn foo(a: A, b: B, c: C) -> R { todo!() }\n";
+        let text = "// xtask: allow-multi-param\nfn foo(a: A, b: B, c: C) -> R { todo!() }\n";
         let path = PathBuf::from("synthetic.rs");
         let scan = FileScan { path: &path, text };
         assert!(scan.scan().is_empty());
@@ -448,8 +448,7 @@ mod tests {
     #[test]
     fn allow_marker_only_suppresses_next_line() {
         // Marker on line 1 does not suppress violation on line 4.
-        let text =
-            "// xtask: allow-multi-param\nfn ok(a: A) {}\n\nfn bad(a: A, b: B, c: C) {}\n";
+        let text = "// xtask: allow-multi-param\nfn ok(a: A) {}\n\nfn bad(a: A, b: B, c: C) {}\n";
         let path = PathBuf::from("synthetic.rs");
         let scan = FileScan { path: &path, text };
         let v = scan.scan();

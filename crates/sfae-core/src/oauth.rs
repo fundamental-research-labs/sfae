@@ -193,7 +193,11 @@ pub struct AuthorizationUrl<'a> {
 impl<'a> AuthorizationUrl<'a> {
     /// Build the full OAuth2 authorization URL with query parameters.
     pub fn build(&self) -> String {
-        let sep = if self.auth_url.contains('?') { "&" } else { "?" };
+        let sep = if self.auth_url.contains('?') {
+            "&"
+        } else {
+            "?"
+        };
         let mut url = format!(
             "{}{}client_id={}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256&state={}&prompt=consent&access_type=offline",
             self.auth_url,

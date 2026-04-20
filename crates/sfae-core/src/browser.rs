@@ -346,7 +346,10 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
                     label,
                     spec,
                 });
-                req.respond(Reply { status: 200, html: &html });
+                req.respond(Reply {
+                    status: 200,
+                    html: &html,
+                });
             }
             ("GET", "/auth") => {
                 let group_idx = extract_query_param(QueryLookup {
@@ -355,11 +358,17 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
                 })
                 .and_then(|s| s.parse::<usize>().ok());
                 let Some(idx) = group_idx else {
-                    req.respond(Reply { status: 400, html: "missing group parameter" });
+                    req.respond(Reply {
+                        status: 400,
+                        html: "missing group parameter",
+                    });
                     continue;
                 };
                 let Some(Some(resolved)) = resolved_oauth.get(idx) else {
-                    req.respond(Reply { status: 400, html: "invalid group or not an OAuth group" });
+                    req.respond(Reply {
+                        status: 400,
+                        html: "invalid group or not an OAuth group",
+                    });
                     continue;
                 };
 
@@ -395,26 +404,41 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
                 });
 
                 let (Some(code), Some(state)) = (code, state) else {
-                    req.respond(Reply { status: 400, html: "missing code or state parameter" });
+                    req.respond(Reply {
+                        status: 400,
+                        html: "missing code or state parameter",
+                    });
                     continue;
                 };
 
                 // Validate state matches the pending OAuth flow.
                 if pending_state.as_deref() != Some(&state) {
-                    req.respond(Reply { status: 400, html: "invalid state parameter" });
+                    req.respond(Reply {
+                        status: 400,
+                        html: "invalid state parameter",
+                    });
                     continue;
                 }
 
                 let Some(verifier) = pending_verifier.take() else {
-                    req.respond(Reply { status: 400, html: "no pending OAuth flow" });
+                    req.respond(Reply {
+                        status: 400,
+                        html: "no pending OAuth flow",
+                    });
                     continue;
                 };
                 let Some(idx) = pending_group.take() else {
-                    req.respond(Reply { status: 400, html: "no pending OAuth flow" });
+                    req.respond(Reply {
+                        status: 400,
+                        html: "no pending OAuth flow",
+                    });
                     continue;
                 };
                 let Some(Some(resolved)) = resolved_oauth.get(idx) else {
-                    req.respond(Reply { status: 400, html: "invalid OAuth group" });
+                    req.respond(Reply {
+                        status: 400,
+                        html: "invalid OAuth group",
+                    });
                     continue;
                 };
                 pending_state = None;
@@ -454,7 +478,10 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
                 }
                 oauth_tokens = Some(tokens);
 
-                req.respond(Reply { status: 200, html: &build_oauth_done_page() });
+                req.respond(Reply {
+                    status: 200,
+                    html: &build_oauth_done_page(),
+                });
             }
             ("GET", "/oauth-status") => {
                 let json = if oauth_tokens.is_some() {
@@ -466,7 +493,10 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
             }
             ("POST", "/") => {
                 let raw = parse_form_fields(&req.body);
-                req.respond(Reply { status: 200, html: &build_done_page() });
+                req.respond(Reply {
+                    status: 200,
+                    html: &build_done_page(),
+                });
 
                 // Determine expected fields: common fields first, then
                 // the active group's fields.  The HTML used opaque names
@@ -538,7 +568,10 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
                 return Ok(result);
             }
             _ => {
-                req.respond(Reply { status: 404, html: "" });
+                req.respond(Reply {
+                    status: 404,
+                    html: "",
+                });
             }
         }
     }
@@ -596,7 +629,10 @@ pub fn oauth_callback(server: &LocalServer) -> Result<(String, String), SfaeErro
                 key: "state",
             });
 
-            req.respond(Reply { status: 200, html: &build_done_page() });
+            req.respond(Reply {
+                status: 200,
+                html: &build_done_page(),
+            });
 
             let code = code.ok_or_else(|| {
                 SfaeError::Other("OAuth callback missing 'code' parameter".into())
@@ -609,7 +645,10 @@ pub fn oauth_callback(server: &LocalServer) -> Result<(String, String), SfaeErro
         }
 
         // Ignore other requests (favicon, etc.).
-        req.respond(Reply { status: 404, html: "" });
+        req.respond(Reply {
+            status: 404,
+            html: "",
+        });
     }
 }
 
@@ -969,4 +1008,3 @@ fn url_decode(s: &str) -> String {
     }
     String::from_utf8_lossy(&result).into_owned()
 }
-

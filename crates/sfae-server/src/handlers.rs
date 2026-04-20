@@ -513,21 +513,20 @@ pub(crate) async fn refresh_credential(
         }
     };
 
-    let (client_id, client_secret) = match resolve_oauth_client_from_state(
-        crate::helpers::StateDomain {
+    let (client_id, client_secret) =
+        match resolve_oauth_client_from_state(crate::helpers::StateDomain {
             state: &state,
             domain: &domain,
-        },
-    ) {
-        Some(pair) => pair,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                format!("No OAuth client config for domain {domain}"),
-            )
-                .into_response();
-        }
-    };
+        }) {
+            Some(pair) => pair,
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    format!("No OAuth client config for domain {domain}"),
+                )
+                    .into_response();
+            }
+        };
 
     let http = reqwest::Client::new();
     let mut params = vec![

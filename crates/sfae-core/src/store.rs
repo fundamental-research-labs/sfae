@@ -62,7 +62,10 @@ pub trait SecretStore {
     }
 
     /// Store a credential set as a JSON blob. Returns the generated UUID.
-    fn store_credential_set(&mut self, _input: CredentialSetInput<'_>) -> Result<String, SfaeError> {
+    fn store_credential_set(
+        &mut self,
+        _input: CredentialSetInput<'_>,
+    ) -> Result<String, SfaeError> {
         Err(SfaeError::Other(
             "credential set operations not supported by this store".into(),
         ))
@@ -558,10 +561,7 @@ impl SecretStore for InMemoryStore {
         true
     }
 
-    fn store_credential_set(
-        &mut self,
-        input: CredentialSetInput<'_>,
-    ) -> Result<String, SfaeError> {
+    fn store_credential_set(&mut self, input: CredentialSetInput<'_>) -> Result<String, SfaeError> {
         let CredentialSetInput {
             domain,
             label,
@@ -636,15 +636,30 @@ mod tests {
     #[test]
     fn set_overwrites() {
         let mut store = InMemoryStore::new();
-        store.set(StoreEntry { key: "k", value: "old" }).unwrap();
-        store.set(StoreEntry { key: "k", value: "new" }).unwrap();
+        store
+            .set(StoreEntry {
+                key: "k",
+                value: "old",
+            })
+            .unwrap();
+        store
+            .set(StoreEntry {
+                key: "k",
+                value: "new",
+            })
+            .unwrap();
         assert_eq!(store.get("k").unwrap(), "new");
     }
 
     #[test]
     fn delete_removes() {
         let mut store = InMemoryStore::new();
-        store.set(StoreEntry { key: "k", value: "v" }).unwrap();
+        store
+            .set(StoreEntry {
+                key: "k",
+                value: "v",
+            })
+            .unwrap();
         store.delete("k").unwrap();
         assert!(store.get("k").is_err());
     }
@@ -661,9 +676,24 @@ mod tests {
     #[test]
     fn list_keys_sorted() {
         let mut store = InMemoryStore::new();
-        store.set(StoreEntry { key: "z_KEY", value: "1" }).unwrap();
-        store.set(StoreEntry { key: "a_KEY", value: "2" }).unwrap();
-        store.set(StoreEntry { key: "m_KEY", value: "3" }).unwrap();
+        store
+            .set(StoreEntry {
+                key: "z_KEY",
+                value: "1",
+            })
+            .unwrap();
+        store
+            .set(StoreEntry {
+                key: "a_KEY",
+                value: "2",
+            })
+            .unwrap();
+        store
+            .set(StoreEntry {
+                key: "m_KEY",
+                value: "3",
+            })
+            .unwrap();
         assert_eq!(store.list_keys().unwrap(), vec!["a_KEY", "m_KEY", "z_KEY"]);
     }
 
@@ -673,11 +703,23 @@ mod tests {
         let mut github = HashMap::new();
         github.insert("API_KEY".to_string(), "key1".to_string());
         github.insert("ACCESS_TOKEN".to_string(), "tok1".to_string());
-        store.store_credential_set(CredentialSetInput { domain: "github.com", label: None, values: &github }).unwrap();
+        store
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: None,
+                values: &github,
+            })
+            .unwrap();
 
         let mut gitlab = HashMap::new();
         gitlab.insert("PASSWORD".to_string(), "pw".to_string());
-        store.store_credential_set(CredentialSetInput { domain: "gitlab.com", label: None, values: &gitlab }).unwrap();
+        store
+            .store_credential_set(CredentialSetInput {
+                domain: "gitlab.com",
+                label: None,
+                values: &gitlab,
+            })
+            .unwrap();
 
         let types = list_credential_types(CredentialTypesQuery {
             store: &store,
@@ -709,11 +751,23 @@ mod tests {
         let mut store = InMemoryStore::new();
         let mut shared = HashMap::new();
         shared.insert("API_KEY".to_string(), "key1".to_string());
-        store.store_credential_set(CredentialSetInput { domain: "github.com", label: None, values: &shared }).unwrap();
+        store
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: None,
+                values: &shared,
+            })
+            .unwrap();
 
         let mut user_creds = HashMap::new();
         user_creds.insert("PASSWORD".to_string(), "pw".to_string());
-        store.store_credential_set(CredentialSetInput { domain: "github.com", label: Some("aduermael"), values: &user_creds }).unwrap();
+        store
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: Some("aduermael"),
+                values: &user_creds,
+            })
+            .unwrap();
 
         // All sets for github.com (both sets' keys combined)
         let types = list_credential_types(CredentialTypesQuery {
@@ -741,7 +795,13 @@ mod tests {
         ch.insert("HOST".to_string(), "h".to_string());
         ch.insert("USERNAME".to_string(), "u".to_string());
         ch.insert("PASSWORD".to_string(), "p".to_string());
-        store.store_credential_set(CredentialSetInput { domain: "clickhouse.cloud", label: None, values: &ch }).unwrap();
+        store
+            .store_credential_set(CredentialSetInput {
+                domain: "clickhouse.cloud",
+                label: None,
+                values: &ch,
+            })
+            .unwrap();
 
         let types = list_credential_types(CredentialTypesQuery {
             store: &store,
@@ -761,7 +821,13 @@ mod tests {
         values.insert("HOST".to_string(), "db.example.com".to_string());
         values.insert("PASSWORD".to_string(), "secret".to_string());
 
-        let id = store.store_credential_set(CredentialSetInput { domain: "example.com", label: None, values: &values }).unwrap();
+        let id = store
+            .store_credential_set(CredentialSetInput {
+                domain: "example.com",
+                label: None,
+                values: &values,
+            })
+            .unwrap();
 
         // ID is a valid UUID
         assert!(uuid::Uuid::parse_str(&id).is_ok());
@@ -786,11 +852,23 @@ mod tests {
         let mut store = InMemoryStore::new();
         let mut gh = HashMap::new();
         gh.insert("API_KEY".to_string(), "k".to_string());
-        store.store_credential_set(CredentialSetInput { domain: "github.com", label: None, values: &gh }).unwrap();
+        store
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: None,
+                values: &gh,
+            })
+            .unwrap();
 
         let mut gl = HashMap::new();
         gl.insert("PASSWORD".to_string(), "p".to_string());
-        store.store_credential_set(CredentialSetInput { domain: "gitlab.com", label: None, values: &gl }).unwrap();
+        store
+            .store_credential_set(CredentialSetInput {
+                domain: "gitlab.com",
+                label: None,
+                values: &gl,
+            })
+            .unwrap();
 
         assert_eq!(
             store
@@ -820,7 +898,13 @@ mod tests {
         let mut store = InMemoryStore::new();
         let mut values = HashMap::new();
         values.insert("KEY".to_string(), "val".to_string());
-        let id = store.store_credential_set(CredentialSetInput { domain: "example.com", label: None, values: &values }).unwrap();
+        let id = store
+            .store_credential_set(CredentialSetInput {
+                domain: "example.com",
+                label: None,
+                values: &values,
+            })
+            .unwrap();
 
         store.delete_credential_set(&id).unwrap();
 
@@ -842,11 +926,23 @@ mod tests {
         let mut store = InMemoryStore::new();
         let mut work = HashMap::new();
         work.insert("API_KEY".to_string(), "work_key".to_string());
-        let id1 = store.store_credential_set(CredentialSetInput { domain: "github.com", label: Some("Work"), values: &work }).unwrap();
+        let id1 = store
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: Some("Work"),
+                values: &work,
+            })
+            .unwrap();
 
         let mut personal = HashMap::new();
         personal.insert("API_KEY".to_string(), "personal_key".to_string());
-        let id2 = store.store_credential_set(CredentialSetInput { domain: "github.com", label: Some("Personal"), values: &personal }).unwrap();
+        let id2 = store
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: Some("Personal"),
+                values: &personal,
+            })
+            .unwrap();
 
         let sets = store.list_credential_sets(Some("github.com")).unwrap();
         assert_eq!(sets.len(), 2);

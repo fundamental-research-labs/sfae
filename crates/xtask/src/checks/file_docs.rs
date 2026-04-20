@@ -95,7 +95,8 @@ mod tests {
 
     #[test]
     fn multi_line_doc_block_concatenates() {
-        let src = "//! one short line\n//! second short line that brings us comfortably past forty.\n";
+        let src =
+            "//! one short line\n//! second short line that brings us comfortably past forty.\n";
         assert!(inspect(src).is_none());
     }
 

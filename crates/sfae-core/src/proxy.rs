@@ -382,7 +382,11 @@ mod tests {
         creds.insert("API_KEY".to_string(), "ghk_abc123".to_string());
         creds.insert("ACCESS_TOKEN".to_string(), "ght_xyz789".to_string());
         store
-            .store_credential_set(CredentialSetInput { domain: "github.com", label: None, values: &creds })
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: None,
+                values: &creds,
+            })
             .unwrap();
         store
     }
@@ -519,7 +523,11 @@ mod tests {
         let mut user_creds = HashMap::new();
         user_creds.insert("PASSWORD".to_string(), "secret".to_string());
         store
-            .store_credential_set(CredentialSetInput { domain: "github.com", label: Some("user1"), values: &user_creds })
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: Some("user1"),
+                values: &user_creds,
+            })
             .unwrap();
 
         // Filter by label gets the labeled set
@@ -571,7 +579,11 @@ mod tests {
         let mut creds = HashMap::new();
         creds.insert("PASSWORD".to_string(), "secret".to_string());
         store
-            .store_credential_set(CredentialSetInput { domain: "github.com", label: Some("user1"), values: &creds })
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: Some("user1"),
+                values: &creds,
+            })
             .unwrap();
 
         let result = CredentialLookup {
@@ -714,7 +726,11 @@ mod tests {
         let mut creds = HashMap::new();
         creds.insert("API_KEY".to_string(), "deep_key".to_string());
         store
-            .store_credential_set(CredentialSetInput { domain: "example.com", label: None, values: &creds })
+            .store_credential_set(CredentialSetInput {
+                domain: "example.com",
+                label: None,
+                values: &creds,
+            })
             .unwrap();
         let val = CredentialLookup {
             store: &store,
@@ -732,7 +748,13 @@ mod tests {
         let mut store = InMemoryStore::new();
         let mut creds = HashMap::new();
         creds.insert("API_KEY".to_string(), "bad".to_string());
-        store.store_credential_set(CredentialSetInput { domain: "com", label: None, values: &creds }).unwrap();
+        store
+            .store_credential_set(CredentialSetInput {
+                domain: "com",
+                label: None,
+                values: &creds,
+            })
+            .unwrap();
         let err = CredentialLookup {
             store: &store,
             domain: "api.github.com",
@@ -769,7 +791,11 @@ mod tests {
         let mut creds = HashMap::new();
         creds.insert("PASSWORD".to_string(), "secret".to_string());
         store
-            .store_credential_set(CredentialSetInput { domain: "github.com", label: Some("user1"), values: &creds })
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: Some("user1"),
+                values: &creds,
+            })
             .unwrap();
         let val = CredentialLookup {
             store: &store,
@@ -816,12 +842,20 @@ mod tests {
         let mut exact = HashMap::new();
         exact.insert("API_KEY".to_string(), "exact".to_string());
         store
-            .store_credential_set(CredentialSetInput { domain: "api.github.com", label: None, values: &exact })
+            .store_credential_set(CredentialSetInput {
+                domain: "api.github.com",
+                label: None,
+                values: &exact,
+            })
             .unwrap();
         let mut parent = HashMap::new();
         parent.insert("API_KEY".to_string(), "parent".to_string());
         store
-            .store_credential_set(CredentialSetInput { domain: "github.com", label: None, values: &parent })
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: None,
+                values: &parent,
+            })
             .unwrap();
         let val = CredentialLookup {
             store: &store,
@@ -843,7 +877,11 @@ mod tests {
         creds.insert("HOST".to_string(), "db.example.com".to_string());
         creds.insert("PASSWORD".to_string(), "secret".to_string());
         let id = store
-            .store_credential_set(CredentialSetInput { domain: "example.com", label: None, values: &creds })
+            .store_credential_set(CredentialSetInput {
+                domain: "example.com",
+                label: None,
+                values: &creds,
+            })
             .unwrap();
 
         let map = CredentialLookup {
@@ -878,7 +916,11 @@ mod tests {
         let mut creds = HashMap::new();
         creds.insert("API_KEY".to_string(), "key123".to_string());
         let id = store
-            .store_credential_set(CredentialSetInput { domain: "github.com", label: None, values: &creds })
+            .store_credential_set(CredentialSetInput {
+                domain: "github.com",
+                label: None,
+                values: &creds,
+            })
             .unwrap();
 
         // With cred_id, domain is ignored — fetch by ID directly
@@ -904,7 +946,13 @@ mod tests {
         ch.insert("USERNAME".to_string(), "admin".to_string());
         ch.insert("PASSWORD".to_string(), "hunter2".to_string());
         ch.insert("DATABASE".to_string(), "default".to_string());
-        store.store_credential_set(CredentialSetInput { domain: "ch.cloud", label: None, values: &ch }).unwrap();
+        store
+            .store_credential_set(CredentialSetInput {
+                domain: "ch.cloud",
+                label: None,
+                values: &ch,
+            })
+            .unwrap();
 
         let result = CredentialLookup {
             store: &store,

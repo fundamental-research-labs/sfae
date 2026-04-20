@@ -90,8 +90,11 @@ impl AppState {
     /// Extract auth and require it be internal. On success returns the user id;
     /// on failure returns a ready-to-return Response. Bearer-only callers get a
     /// 403 with the standard "Internal auth required" message.
+    #[allow(clippy::result_large_err)]
     pub(crate) fn require_internal(&self, headers: &HeaderMap) -> Result<String, Response> {
-        let auth = self.extract_auth(headers).map_err(IntoResponse::into_response)?;
+        let auth = self
+            .extract_auth(headers)
+            .map_err(IntoResponse::into_response)?;
         if !auth.is_internal() {
             return Err(
                 (StatusCode::FORBIDDEN, "Internal auth required".to_string()).into_response(),
