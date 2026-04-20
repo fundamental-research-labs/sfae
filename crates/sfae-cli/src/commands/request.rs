@@ -1,3 +1,7 @@
+//! `sfae request`: send an HTTP request with `{KEY}` placeholders resolved against stored credentials.
+//!
+//! Includes the OAuth refresh-and-retry path used when the upstream returns 401.
+
 use std::time::Instant;
 
 use sfae_core::credential::{CredentialKey, CredentialType, credential_key};

@@ -1,3 +1,5 @@
+//! `sfae prompt`: collect credentials from the user via the browser flow or terminal fallback.
+
 use std::collections::HashMap;
 
 use sfae_core::spec::{FieldSpec, PromptSpec};

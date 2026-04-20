@@ -1,3 +1,5 @@
+//! `sfae delete`: remove a credential set by UUID and revoke any associated OAuth tokens.
+
 use sfae_core::credential::{CredentialKey, CredentialType, credential_key};
 use sfae_core::oauth;
 use sfae_core::store::SecretStore;

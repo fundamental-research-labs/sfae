@@ -1,3 +1,5 @@
+//! Terminal-based `UserPrompt` implementation backed by stdin and `rpassword`.
+
 use std::io::{self, BufRead, Write};
 
 use sfae_core::error::SfaeError;

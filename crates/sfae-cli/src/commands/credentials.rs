@@ -1,3 +1,5 @@
+//! `sfae credentials`: list stored credential sets, optionally filtered by domain or username.
+
 use crate::store_factory::create_store;
 
 /// Filters for the `credentials` listing command.

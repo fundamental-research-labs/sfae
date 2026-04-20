@@ -1,3 +1,5 @@
+//! `sfae` CLI entry point: argument parsing and dispatch to per-command modules.
+
 mod commands;
 mod prompt;
 mod store_factory;
