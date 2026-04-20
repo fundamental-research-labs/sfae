@@ -171,7 +171,10 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
     match cli.command {
         Command::Credentials { domain, user } => {
-            commands::credentials::run(domain.as_deref(), user.as_deref())?;
+            commands::credentials::run(commands::credentials::RunArgs {
+                domain: domain.as_deref(),
+                username: user.as_deref(),
+            })?;
         }
         Command::Request {
             method,
@@ -209,7 +212,12 @@ fn main() -> anyhow::Result<()> {
             let prompt_spec: sfae_core::spec::PromptSpec = serde_json::from_str(&spec)
                 .map_err(|e| anyhow::anyhow!("invalid --spec JSON: {e}"))?;
             prompt_spec.validate().map_err(|e| anyhow::anyhow!("{e}"))?;
-            commands::prompt::run(&domain, &prompt_spec, user.as_deref(), terminal)?;
+            commands::prompt::run(commands::prompt::RunArgs {
+                domain: &domain,
+                spec: &prompt_spec,
+                username: user.as_deref(),
+                terminal,
+            })?;
         }
         #[cfg(feature = "native-keychain")]
         Command::Delete {
@@ -217,7 +225,11 @@ fn main() -> anyhow::Result<()> {
             cred_type,
             user,
         } => {
-            commands::delete::run(&target, cred_type.as_deref(), user.as_deref())?;
+            commands::delete::run(commands::delete::RunArgs {
+                target: &target,
+                cred_type_str: cred_type.as_deref(),
+                username: user.as_deref(),
+            })?;
         }
         #[cfg(feature = "native-keychain")]
         Command::Flush { dry_run } => {

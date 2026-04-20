@@ -1,6 +1,13 @@
 use crate::store_factory::create_store;
 
-pub fn run(domain: Option<&str>, username: Option<&str>) -> anyhow::Result<()> {
+/// Filters for the `credentials` listing command.
+pub struct RunArgs<'a> {
+    pub domain: Option<&'a str>,
+    pub username: Option<&'a str>,
+}
+
+pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
+    let RunArgs { domain, username } = args;
     let store = create_store();
 
     if store.supports_credential_sets() {
