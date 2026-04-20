@@ -184,19 +184,20 @@ fn main() -> anyhow::Result<()> {
             dry_run,
             verbose,
         } => {
-            commands::request::run(
-                &method,
-                &url,
-                &headers,
-                body.as_deref(),
-                &commands::request::RequestOpts {
-                    dry_run,
-                    verbose,
-                    domain: domain.as_deref(),
-                    user: user.as_deref(),
-                    cred_id: cred.as_deref(),
-                },
-            )?;
+            let opts = commands::request::RequestOpts {
+                dry_run,
+                verbose,
+                domain: domain.as_deref(),
+                user: user.as_deref(),
+                cred_id: cred.as_deref(),
+            };
+            commands::request::run(commands::request::RunArgs {
+                method: &method,
+                url: &url,
+                headers: &headers,
+                body: body.as_deref(),
+                opts: &opts,
+            })?;
         }
         #[cfg(feature = "native-keychain")]
         Command::Prompt {

@@ -18,13 +18,24 @@ pub struct RequestOpts<'a> {
     pub cred_id: Option<&'a str>,
 }
 
-pub fn run(
-    method: &str,
-    url: &str,
-    headers: &[String],
-    body: Option<&str>,
-    opts: &RequestOpts,
-) -> anyhow::Result<()> {
+/// All inputs for `run`: HTTP method/URL/headers/body + runtime options.
+pub struct RunArgs<'a> {
+    pub method: &'a str,
+    pub url: &'a str,
+    pub headers: &'a [String],
+    pub body: Option<&'a str>,
+    pub opts: &'a RequestOpts<'a>,
+}
+
+pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
+    let RunArgs {
+        method,
+        url,
+        headers,
+        body,
+        opts,
+    } = args;
+
     let domain = match opts.domain {
         Some(d) => d.to_string(),
         None => extract_host(url)
@@ -97,15 +108,16 @@ pub fn run(
     }
 
     let response = if response.status == 401 && request_has_access_token_placeholder(&request) {
-        try_refresh_and_retry(
-            &request,
-            &mut *store,
-            &domain,
-            opts.user,
-            opts.cred_id,
-            opts.verbose,
-            response,
-        )?
+        RetryCtx {
+            request: &request,
+            store: &mut *store,
+            domain: &domain,
+            username: opts.user,
+            cred_id: opts.cred_id,
+            verbose: opts.verbose,
+            original_response: response,
+        }
+        .try_refresh_and_retry()?
     } else {
         response
     };
@@ -133,20 +145,32 @@ fn request_has_access_token_placeholder(request: &ProxyRequest) -> bool {
     false
 }
 
-/// Attempt to refresh the access token and retry the request.
-///
-/// Returns the original response if any precondition is missing or the refresh fails.
-fn try_refresh_and_retry(
-    request: &ProxyRequest,
-    store: &mut dyn SecretStore,
-    domain: &str,
-    username: Option<&str>,
-    cred_id: Option<&str>,
+/// Context for a 401-retry flow: everything needed to refresh a token and re-send.
+struct RetryCtx<'a> {
+    request: &'a ProxyRequest,
+    store: &'a mut dyn SecretStore,
+    domain: &'a str,
+    username: Option<&'a str>,
+    cred_id: Option<&'a str>,
     verbose: bool,
     original_response: ProxyResponse,
-) -> anyhow::Result<ProxyResponse> {
-    if is_api_mode() {
-        return try_refresh_and_retry_api(
+}
+
+impl<'a> RetryCtx<'a> {
+    /// Attempt to refresh the access token and retry the request.
+    ///
+    /// Returns the original response if any precondition is missing or the refresh fails.
+    fn try_refresh_and_retry(self) -> anyhow::Result<ProxyResponse> {
+        if is_api_mode() {
+            self.try_refresh_and_retry_api()
+        } else {
+            self.try_refresh_and_retry_local()
+        }
+    }
+
+    /// Local mode: read OAuth metadata from disk and refresh via the provider directly.
+    fn try_refresh_and_retry_local(self) -> anyhow::Result<ProxyResponse> {
+        let RetryCtx {
             request,
             store,
             domain,
@@ -154,194 +178,194 @@ fn try_refresh_and_retry(
             cred_id,
             verbose,
             original_response,
-        );
-    }
+        } = self;
 
-    // Local mode: read OAuth metadata from disk and refresh locally.
+        // Check: OAuth metadata exists for this domain.
+        let metadata_key = oauth::MetadataKey { domain, username };
+        let metadata = match metadata_key.get()? {
+            Some(m) => m,
+            None => return Ok(original_response),
+        };
 
-    // Check: OAuth metadata exists for this domain.
-    let metadata_key = oauth::MetadataKey { domain, username };
-    let metadata = match metadata_key.get()? {
-        Some(m) => m,
-        None => return Ok(original_response),
-    };
-
-    // Check: a refresh token is stored for this domain.
-    let refresh_token = match (CredentialLookup {
-        store: &*store,
-        domain,
-        username,
-        cred_id,
-    })
-    .get_by_type(CredentialType::RefreshToken)
-    {
-        Ok(t) => t,
-        Err(SfaeError::CredentialNotFound(_)) => return Ok(original_response),
-        Err(e) => return Err(e.into()),
-    };
-
-    if verbose {
-        eprintln!("< 401 (refresh token available, attempting refresh...)");
-    }
-
-    // Look up the client secret (may be absent for public clients).
-    let client_secret = match (CredentialLookup {
-        store: &*store,
-        domain,
-        username,
-        cred_id,
-    })
-    .get_by_type(CredentialType::ClientSecret)
-    {
-        Ok(s) => Some(s),
-        Err(SfaeError::CredentialNotFound(_)) => None,
-        Err(e) => return Err(e.into()),
-    };
-
-    // Attempt the refresh.
-    let token_response = match (oauth::TokenRequest {
-        token_url: &metadata.token_url,
-        client_id: &metadata.client_id,
-        client_secret: client_secret.as_deref(),
-        grant: oauth::Grant::RefreshToken {
-            refresh_token: &refresh_token,
-        },
-    })
-    .send()
-    {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Token refresh failed for {domain}: {e}");
-            return Ok(original_response);
-        }
-    };
-
-    // Update the access token in the store.
-    let access_key = credential_key(CredentialKey {
-        domain,
-        username,
-        cred_type: CredentialType::AccessToken,
-    });
-    store.set(sfae_core::store::StoreEntry {
-        key: &access_key,
-        value: &token_response.access_token,
-    })?;
-
-    // If the provider rotated the refresh token, update it too.
-    if let Some(new_refresh) = &token_response.refresh_token {
-        let refresh_key = credential_key(CredentialKey {
+        // Check: a refresh token is stored for this domain.
+        let refresh_token = match (CredentialLookup {
+            store: &*store,
             domain,
             username,
-            cred_type: CredentialType::RefreshToken,
+            cred_id,
+        })
+        .get_by_type(CredentialType::RefreshToken)
+        {
+            Ok(t) => t,
+            Err(SfaeError::CredentialNotFound(_)) => return Ok(original_response),
+            Err(e) => return Err(e.into()),
+        };
+
+        if verbose {
+            eprintln!("< 401 (refresh token available, attempting refresh...)");
+        }
+
+        // Look up the client secret (may be absent for public clients).
+        let client_secret = match (CredentialLookup {
+            store: &*store,
+            domain,
+            username,
+            cred_id,
+        })
+        .get_by_type(CredentialType::ClientSecret)
+        {
+            Ok(s) => Some(s),
+            Err(SfaeError::CredentialNotFound(_)) => None,
+            Err(e) => return Err(e.into()),
+        };
+
+        // Attempt the refresh.
+        let token_response = match (oauth::TokenRequest {
+            token_url: &metadata.token_url,
+            client_id: &metadata.client_id,
+            client_secret: client_secret.as_deref(),
+            grant: oauth::Grant::RefreshToken {
+                refresh_token: &refresh_token,
+            },
+        })
+        .send()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Token refresh failed for {domain}: {e}");
+                return Ok(original_response);
+            }
+        };
+
+        // Update the access token in the store.
+        let access_key = credential_key(CredentialKey {
+            domain,
+            username,
+            cred_type: CredentialType::AccessToken,
         });
         store.set(sfae_core::store::StoreEntry {
-            key: &refresh_key,
-            value: new_refresh,
+            key: &access_key,
+            value: &token_response.access_token,
         })?;
-    }
 
-    if verbose {
-        eprintln!("< Token refreshed successfully, retrying request...");
-    }
-
-    // Retry the request once.
-    let start = Instant::now();
-    let retry_response = CredentialLookup {
-        store: &*store,
-        domain,
-        username,
-        cred_id,
-    }
-    .execute(request)?;
-    let elapsed = start.elapsed();
-
-    if verbose {
-        eprintln!("< {} ({:.1?})", retry_response.status, elapsed);
-    }
-
-    Ok(retry_response)
-}
-
-/// API mode refresh: call sfae-server's /credentials/refresh endpoint, then retry.
-///
-/// The server reads OAuth metadata and refresh tokens from the DB, calls the provider,
-/// and updates the tokens — all server-side. The CLI just needs to retry after.
-fn try_refresh_and_retry_api(
-    request: &ProxyRequest,
-    store: &dyn SecretStore,
-    domain: &str,
-    username: Option<&str>,
-    cred_id: Option<&str>,
-    verbose: bool,
-    original_response: ProxyResponse,
-) -> anyhow::Result<ProxyResponse> {
-    let base_url = std::env::var("SFAE_STORE_URL").unwrap();
-    let token = std::env::var("SFAE_STORE_TOKEN").unwrap_or_default();
-
-    if verbose {
-        eprintln!("< 401 (API mode, requesting server-side refresh...)");
-    }
-
-    let url = format!("{}/credentials/refresh", base_url.trim_end_matches('/'));
-    let body = serde_json::json!({ "domain": domain }).to_string();
-
-    let agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .build();
-    let agent = ureq::Agent::new_with_config(agent);
-
-    let req = ureq::http::Request::builder()
-        .method("POST")
-        .uri(&url)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Content-Type", "application/json")
-        .body(body)
-        .map_err(|e| anyhow::anyhow!("Failed to build refresh request: {e}"))?;
-
-    let response = match agent.run(req) {
-        Ok(resp) => resp,
-        Err(ureq::Error::StatusCode(code)) => {
-            if verbose {
-                eprintln!("< Refresh request returned {code}, returning original 401");
-            }
-            return Ok(original_response);
+        // If the provider rotated the refresh token, update it too.
+        if let Some(new_refresh) = &token_response.refresh_token {
+            let refresh_key = credential_key(CredentialKey {
+                domain,
+                username,
+                cred_type: CredentialType::RefreshToken,
+            });
+            store.set(sfae_core::store::StoreEntry {
+                key: &refresh_key,
+                value: new_refresh,
+            })?;
         }
-        Err(e) => {
-            if verbose {
-                eprintln!("< Refresh request failed: {e}");
-            }
-            return Ok(original_response);
-        }
-    };
 
-    let status = response.status().as_u16();
-    if status != 200 {
         if verbose {
-            eprintln!("< Server-side refresh returned {status}, returning original 401");
+            eprintln!("< Token refreshed successfully, retrying request...");
         }
-        return Ok(original_response);
+
+        // Retry the request once.
+        let start = Instant::now();
+        let retry_response = CredentialLookup {
+            store: &*store,
+            domain,
+            username,
+            cred_id,
+        }
+        .execute(request)?;
+        let elapsed = start.elapsed();
+
+        if verbose {
+            eprintln!("< {} ({:.1?})", retry_response.status, elapsed);
+        }
+
+        Ok(retry_response)
     }
 
-    if verbose {
-        eprintln!("< Token refreshed successfully via server, retrying request...");
-    }
+    /// API mode refresh: call sfae-server's /credentials/refresh endpoint, then retry.
+    ///
+    /// The server reads OAuth metadata and refresh tokens from the DB, calls the provider,
+    /// and updates the tokens — all server-side. The CLI just needs to retry after.
+    fn try_refresh_and_retry_api(self) -> anyhow::Result<ProxyResponse> {
+        let RetryCtx {
+            request,
+            store,
+            domain,
+            username,
+            cred_id,
+            verbose,
+            original_response,
+        } = self;
 
-    // Retry — credentials re-resolved from API store with fresh tokens.
-    let start = Instant::now();
-    let retry_response = CredentialLookup {
-        store,
-        domain,
-        username,
-        cred_id,
-    }
-    .execute(request)?;
-    let elapsed = start.elapsed();
+        let base_url = std::env::var("SFAE_STORE_URL").unwrap();
+        let token = std::env::var("SFAE_STORE_TOKEN").unwrap_or_default();
 
-    if verbose {
-        eprintln!("< {} ({:.1?})", retry_response.status, elapsed);
-    }
+        if verbose {
+            eprintln!("< 401 (API mode, requesting server-side refresh...)");
+        }
 
-    Ok(retry_response)
+        let url = format!("{}/credentials/refresh", base_url.trim_end_matches('/'));
+        let body = serde_json::json!({ "domain": domain }).to_string();
+
+        let agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build();
+        let agent = ureq::Agent::new_with_config(agent);
+
+        let req = ureq::http::Request::builder()
+            .method("POST")
+            .uri(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(body)
+            .map_err(|e| anyhow::anyhow!("Failed to build refresh request: {e}"))?;
+
+        let response = match agent.run(req) {
+            Ok(resp) => resp,
+            Err(ureq::Error::StatusCode(code)) => {
+                if verbose {
+                    eprintln!("< Refresh request returned {code}, returning original 401");
+                }
+                return Ok(original_response);
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!("< Refresh request failed: {e}");
+                }
+                return Ok(original_response);
+            }
+        };
+
+        let status = response.status().as_u16();
+        if status != 200 {
+            if verbose {
+                eprintln!("< Server-side refresh returned {status}, returning original 401");
+            }
+            return Ok(original_response);
+        }
+
+        if verbose {
+            eprintln!("< Token refreshed successfully via server, retrying request...");
+        }
+
+        // Retry — credentials re-resolved from API store with fresh tokens.
+        let start = Instant::now();
+        let retry_response = CredentialLookup {
+            store: &*store,
+            domain,
+            username,
+            cred_id,
+        }
+        .execute(request)?;
+        let elapsed = start.elapsed();
+
+        if verbose {
+            eprintln!("< {} ({:.1?})", retry_response.status, elapsed);
+        }
+
+        Ok(retry_response)
+    }
 }
 
 fn mask_placeholders(text: &str) -> String {
