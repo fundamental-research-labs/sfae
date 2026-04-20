@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::error::SfaeError;
-use crate::store::{CredentialSetInfo, SecretStore};
+use crate::store::{CredentialSetInfo, CredentialSetInput, SecretStore, StoreEntry};
 
 /// SecretStore backed by the SFAE HTTP API.
 ///
@@ -127,7 +127,7 @@ impl ApiStore {
 }
 
 impl SecretStore for ApiStore {
-    fn set(&mut self, _key: &str, _value: &str) -> Result<(), SfaeError> {
+    fn set(&mut self, _entry: StoreEntry<'_>) -> Result<(), SfaeError> {
         Err(SfaeError::Other(
             "Write not supported in API store mode".to_string(),
         ))
@@ -221,10 +221,13 @@ impl SecretStore for ApiStore {
 
     fn store_credential_set(
         &mut self,
-        domain: &str,
-        label: Option<&str>,
-        values: &HashMap<String, String>,
+        input: CredentialSetInput<'_>,
     ) -> Result<String, SfaeError> {
+        let CredentialSetInput {
+            domain,
+            label,
+            values,
+        } = input;
         let url = format!("{}/credentials", self.base_url);
         let body = serde_json::json!({
             "domain": domain,

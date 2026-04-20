@@ -39,7 +39,12 @@ pub fn run(domain: Option<&str>, username: Option<&str>) -> anyhow::Result<()> {
     let Some(domain) = domain else {
         anyhow::bail!("domain is required for legacy credential stores");
     };
-    let types = sfae_core::store::list_credential_types(&*store, domain, username)?;
+    let types =
+        sfae_core::store::list_credential_types(sfae_core::store::CredentialTypesQuery {
+            store: &*store,
+            domain,
+            username,
+        })?;
     if types.is_empty() {
         let target = match username {
             Some(user) => format!("{user}@{domain}"),

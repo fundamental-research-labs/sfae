@@ -39,7 +39,11 @@ pub fn run(
 
     let mut store = create_store();
     if store.supports_credential_sets() {
-        let id = store.store_credential_set(domain, username, &values)?;
+        let id = store.store_credential_set(sfae_core::store::CredentialSetInput {
+            domain,
+            label: username,
+            values: &values,
+        })?;
         eprintln!("Credential stored: {id}");
     } else {
         // Legacy fallback: store each field as a flat key.
@@ -48,7 +52,10 @@ pub fn run(
                 Some(user) => format!("{domain}_{user}_{key}"),
                 None => format!("{domain}_{key}"),
             };
-            store.set(&flat_key, value)?;
+            store.set(sfae_core::store::StoreEntry {
+                key: &flat_key,
+                value,
+            })?;
             eprintln!("Credential stored: {flat_key}");
         }
     }

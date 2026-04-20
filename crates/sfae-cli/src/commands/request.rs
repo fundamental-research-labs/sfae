@@ -218,12 +218,18 @@ fn try_refresh_and_retry(
 
     // Update the access token in the store.
     let access_key = credential_key(domain, username, CredentialType::AccessToken);
-    store.set(&access_key, &token_response.access_token)?;
+    store.set(sfae_core::store::StoreEntry {
+        key: &access_key,
+        value: &token_response.access_token,
+    })?;
 
     // If the provider rotated the refresh token, update it too.
     if let Some(new_refresh) = &token_response.refresh_token {
         let refresh_key = credential_key(domain, username, CredentialType::RefreshToken);
-        store.set(&refresh_key, new_refresh)?;
+        store.set(sfae_core::store::StoreEntry {
+            key: &refresh_key,
+            value: new_refresh,
+        })?;
     }
 
     if verbose {
