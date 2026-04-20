@@ -30,7 +30,11 @@ pub fn run(
         }
         terminal_prompt_fields(spec)?
     } else {
-        sfae_core::browser::browser_prompt_spec(domain, &display_label, spec)?
+        sfae_core::browser::browser_prompt_spec(sfae_core::browser::FormContext {
+            domain,
+            label: &display_label,
+            spec,
+        })?
     };
 
     let mut store = create_store();
