@@ -2,14 +2,29 @@ use std::process::{Command, ExitCode};
 
 mod checks;
 
-const STEPS: &[(&str, &[&str])] = &[
-    ("fmt", &["cargo", "fmt", "--all", "--check"]),
-    (
-        "clippy",
-        &["cargo", "clippy", "--workspace", "--", "-D", "warnings"],
-    ),
-    ("test", &["cargo", "test", "--workspace"]),
-    ("doc", &["cargo", "doc", "--workspace", "--no-deps"]),
+/// One named CI step and the shell command it invokes.
+struct Step<'a> {
+    name: &'a str,
+    cmd: &'a [&'a str],
+}
+
+const STEPS: &[Step<'static>] = &[
+    Step {
+        name: "fmt",
+        cmd: &["cargo", "fmt", "--all", "--check"],
+    },
+    Step {
+        name: "clippy",
+        cmd: &["cargo", "clippy", "--workspace", "--", "-D", "warnings"],
+    },
+    Step {
+        name: "test",
+        cmd: &["cargo", "test", "--workspace"],
+    },
+    Step {
+        name: "doc",
+        cmd: &["cargo", "doc", "--workspace", "--no-deps"],
+    },
 ];
 
 fn main() -> ExitCode {
@@ -18,8 +33,8 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("ci") => run_ci(),
         Some("lint") => run_lint(),
-        Some(name) => match STEPS.iter().find(|(n, _)| *n == name) {
-            Some((name, cmd)) => run_step(name, cmd),
+        Some(name) => match STEPS.iter().find(|s| s.name == name) {
+            Some(step) => run_step(step),
             None => {
                 eprintln!("unknown command: {name}");
                 usage()
@@ -35,15 +50,15 @@ fn usage() -> ExitCode {
     eprintln!("commands:");
     eprintln!("  ci       Run all CI checks (fmt, clippy, test, doc)");
     eprintln!("  lint     Run xtask lint checks (file length, docstring, fn params)");
-    for (name, _) in STEPS {
-        eprintln!("  {name:<8} Run {name} only");
+    for step in STEPS {
+        eprintln!("  {:<8} Run {} only", step.name, step.name);
     }
     ExitCode::FAILURE
 }
 
 fn run_ci() -> ExitCode {
-    for (name, cmd) in STEPS {
-        let code = run_step(name, cmd);
+    for step in STEPS {
+        let code = run_step(step);
         if code != ExitCode::SUCCESS {
             return code;
         }
@@ -53,7 +68,8 @@ fn run_ci() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run_step(name: &str, cmd: &[&str]) -> ExitCode {
+fn run_step(step: &Step<'_>) -> ExitCode {
+    let Step { name, cmd } = step;
     eprintln!("\n--- {name} ---");
     let status = Command::new(cmd[0]).args(&cmd[1..]).status();
 

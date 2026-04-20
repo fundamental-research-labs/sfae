@@ -22,6 +22,7 @@ use crate::types::{
 };
 
 /// POST /credentials — create a new credential set (internal auth only).
+// xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn store_credential(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -60,6 +61,7 @@ pub(crate) async fn store_credential(
 }
 
 /// PUT /credentials/:id — merge fields into an existing credential set.
+// xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn update_credential(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -129,6 +131,7 @@ pub(crate) async fn update_credential(
 }
 
 /// GET /credentials/:id/blob — return the raw JSON blob.
+// xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn get_blob(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -160,6 +163,7 @@ pub(crate) async fn get_blob(
 }
 
 /// GET /credentials — list all credential sets for the authenticated user.
+// xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn list_all_credentials(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -206,6 +210,7 @@ pub(crate) async fn list_all_credentials(
 }
 
 /// GET /credentials/:domain — list credential sets for a domain.
+// xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn list_credentials(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -254,6 +259,7 @@ pub(crate) async fn list_credentials(
 }
 
 /// DELETE /credentials/:id — delete a credential set by UUID.
+// xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn delete_credential(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -287,6 +293,7 @@ pub(crate) async fn delete_credential(
 }
 
 /// POST /auth/token — mint a JWT for a user (internal auth only).
+// xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn mint_token(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -328,6 +335,7 @@ pub(crate) async fn mint_token(
 }
 
 /// POST /oauth/pending — store a pending OAuth row (internal auth only).
+// xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn create_pending_oauth(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -362,6 +370,7 @@ pub(crate) async fn create_pending_oauth(
 }
 
 /// GET /oauth/pending/:state — atomically consume a pending OAuth row.
+// xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn consume_pending_oauth(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -415,6 +424,7 @@ pub(crate) async fn consume_pending_oauth(
 }
 
 /// POST /credentials/refresh — server-side OAuth token refresh.
+// xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn refresh_credential(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -446,7 +456,13 @@ pub(crate) async fn refresh_credential(
             Err(e) => return db_error(e).into_response(),
         }
     } else if let Some(ref domain) = body.domain {
-        match find_oauth_set_for_domain(&state.pool, &user_id, domain).await {
+        match find_oauth_set_for_domain(crate::helpers::OAuthSetQuery {
+            pool: &state.pool,
+            user_id: &user_id,
+            domain,
+        })
+        .await
+        {
             Ok(Some((id, d, v))) => (id, d, v),
             Ok(None) => {
                 return (
@@ -497,7 +513,12 @@ pub(crate) async fn refresh_credential(
         }
     };
 
-    let (client_id, client_secret) = match resolve_oauth_client_from_state(&state, &domain) {
+    let (client_id, client_secret) = match resolve_oauth_client_from_state(
+        crate::helpers::StateDomain {
+            state: &state,
+            domain: &domain,
+        },
+    ) {
         Some(pair) => pair,
         None => {
             return (

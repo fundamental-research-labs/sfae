@@ -4,6 +4,10 @@ use super::Violation;
 
 const LIMIT: usize = 1;
 
+/// Marker comment allowing a single fn declaration to exceed the positional-param
+/// limit. Must appear on the line immediately above the `fn` declaration line.
+const ALLOW_MARKER: &str = "xtask: allow-multi-param";
+
 pub fn run(files: &[PathBuf]) -> Vec<Violation> {
     let mut out = Vec::new();
     for path in files {
@@ -24,6 +28,7 @@ struct LineCheck<'a> {
     line_text: &'a str,
     line_no: usize,
     line_start_byte: usize,
+    prev_line: &'a str,
 }
 
 impl<'a> FileScan<'a> {
@@ -32,19 +37,29 @@ impl<'a> FileScan<'a> {
         let bytes = self.text.as_bytes();
         let mut line_no = 1usize;
         let mut start = 0usize;
+        let mut prev_start = 0usize;
+        let mut prev_end = 0usize;
         let mut i = 0usize;
         while i <= bytes.len() {
             let at_line_end = i == bytes.len() || bytes[i] == b'\n';
             if at_line_end {
                 let line_text = &self.text[start..i];
+                let prev_line = if line_no > 1 {
+                    &self.text[prev_start..prev_end]
+                } else {
+                    ""
+                };
                 if let Some(v) = self.check_line(LineCheck {
                     line_text,
                     line_no,
                     line_start_byte: start,
+                    prev_line,
                 }) {
                     out.push(v);
                 }
                 line_no += 1;
+                prev_start = start;
+                prev_end = i;
                 start = i + 1;
             }
             i += 1;
@@ -54,6 +69,9 @@ impl<'a> FileScan<'a> {
 
     fn check_line(&self, ctx: LineCheck<'_>) -> Option<Violation> {
         let name_end = match_fn_decl(ctx.line_text)?;
+        if ctx.prev_line.contains(ALLOW_MARKER) {
+            return None;
+        }
         let abs_after_name = ctx.line_start_byte + name_end;
         let tail = self.text.get(abs_after_name..)?;
         let paren_off = find_paren_open(tail)?;
@@ -416,5 +434,26 @@ mod tests {
         let path = PathBuf::from("synthetic.rs");
         let scan = FileScan { path: &path, text };
         assert!(scan.scan().is_empty());
+    }
+
+    #[test]
+    fn allow_marker_suppresses_violation() {
+        let text =
+            "// xtask: allow-multi-param\nfn foo(a: A, b: B, c: C) -> R { todo!() }\n";
+        let path = PathBuf::from("synthetic.rs");
+        let scan = FileScan { path: &path, text };
+        assert!(scan.scan().is_empty());
+    }
+
+    #[test]
+    fn allow_marker_only_suppresses_next_line() {
+        // Marker on line 1 does not suppress violation on line 4.
+        let text =
+            "// xtask: allow-multi-param\nfn ok(a: A) {}\n\nfn bad(a: A, b: B, c: C) {}\n";
+        let path = PathBuf::from("synthetic.rs");
+        let scan = FileScan { path: &path, text };
+        let v = scan.scan();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].line, 4);
     }
 }
