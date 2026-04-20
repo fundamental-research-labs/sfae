@@ -4,7 +4,7 @@ use sfae_core::credential::{CredentialType, credential_key};
 use sfae_core::error::SfaeError;
 use sfae_core::oauth;
 use sfae_core::proxy::{
-    self, ProxyRequest, ProxyResponse, extract_host, find_dynamic_placeholders,
+    CredentialLookup, ProxyRequest, ProxyResponse, extract_host, find_dynamic_placeholders,
 };
 use sfae_core::store::SecretStore;
 
@@ -62,16 +62,20 @@ pub fn run(
     let mut store = create_store();
 
     if opts.dry_run {
-        let masked_url =
-            proxy::resolve_and_mask(&request.url, &*store, &domain, opts.user, opts.cred_id)?;
+        let lookup = CredentialLookup {
+            store: &*store,
+            domain: &domain,
+            username: opts.user,
+            cred_id: opts.cred_id,
+        };
+        let masked_url = lookup.mask(&request.url)?;
         println!("{} {}", request.method, masked_url);
         for (k, v) in &request.headers {
-            let masked_v = proxy::resolve_and_mask(v, &*store, &domain, opts.user, opts.cred_id)?;
+            let masked_v = lookup.mask(v)?;
             println!("{k}: {masked_v}");
         }
         if let Some(b) = &request.body {
-            let masked_body =
-                proxy::resolve_and_mask(b, &*store, &domain, opts.user, opts.cred_id)?;
+            let masked_body = lookup.mask(b)?;
             println!();
             println!("{masked_body}");
         }
@@ -79,7 +83,13 @@ pub fn run(
     }
 
     let start = Instant::now();
-    let response = proxy::execute(&request, &*store, &domain, opts.user, opts.cred_id)?;
+    let response = CredentialLookup {
+        store: &*store,
+        domain: &domain,
+        username: opts.user,
+        cred_id: opts.cred_id,
+    }
+    .execute(&request)?;
     let elapsed = start.elapsed();
 
     if opts.verbose {
@@ -156,12 +166,14 @@ fn try_refresh_and_retry(
     };
 
     // Check: a refresh token is stored for this domain.
-    let refresh_token = match proxy::get_credential_with_fallback(
-        store,
+    let refresh_token = match (CredentialLookup {
+        store: &*store,
         domain,
         username,
-        CredentialType::RefreshToken,
-    ) {
+        cred_id,
+    })
+    .get_by_type(CredentialType::RefreshToken)
+    {
         Ok(t) => t,
         Err(SfaeError::CredentialNotFound(_)) => return Ok(original_response),
         Err(e) => return Err(e.into()),
@@ -172,12 +184,14 @@ fn try_refresh_and_retry(
     }
 
     // Look up the client secret (may be absent for public clients).
-    let client_secret = match proxy::get_credential_with_fallback(
-        store,
+    let client_secret = match (CredentialLookup {
+        store: &*store,
         domain,
         username,
-        CredentialType::ClientSecret,
-    ) {
+        cred_id,
+    })
+    .get_by_type(CredentialType::ClientSecret)
+    {
         Ok(s) => Some(s),
         Err(SfaeError::CredentialNotFound(_)) => None,
         Err(e) => return Err(e.into()),
@@ -213,7 +227,13 @@ fn try_refresh_and_retry(
 
     // Retry the request once.
     let start = Instant::now();
-    let retry_response = proxy::execute(request, store, domain, username, cred_id)?;
+    let retry_response = CredentialLookup {
+        store: &*store,
+        domain,
+        username,
+        cred_id,
+    }
+    .execute(request)?;
     let elapsed = start.elapsed();
 
     if verbose {
@@ -289,7 +309,13 @@ fn try_refresh_and_retry_api(
 
     // Retry — credentials re-resolved from API store with fresh tokens.
     let start = Instant::now();
-    let retry_response = proxy::execute(request, store, domain, username, cred_id)?;
+    let retry_response = CredentialLookup {
+        store,
+        domain,
+        username,
+        cred_id,
+    }
+    .execute(request)?;
     let elapsed = start.elapsed();
 
     if verbose {

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use sfae_core::proxy::{self, ProxyRequest, find_dynamic_placeholders};
+use sfae_core::proxy::{CredentialLookup, ProxyRequest, find_dynamic_placeholders};
 use sfae_core::store::{InMemoryStore, SecretStore};
 
 fn populated_store() -> InMemoryStore {
@@ -31,9 +31,15 @@ fn full_request_resolution() {
         body: Some(r#"{"token": "{API_KEY}"}"#.to_string()),
     };
 
+    let lookup = CredentialLookup {
+        store: &store,
+        domain: "api.example.com",
+        username: None,
+        cred_id: None,
+    };
+
     // Resolve URL
-    let resolved_url =
-        proxy::resolve_placeholders(&request.url, &store, "api.example.com", None, None).unwrap();
+    let resolved_url = lookup.resolve(&request.url).unwrap();
     assert_eq!(
         resolved_url,
         "https://api.example.com/v1/data?key=key-xyz-789"
@@ -41,8 +47,7 @@ fn full_request_resolution() {
 
     // Resolve headers
     for (key, value) in &request.headers {
-        let resolved =
-            proxy::resolve_placeholders(value, &store, "api.example.com", None, None).unwrap();
+        let resolved = lookup.resolve(value).unwrap();
         if key == "Authorization" {
             assert_eq!(resolved, "Bearer ghp_abc123");
         } else {
@@ -51,14 +56,7 @@ fn full_request_resolution() {
     }
 
     // Resolve body
-    let resolved_body = proxy::resolve_placeholders(
-        request.body.as_ref().unwrap(),
-        &store,
-        "api.example.com",
-        None,
-        None,
-    )
-    .unwrap();
+    let resolved_body = lookup.resolve(request.body.as_ref().unwrap()).unwrap();
     assert_eq!(resolved_body, r#"{"token": "key-xyz-789"}"#);
 }
 
@@ -92,8 +90,14 @@ fn placeholder_discovery_across_request() {
 fn resolution_fails_on_missing_credential() {
     let store = populated_store(); // has ACCESS_TOKEN and API_KEY for api.example.com
 
-    let err = proxy::resolve_placeholders("{PASSWORD}", &store, "api.example.com", None, None)
-        .unwrap_err();
+    let err = CredentialLookup {
+        store: &store,
+        domain: "api.example.com",
+        username: None,
+        cred_id: None,
+    }
+    .resolve("{PASSWORD}")
+    .unwrap_err();
     assert!(matches!(
         err,
         sfae_core::SfaeError::CredentialNotFound(ref name) if name == "PASSWORD"
@@ -119,8 +123,14 @@ fn credential_set_lifecycle() {
     assert_eq!(sets[0].keys, vec!["ACCESS_TOKEN", "API_KEY"]); // sorted
 
     // Resolve using proxy
-    let resolved =
-        proxy::resolve_placeholders("val={API_KEY}", &store, "github.com", None, None).unwrap();
+    let resolved = CredentialLookup {
+        store: &store,
+        domain: "github.com",
+        username: None,
+        cred_id: None,
+    }
+    .resolve("val={API_KEY}")
+    .unwrap();
     assert_eq!(resolved, "val=aaa");
 
     // Delete credential set
@@ -128,8 +138,14 @@ fn credential_set_lifecycle() {
     assert!(store.list_credential_sets(None).unwrap().is_empty());
 
     // Resolution now fails
-    let err =
-        proxy::resolve_placeholders("{API_KEY}", &store, "github.com", None, None).unwrap_err();
+    let err = CredentialLookup {
+        store: &store,
+        domain: "github.com",
+        username: None,
+        cred_id: None,
+    }
+    .resolve("{API_KEY}")
+    .unwrap_err();
     assert!(matches!(err, sfae_core::SfaeError::CredentialNotFound(_)));
 }
 
@@ -150,13 +166,24 @@ fn label_scoped_credentials() {
         .unwrap();
 
     // Resolve with label filter — gets the labeled set
-    let result =
-        proxy::resolve_placeholders("{PASSWORD}", &store, "github.com", Some("aduermael"), None)
-            .unwrap();
+    let result = CredentialLookup {
+        store: &store,
+        domain: "github.com",
+        username: Some("aduermael"),
+        cred_id: None,
+    }
+    .resolve("{PASSWORD}")
+    .unwrap();
     assert_eq!(result, "user_pw");
 
     // Multiple sets without label filter → error
-    let err =
-        proxy::resolve_placeholders("{API_KEY}", &store, "github.com", None, None).unwrap_err();
+    let err = CredentialLookup {
+        store: &store,
+        domain: "github.com",
+        username: None,
+        cred_id: None,
+    }
+    .resolve("{API_KEY}")
+    .unwrap_err();
     assert!(matches!(err, sfae_core::SfaeError::Other(_)));
 }
