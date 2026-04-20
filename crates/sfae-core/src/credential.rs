@@ -1,3 +1,8 @@
+//! Credential type taxonomy and keychain key construction.
+//!
+//! Defines the `CredentialType` enum and the `credential_key` helper that
+//! turns a `(domain, username, type)` tuple into a stable storage key.
+
 use std::fmt;
 use std::str::FromStr;
 

@@ -1,3 +1,8 @@
+//! OAuth2 authorization-code-with-PKCE flow primitives plus per-domain provider presets.
+//!
+//! Builds authorization URLs, exchanges codes, refreshes tokens, and persists
+//! the per-credential metadata needed for transparent token refresh.
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};

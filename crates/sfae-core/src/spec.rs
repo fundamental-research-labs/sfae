@@ -1,3 +1,8 @@
+//! JSON spec types accepted by `sfae prompt --spec` for rendering credential forms.
+//!
+//! Defines `PromptSpec`, `FieldSpec`, `GroupSpec`, and `OAuthSpec` plus their
+//! deserialization shorthands.
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::SfaeError;

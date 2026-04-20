@@ -1,3 +1,5 @@
+//! End-to-end proxy tests covering placeholder resolution against an in-memory store.
+
 use std::collections::HashMap;
 
 use sfae_core::proxy::{CredentialLookup, ProxyRequest, find_dynamic_placeholders};

@@ -1,3 +1,6 @@
+//! HTTP request proxy that resolves `{KEY}` placeholders against the secret store
+//! and forwards the request, transparently refreshing OAuth tokens on 401.
+
 use std::collections::HashMap;
 use std::sync::LazyLock;
 

@@ -1,3 +1,8 @@
+//! Browser-based credential prompt and OAuth2 callback flow.
+//!
+//! Spins up a temporary local HTTP server, opens the user's default browser,
+//! and waits for the user to submit credentials or complete an OAuth handshake.
+
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;

@@ -124,7 +124,7 @@ General approach (apply per file): introduce **named structs**, never tuple stru
 
 Done last so files created by earlier phases are covered in one sweep.
 
-- [ ] 4a: Add `//!` docstrings to every `.rs` under `crates/sfae-core/src/` and `crates/sfae-core/tests/`. Each doc should explain the file's responsibility in 1–2 sentences (≥40 chars). Use the file's existing top-of-file comment (if any) as a starting point; otherwise write a fresh one from the module contents.
+- [x] 4a: Add `//!` docstrings to every `.rs` under `crates/sfae-core/src/` and `crates/sfae-core/tests/`. Each doc should explain the file's responsibility in 1–2 sentences (≥40 chars). Use the file's existing top-of-file comment (if any) as a starting point; otherwise write a fresh one from the module contents.
 - [ ] 4b: Add docstrings to every `.rs` under `crates/sfae-cli/src/`, `crates/sfae-cli/tests/`, and any new submodules.
 - [ ] 4c: Add docstrings to every `.rs` under `crates/sfae-server/src/` (including submodules created in Phase 2) and `crates/xtask/src/` (including check submodules created in Phase 1).
 

@@ -1,3 +1,6 @@
+//! Core library for SFAE: secret storage, credential resolution, OAuth flows,
+//! and the browser-based prompt used by the CLI and HTTP server.
+
 pub mod api_store;
 pub mod browser;
 pub mod browser_html;

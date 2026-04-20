@@ -1,3 +1,7 @@
+//! HTTP-backed `SecretStore` implementation for talking to a remote sfae-server.
+//!
+//! Used in CLI client mode when the workstation has no OS keychain access.
+
 use std::collections::HashMap;
 
 use crate::error::SfaeError;

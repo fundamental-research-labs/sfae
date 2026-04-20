@@ -1,3 +1,8 @@
+//! Secret-store abstraction plus the OS-keychain and in-memory implementations.
+//!
+//! Defines the `SecretStore` trait used by every credential lookup and write
+//! across the CLI and server.
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
