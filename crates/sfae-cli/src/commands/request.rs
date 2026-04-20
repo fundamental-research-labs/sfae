@@ -160,7 +160,8 @@ fn try_refresh_and_retry(
     // Local mode: read OAuth metadata from disk and refresh locally.
 
     // Check: OAuth metadata exists for this domain.
-    let metadata = match oauth::get_oauth_metadata(domain, username)? {
+    let metadata_key = oauth::MetadataKey { domain, username };
+    let metadata = match metadata_key.get()? {
         Some(m) => m,
         None => return Ok(original_response),
     };
@@ -198,12 +199,16 @@ fn try_refresh_and_retry(
     };
 
     // Attempt the refresh.
-    let token_response = match oauth::refresh_access_token(
-        &metadata.token_url,
-        &refresh_token,
-        &metadata.client_id,
-        client_secret.as_deref(),
-    ) {
+    let token_response = match (oauth::TokenRequest {
+        token_url: &metadata.token_url,
+        client_id: &metadata.client_id,
+        client_secret: client_secret.as_deref(),
+        grant: oauth::Grant::RefreshToken {
+            refresh_token: &refresh_token,
+        },
+    })
+    .send()
+    {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Token refresh failed for {domain}: {e}");

@@ -297,14 +297,15 @@ pub fn browser_prompt_spec(
                 let state = crate::oauth::generate_state();
                 let redirect_uri = format!("http://127.0.0.1:{}/callback", server.port());
 
-                let auth_url = crate::oauth::build_authorization_url(
-                    &resolved.auth_url,
-                    &resolved.client_id,
-                    &redirect_uri,
-                    &challenge,
-                    Some(&resolved.scope),
-                    &state,
-                );
+                let auth_url = crate::oauth::AuthorizationUrl {
+                    auth_url: &resolved.auth_url,
+                    client_id: &resolved.client_id,
+                    redirect_uri: &redirect_uri,
+                    code_challenge: &challenge,
+                    scope: Some(&resolved.scope),
+                    state: &state,
+                }
+                .build();
 
                 pending_verifier = Some(verifier);
                 pending_state = Some(state);
@@ -342,25 +343,28 @@ pub fn browser_prompt_spec(
                 pending_state = None;
 
                 let redirect_uri = format!("http://127.0.0.1:{}/callback", server.port());
-                let token_resp = crate::oauth::exchange_code(
-                    &resolved.token_url,
-                    &code,
-                    &redirect_uri,
-                    &resolved.client_id,
-                    resolved.client_secret.as_deref(),
-                    &verifier,
-                )?;
+                let token_resp = crate::oauth::TokenRequest {
+                    token_url: &resolved.token_url,
+                    client_id: &resolved.client_id,
+                    client_secret: resolved.client_secret.as_deref(),
+                    grant: crate::oauth::Grant::AuthorizationCode {
+                        code: &code,
+                        redirect_uri: &redirect_uri,
+                        code_verifier: &verifier,
+                    },
+                }
+                .send()?;
 
                 // Save OAuth metadata for future token refresh.
-                crate::oauth::save_oauth_metadata(
+                crate::oauth::MetadataKey {
                     domain,
-                    None,
-                    crate::oauth::OAuthMetadata {
-                        token_url: resolved.token_url.clone(),
-                        client_id: resolved.client_id.clone(),
-                        revocation_url: resolved.revocation_url.clone(),
-                    },
-                )?;
+                    username: None,
+                }
+                .save(crate::oauth::OAuthMetadata {
+                    token_url: resolved.token_url.clone(),
+                    client_id: resolved.client_id.clone(),
+                    revocation_url: resolved.revocation_url.clone(),
+                })?;
 
                 let mut tokens = HashMap::new();
                 tokens.insert("OAUTH_ACCESS_TOKEN".to_string(), token_resp.access_token);

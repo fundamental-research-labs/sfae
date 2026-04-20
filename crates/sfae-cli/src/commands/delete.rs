@@ -77,7 +77,7 @@ pub fn run(
 
 /// Remove OAuth metadata and client secret for a domain.
 fn cleanup_oauth(domain: &str, username: Option<&str>, store: &mut dyn SecretStore) {
-    if let Err(e) = oauth::remove_oauth_metadata(domain, username) {
+    if let Err(e) = (oauth::MetadataKey { domain, username }.remove()) {
         eprintln!("Warning: failed to remove OAuth metadata: {e}");
     }
     let cs_key = credential_key(domain, username, CredentialType::ClientSecret);
