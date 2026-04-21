@@ -1,3 +1,5 @@
+//! Cross-platform CI driver: shells out to a fixed table of cargo steps and runs the in-tree linters.
+
 use std::process::{Command, ExitCode};
 
 mod checks;

@@ -15,13 +15,13 @@ use crate::error::SfaeError;
 use crate::spec::{FieldSpec, OAuthSpec, PromptSpec};
 
 #[cfg(feature = "cli")]
+pub use crate::browser_html::FormContext;
+use crate::browser_html::{QueryLookup, extract_query_param};
+#[cfg(feature = "cli")]
 use crate::browser_html::{
     build_done_page, build_form_page, build_oauth_done_page, collect_common_fields,
     parse_form_fields,
 };
-use crate::browser_html::{QueryLookup, extract_query_param};
-#[cfg(feature = "cli")]
-pub use crate::browser_html::FormContext;
 
 /// A temporary local HTTP server bound to `127.0.0.1` on a random port.
 ///

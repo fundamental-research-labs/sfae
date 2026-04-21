@@ -1,3 +1,5 @@
+//! Shared infrastructure (file walker, `Violation` type) for the in-tree lint checks.
+
 use std::path::{Path, PathBuf};
 
 pub mod file_docs;

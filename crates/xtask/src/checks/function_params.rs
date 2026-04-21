@@ -1,3 +1,5 @@
+//! Lint check: every `fn` signature may have at most one positional parameter (excluding `self`).
+
 use std::path::PathBuf;
 
 use super::Violation;

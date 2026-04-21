@@ -1,3 +1,5 @@
+//! Lint check: no `.rs` file may exceed the per-file line-count limit (1000 lines).
+
 use std::path::PathBuf;
 
 use super::Violation;

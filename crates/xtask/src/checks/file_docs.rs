@@ -1,3 +1,5 @@
+//! Lint check: every `.rs` file must start with a `//!` doc block of at least 40 prose characters.
+
 use std::path::PathBuf;
 
 use super::Violation;
