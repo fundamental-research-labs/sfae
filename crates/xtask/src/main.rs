@@ -27,6 +27,10 @@ const STEPS: &[Step<'static>] = &[
         name: "doc",
         cmd: &["cargo", "doc", "--workspace", "--no-deps"],
     },
+    Step {
+        name: "lint",
+        cmd: &["cargo", "xtask", "lint"],
+    },
 ];
 
 fn main() -> ExitCode {
@@ -50,7 +54,7 @@ fn usage() -> ExitCode {
     eprintln!("usage: cargo xtask <command>");
     eprintln!();
     eprintln!("commands:");
-    eprintln!("  ci       Run all CI checks (fmt, clippy, test, doc)");
+    eprintln!("  ci       Run all CI checks (fmt, clippy, test, doc, lint)");
     eprintln!("  lint     Run xtask lint checks (file length, docstring, fn params)");
     for step in STEPS {
         eprintln!("  {:<8} Run {} only", step.name, step.name);
