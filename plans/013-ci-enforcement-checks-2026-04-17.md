@@ -133,7 +133,7 @@ Done last so files created by earlier phases are covered in one sweep.
 ## Phase 5: Wire into CI
 
 - [x] 5a: Append `("lint", &["cargo", "xtask", "lint"])` to `STEPS` in `crates/xtask/src/main.rs`. Update the `usage()` help text. Run `cargo xtask ci` locally end-to-end — must pass green. Delete `plans/013-violations-baseline.txt` (the baseline file is transient scaffolding).
-- [ ] 5b: Review `.github/workflows/ci.yml` — no changes expected since the workflow already runs `cargo xtask ci`, but confirm the workflow still completes in a reasonable time and that the new scanner doesn't crash on any file the local run missed (different filesystem ordering, etc.).
+- [x] 5b: Review `.github/workflows/ci.yml` — no changes expected since the workflow already runs `cargo xtask ci`, but confirm the workflow still completes in a reasonable time and that the new scanner doesn't crash on any file the local run missed (different filesystem ordering, etc.).
 
 **Success check:** green CI on the branch; `cargo xtask ci` passes on a fresh clone.
 
