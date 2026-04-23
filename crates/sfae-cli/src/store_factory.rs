@@ -1,3 +1,5 @@
+//! Pick the right `SecretStore` backend at startup: HTTP API in client mode, OS keychain otherwise.
+
 use sfae_core::api_store::ApiStore;
 use sfae_core::store::SecretStore;
 

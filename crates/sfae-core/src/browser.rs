@@ -1,3 +1,8 @@
+//! Browser-based credential prompt and OAuth2 callback flow.
+//!
+//! Spins up a temporary local HTTP server, opens the user's default browser,
+//! and waits for the user to submit credentials or complete an OAuth handshake.
+
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -7,10 +12,16 @@ use std::time::Duration;
 
 use crate::error::SfaeError;
 #[cfg(feature = "cli")]
-use crate::spec::{FieldSpec, GroupSpec, OAuthSpec, PromptSpec};
+use crate::spec::{FieldSpec, OAuthSpec, PromptSpec};
 
-/// Shared CSS included in both form and done pages.
-const BASE_STYLES: &str = include_str!("base.css");
+#[cfg(feature = "cli")]
+pub use crate::browser_html::FormContext;
+use crate::browser_html::{QueryLookup, extract_query_param};
+#[cfg(feature = "cli")]
+use crate::browser_html::{
+    build_done_page, build_form_page, build_oauth_done_page, collect_common_fields,
+    parse_form_fields,
+};
 
 /// A temporary local HTTP server bound to `127.0.0.1` on a random port.
 ///
@@ -35,7 +46,28 @@ impl LocalServer {
         listener
             .set_nonblocking(false)
             .map_err(|e| SfaeError::Other(format!("failed to configure listener: {e}")))?;
-        set_accept_timeout(&listener, Duration::from_secs(120))?;
+
+        // Set an accept timeout via SO_RCVTIMEO so blocking accept() times out.
+        {
+            use std::os::fd::AsRawFd;
+            let timeout = Duration::from_secs(120);
+            let tv = libc::timeval {
+                tv_sec: timeout.as_secs() as _,
+                tv_usec: 0,
+            };
+            let ret = unsafe {
+                libc::setsockopt(
+                    listener.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_RCVTIMEO,
+                    &tv as *const libc::timeval as *const libc::c_void,
+                    std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+                )
+            };
+            if ret != 0 {
+                return Err(SfaeError::Other("failed to set socket timeout".into()));
+            }
+        }
 
         Ok(Self { listener, port })
     }
@@ -135,14 +167,22 @@ pub struct HttpRequest {
     stream: std::net::TcpStream,
 }
 
+/// A simple HTML HTTP reply: status code plus body.
+pub struct Reply<'a> {
+    pub status: u16,
+    pub html: &'a str,
+}
+
 impl HttpRequest {
-    /// Send an HTTP response with the given status code and HTML body.
-    pub fn respond(&mut self, status: u16, html: &str) {
-        let status_text = match status {
+    /// Send an HTML HTTP response.
+    pub fn respond(&mut self, reply: Reply<'_>) {
+        let status_text = match reply.status {
             200 => "OK",
             404 => "Not Found",
             _ => "OK",
         };
+        let status = reply.status;
+        let html = reply.html;
         let response = format!(
             "HTTP/1.1 {status} {status_text}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}",
             html.len(),
@@ -182,12 +222,27 @@ struct ResolvedOAuth {
     client_secret: Option<String>,
 }
 
+/// Parameters for `resolve_oauth_spec`.
+#[cfg(feature = "cli")]
+struct OAuthResolve<'a> {
+    domain: &'a str,
+    spec: &'a OAuthSpec,
+}
+
+/// Parameters for the single-field `browser_prompt` helper.
+#[cfg(feature = "cli")]
+pub struct BrowserPromptArgs<'a> {
+    pub label: &'a str,
+    pub url: Option<&'a str>,
+}
+
 /// Resolve an OAuthSpec against provider presets for the given domain.
 ///
 /// Merges spec-provided URLs with preset defaults. Errors if required URLs
 /// or app credentials are missing and no preset covers this domain.
 #[cfg(feature = "cli")]
-fn resolve_oauth_spec(domain: &str, spec: &OAuthSpec) -> Result<ResolvedOAuth, SfaeError> {
+fn resolve_oauth_spec(args: OAuthResolve<'_>) -> Result<ResolvedOAuth, SfaeError> {
+    let OAuthResolve { domain, spec } = args;
     let preset = crate::oauth::get_provider_preset(domain);
 
     let auth_url = spec
@@ -244,11 +299,12 @@ fn resolve_oauth_spec(domain: &str, spec: &OAuthSpec) -> Result<ResolvedOAuth, S
 /// Returns a map of field names to values collected from the form.
 /// Times out after 120 seconds with `SfaeError::Cancelled`.
 #[cfg(feature = "cli")]
-pub fn browser_prompt_spec(
-    domain: &str,
-    label: &str,
-    spec: &PromptSpec,
-) -> Result<HashMap<String, String>, SfaeError> {
+pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, String>, SfaeError> {
+    let FormContext {
+        domain,
+        label,
+        spec,
+    } = ctx;
     // Resolve OAuth specs for all groups upfront.
     let groups = spec.groups.as_deref().unwrap_or(&[]);
     let resolved_oauth: Vec<Option<ResolvedOAuth>> = groups
@@ -256,7 +312,12 @@ pub fn browser_prompt_spec(
         .map(|g| {
             g.oauth
                 .as_ref()
-                .map(|oauth_spec| resolve_oauth_spec(domain, oauth_spec))
+                .map(|oauth_spec| {
+                    resolve_oauth_spec(OAuthResolve {
+                        domain,
+                        spec: oauth_spec,
+                    })
+                })
                 .transpose()
         })
         .collect::<Result<_, _>>()?;
@@ -277,18 +338,34 @@ pub fn browser_prompt_spec(
 
         match (req.method.as_str(), path.as_str()) {
             ("GET", "/") => {
-                let html = build_form_page(label, spec);
-                req.respond(200, &html);
+                let html = build_form_page(FormContext {
+                    domain,
+                    label,
+                    spec,
+                });
+                req.respond(Reply {
+                    status: 200,
+                    html: &html,
+                });
             }
             ("GET", "/auth") => {
-                let group_idx =
-                    extract_query_param(&req.path, "group").and_then(|s| s.parse::<usize>().ok());
+                let group_idx = extract_query_param(QueryLookup {
+                    path: &req.path,
+                    key: "group",
+                })
+                .and_then(|s| s.parse::<usize>().ok());
                 let Some(idx) = group_idx else {
-                    req.respond(400, "missing group parameter");
+                    req.respond(Reply {
+                        status: 400,
+                        html: "missing group parameter",
+                    });
                     continue;
                 };
                 let Some(Some(resolved)) = resolved_oauth.get(idx) else {
-                    req.respond(400, "invalid group or not an OAuth group");
+                    req.respond(Reply {
+                        status: 400,
+                        html: "invalid group or not an OAuth group",
+                    });
                     continue;
                 };
 
@@ -297,14 +374,15 @@ pub fn browser_prompt_spec(
                 let state = crate::oauth::generate_state();
                 let redirect_uri = format!("http://127.0.0.1:{}/callback", server.port());
 
-                let auth_url = crate::oauth::build_authorization_url(
-                    &resolved.auth_url,
-                    &resolved.client_id,
-                    &redirect_uri,
-                    &challenge,
-                    Some(&resolved.scope),
-                    &state,
-                );
+                let auth_url = crate::oauth::AuthorizationUrl {
+                    auth_url: &resolved.auth_url,
+                    client_id: &resolved.client_id,
+                    redirect_uri: &redirect_uri,
+                    code_challenge: &challenge,
+                    scope: Some(&resolved.scope),
+                    state: &state,
+                }
+                .build();
 
                 pending_verifier = Some(verifier);
                 pending_state = Some(state);
@@ -313,54 +391,78 @@ pub fn browser_prompt_spec(
                 req.redirect(&auth_url);
             }
             ("GET", "/callback") => {
-                let code = extract_query_param(&req.path, "code");
-                let state = extract_query_param(&req.path, "state");
+                let code = extract_query_param(QueryLookup {
+                    path: &req.path,
+                    key: "code",
+                });
+                let state = extract_query_param(QueryLookup {
+                    path: &req.path,
+                    key: "state",
+                });
 
                 let (Some(code), Some(state)) = (code, state) else {
-                    req.respond(400, "missing code or state parameter");
+                    req.respond(Reply {
+                        status: 400,
+                        html: "missing code or state parameter",
+                    });
                     continue;
                 };
 
                 // Validate state matches the pending OAuth flow.
                 if pending_state.as_deref() != Some(&state) {
-                    req.respond(400, "invalid state parameter");
+                    req.respond(Reply {
+                        status: 400,
+                        html: "invalid state parameter",
+                    });
                     continue;
                 }
 
                 let Some(verifier) = pending_verifier.take() else {
-                    req.respond(400, "no pending OAuth flow");
+                    req.respond(Reply {
+                        status: 400,
+                        html: "no pending OAuth flow",
+                    });
                     continue;
                 };
                 let Some(idx) = pending_group.take() else {
-                    req.respond(400, "no pending OAuth flow");
+                    req.respond(Reply {
+                        status: 400,
+                        html: "no pending OAuth flow",
+                    });
                     continue;
                 };
                 let Some(Some(resolved)) = resolved_oauth.get(idx) else {
-                    req.respond(400, "invalid OAuth group");
+                    req.respond(Reply {
+                        status: 400,
+                        html: "invalid OAuth group",
+                    });
                     continue;
                 };
                 pending_state = None;
 
                 let redirect_uri = format!("http://127.0.0.1:{}/callback", server.port());
-                let token_resp = crate::oauth::exchange_code(
-                    &resolved.token_url,
-                    &code,
-                    &redirect_uri,
-                    &resolved.client_id,
-                    resolved.client_secret.as_deref(),
-                    &verifier,
-                )?;
+                let token_resp = crate::oauth::TokenRequest {
+                    token_url: &resolved.token_url,
+                    client_id: &resolved.client_id,
+                    client_secret: resolved.client_secret.as_deref(),
+                    grant: crate::oauth::Grant::AuthorizationCode {
+                        code: &code,
+                        redirect_uri: &redirect_uri,
+                        code_verifier: &verifier,
+                    },
+                }
+                .send()?;
 
                 // Save OAuth metadata for future token refresh.
-                crate::oauth::save_oauth_metadata(
+                crate::oauth::MetadataKey {
                     domain,
-                    None,
-                    crate::oauth::OAuthMetadata {
-                        token_url: resolved.token_url.clone(),
-                        client_id: resolved.client_id.clone(),
-                        revocation_url: resolved.revocation_url.clone(),
-                    },
-                )?;
+                    username: None,
+                }
+                .save(crate::oauth::OAuthMetadata {
+                    token_url: resolved.token_url.clone(),
+                    client_id: resolved.client_id.clone(),
+                    revocation_url: resolved.revocation_url.clone(),
+                })?;
 
                 let mut tokens = HashMap::new();
                 tokens.insert("OAUTH_ACCESS_TOKEN".to_string(), token_resp.access_token);
@@ -373,7 +475,10 @@ pub fn browser_prompt_spec(
                 }
                 oauth_tokens = Some(tokens);
 
-                req.respond(200, &build_oauth_done_page());
+                req.respond(Reply {
+                    status: 200,
+                    html: &build_oauth_done_page(),
+                });
             }
             ("GET", "/oauth-status") => {
                 let json = if oauth_tokens.is_some() {
@@ -385,7 +490,10 @@ pub fn browser_prompt_spec(
             }
             ("POST", "/") => {
                 let raw = parse_form_fields(&req.body);
-                req.respond(200, &build_done_page());
+                req.respond(Reply {
+                    status: 200,
+                    html: &build_done_page(),
+                });
 
                 // Determine expected fields: common fields first, then
                 // the active group's fields.  The HTML used opaque names
@@ -457,7 +565,10 @@ pub fn browser_prompt_spec(
                 return Ok(result);
             }
             _ => {
-                req.respond(404, "");
+                req.respond(Reply {
+                    status: 404,
+                    html: "",
+                });
             }
         }
     }
@@ -472,7 +583,8 @@ pub fn browser_prompt_spec(
 /// waits for the user to submit the form, then returns the secret.
 /// Times out after 120 seconds with `SfaeError::Cancelled`.
 #[cfg(feature = "cli")]
-pub fn browser_prompt(label: &str, url: Option<&str>) -> Result<String, SfaeError> {
+pub fn browser_prompt(args: BrowserPromptArgs<'_>) -> Result<String, SfaeError> {
+    let BrowserPromptArgs { label, url } = args;
     // Build a single-field spec and delegate.
     let spec = PromptSpec {
         help_url: url.map(|s| s.to_string()),
@@ -485,7 +597,11 @@ pub fn browser_prompt(label: &str, url: Option<&str>) -> Result<String, SfaeErro
         }]),
         groups: None,
     };
-    let mut values = browser_prompt_spec("", label, &spec)?;
+    let mut values = browser_prompt_spec(FormContext {
+        domain: "",
+        label,
+        spec: &spec,
+    })?;
     values
         .remove("secret")
         .ok_or_else(|| SfaeError::Other("credential value cannot be empty".into()))
@@ -501,10 +617,19 @@ pub fn oauth_callback(server: &LocalServer) -> Result<(String, String), SfaeErro
 
         // We only care about GET /callback?code=...&state=...
         if req.method == "GET" && req.path.starts_with("/callback") {
-            let code = extract_query_param(&req.path, "code");
-            let state = extract_query_param(&req.path, "state");
+            let code = extract_query_param(QueryLookup {
+                path: &req.path,
+                key: "code",
+            });
+            let state = extract_query_param(QueryLookup {
+                path: &req.path,
+                key: "state",
+            });
 
-            req.respond(200, &build_done_page());
+            req.respond(Reply {
+                status: 200,
+                html: &build_done_page(),
+            });
 
             let code = code.ok_or_else(|| {
                 SfaeError::Other("OAuth callback missing 'code' parameter".into())
@@ -517,303 +642,9 @@ pub fn oauth_callback(server: &LocalServer) -> Result<(String, String), SfaeErro
         }
 
         // Ignore other requests (favicon, etc.).
-        req.respond(404, "");
+        req.respond(Reply {
+            status: 404,
+            html: "",
+        });
     }
-}
-
-/// Collect common (non-group) fields from a PromptSpec.
-#[cfg(feature = "cli")]
-fn collect_common_fields(spec: &PromptSpec) -> Vec<FieldSpec> {
-    let mut fields = Vec::new();
-    if let Some(ref f) = spec.fields {
-        fields.extend(f.iter().cloned());
-    }
-    fields
-}
-
-/// Extract a query parameter value from a path like `/callback?code=abc&state=xyz`.
-fn extract_query_param(path: &str, key: &str) -> Option<String> {
-    let query = path.split('?').nth(1)?;
-    for pair in query.split('&') {
-        if let Some(value) = pair.strip_prefix(&format!("{key}=")) {
-            return Some(url_decode(value));
-        }
-    }
-    None
-}
-
-/// Build the HTML form page with data-driven fields and optional groups.
-#[cfg(feature = "cli")]
-fn build_form_page(label: &str, spec: &PromptSpec) -> String {
-    let url_section = match spec.help_url.as_deref() {
-        Some(u) => format!(
-            r#"<p class="url-hint">Obtain your credential here:<br><a href="{}" target="_blank">{}</a></p>"#,
-            html_escape(u),
-            html_escape(u),
-        ),
-        None => String::new(),
-    };
-
-    let common_fields = collect_common_fields(spec);
-    let has_common = !common_fields.is_empty();
-    let fields_html = build_fields_html(&common_fields, true, 0);
-    let groups = spec.groups.as_deref().unwrap_or(&[]);
-    let groups_html = build_groups_html(groups, !has_common, common_fields.len());
-
-    // Hide the submit button when the only content is OAuth (no input fields).
-    let has_any_input_fields = has_common
-        || groups
-            .iter()
-            .any(|g| g.fields.as_ref().is_some_and(|f| !f.is_empty()));
-    let submit_button = if has_any_input_fields {
-        r#"<button type="button" onclick="sfaeSubmit()">Submit</button>"#
-    } else {
-        ""
-    };
-
-    include_str!("form.html")
-        .replace("{{BASE_STYLES}}", BASE_STYLES)
-        .replace("{{LABEL}}", &html_escape(label))
-        .replace("{{URL_SECTION}}", &url_section)
-        .replace("{{FIELDS}}", &fields_html)
-        .replace("{{GROUPS}}", &groups_html)
-        .replace("{{SUBMIT_BUTTON}}", submit_button)
-}
-
-/// Generate HTML for a list of field specs.
-#[cfg(feature = "cli")]
-fn build_fields_html(fields: &[FieldSpec], autofocus_first: bool, index_offset: usize) -> String {
-    let mut html = String::new();
-    for (i, field) in fields.iter().enumerate() {
-        // All field identifiers are opaque to defeat Safari/macOS Passwords
-        // heuristics. Names like "PASSWORD" or "ACCESS_TOKEN" trigger the
-        // "Save Password?" dialog. We use `_f0`, `_f1`, … and the server
-        // maps them back by index.
-        let idx = index_offset + i;
-        let opaque_name = format!("_f{idx}");
-        let label = html_escape(&field.display_label());
-        let autofocus = if autofocus_first && i == 0 {
-            " autofocus"
-        } else {
-            ""
-        };
-        let value = field
-            .default
-            .as_ref()
-            .map(|d| format!(r#" value="{}""#, html_escape(d)))
-            .unwrap_or_default();
-        let data_required = if field.is_optional() {
-            ""
-        } else {
-            r#" data-required="true""#
-        };
-        let optional_hint = if field.is_optional() {
-            r#" <span class="optional-hint">(optional)</span>"#
-        } else {
-            ""
-        };
-        if field.is_secret() {
-            html.push_str(&format!(
-                r#"<div class="field"><label>{label}{optional_hint}</label><div style="position:relative"><input type="text" name="{opaque_name}"{value}{autofocus}{data_required} data-m="1"><span class="dots" aria-hidden="true"></span></div></div>"#,
-            ));
-        } else {
-            html.push_str(&format!(
-                r#"<div class="field"><label>{label}{optional_hint}</label><input type="text" name="{opaque_name}"{value}{autofocus}{data_required}></div>"#,
-            ));
-        }
-    }
-    html
-}
-
-/// Generate HTML for alternative field groups with tab selector and toggle script.
-#[cfg(feature = "cli")]
-fn build_groups_html(
-    groups: &[GroupSpec],
-    autofocus_first_group: bool,
-    field_index_offset: usize,
-) -> String {
-    if groups.is_empty() {
-        return String::new();
-    }
-
-    let mut html = String::from(r#"<div class="groups">"#);
-
-    // Only show the tab bar when there are multiple groups to choose between.
-    if groups.len() > 1 {
-        html.push_str(r#"<div class="group-tabs">"#);
-        for (i, group) in groups.iter().enumerate() {
-            let checked = if i == 0 { " checked" } else { "" };
-            let label = html_escape(&group.label);
-            html.push_str(&format!(
-                r#"<label class="group-tab"><input type="radio" name="_group" value="{i}"{checked}><span>{label}</span></label>"#,
-            ));
-        }
-        html.push_str("</div>");
-    } else {
-        // Single group: emit a hidden input so the server still knows which group.
-        html.push_str(r#"<input type="hidden" name="_group" value="0">"#);
-    }
-
-    for (i, group) in groups.iter().enumerate() {
-        let hidden = if i == 0 {
-            ""
-        } else {
-            r#" style="display:none""#
-        };
-        html.push_str(&format!(
-            r#"<div class="group-panel" data-group="{i}"{hidden}>"#,
-        ));
-        if let Some(oauth) = &group.oauth {
-            html.push_str(&build_oauth_panel_html(oauth, i));
-        } else if let Some(fields) = &group.fields {
-            html.push_str(&build_fields_html(
-                fields,
-                autofocus_first_group && i == 0,
-                field_index_offset,
-            ));
-        }
-        html.push_str("</div>");
-    }
-
-    html.push_str("</div>");
-
-    // Inline JS for group toggling and OAuth status polling.
-    html.push_str(concat!(
-        "<script>(function(){",
-        // Toggle function: show/hide panels, disable inactive inputs.
-        "function u(v){",
-        "document.querySelectorAll('.group-panel').forEach(function(p){",
-        "var a=p.dataset.group===v;",
-        "p.style.display=a?'':'none';",
-        "p.querySelectorAll('input:not([name=\"_group\"])').forEach(function(i){i.disabled=!a})",
-        "})}",
-        "var c=document.querySelector('input[name=\"_group\"]:checked');",
-        "if(c)u(c.value);",
-        "document.querySelectorAll('input[name=\"_group\"]').forEach(function(r){",
-        "r.addEventListener('change',function(){u(r.value)})",
-        "});",
-        // Poll for OAuth completion when an OAuth group exists.
-        "var oa=document.querySelector('.oauth-content');",
-        "if(oa){var t=setInterval(function(){",
-        "fetch('/oauth-status').then(function(r){return r.json()}).then(function(d){",
-        "if(d.authorized){",
-        "clearInterval(t);",
-        "document.querySelectorAll('.oauth-btn').forEach(function(b){b.style.display='none'});",
-        "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex'});",
-        // Auto-submit when there are no input fields to fill (OAuth-only flow).
-        "var inputs=document.querySelectorAll('input[type=\"text\"]:not(:disabled)');",
-        "if(!inputs.length){sfaeSubmit()}",
-        "}",
-        "}).catch(function(){})",
-        "},1500)}",
-        "})()</script>",
-    ));
-
-    html
-}
-
-/// Generate HTML for an OAuth group panel: scope display + "Authorize" button.
-#[cfg(feature = "cli")]
-fn build_oauth_panel_html(oauth: &OAuthSpec, group_idx: usize) -> String {
-    let scope = html_escape(&oauth.scope);
-    let mut html = String::new();
-    html.push_str(r#"<div class="oauth-content">"#);
-    html.push_str(&format!(
-        r#"<p class="oauth-scope">Scope: <code>{scope}</code></p>"#,
-    ));
-    html.push_str(&format!(
-        r#"<a href="/auth?group={group_idx}" target="_blank" class="oauth-btn" id="oauth-btn-{group_idx}">Authorize</a>"#,
-    ));
-    html.push_str(&format!(
-        r#"<div class="oauth-status" id="oauth-status-{group_idx}" style="display:none">&#10003; Authorized</div>"#,
-    ));
-    html.push_str("</div>");
-    html
-}
-
-/// Build the page shown in the OAuth popup after authorization completes.
-fn build_oauth_done_page() -> String {
-    include_str!("done.html")
-        .replace("{{BASE_STYLES}}", BASE_STYLES)
-        .replace("{{TITLE}}", "sfae \u{2014} authorized")
-        .replace("{{HEADING}}", "Authorized")
-}
-
-/// Build the confirmation page shown after the secret is submitted or OAuth completes.
-fn build_done_page() -> String {
-    include_str!("done.html")
-        .replace("{{BASE_STYLES}}", BASE_STYLES)
-        .replace("{{TITLE}}", "sfae \u{2014} done")
-        .replace("{{HEADING}}", "Credential saved")
-}
-
-/// Minimal HTML escaping for user-provided strings embedded in HTML.
-#[cfg(feature = "cli")]
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-/// Parse all key=value pairs from a `application/x-www-form-urlencoded` body.
-#[cfg(feature = "cli")]
-fn parse_form_fields(body: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for pair in body.split('&') {
-        if let Some((key, value)) = pair.split_once('=') {
-            map.insert(url_decode(key), url_decode(value));
-        }
-    }
-    map
-}
-
-/// Minimal percent-decoding for form values.
-fn url_decode(s: &str) -> String {
-    let mut result = Vec::new();
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'+' {
-            result.push(b' ');
-            i += 1;
-        } else if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(&String::from_utf8_lossy(&bytes[i + 1..i + 3]), 16)
-            {
-                result.push(byte);
-                i += 3;
-            } else {
-                result.push(bytes[i]);
-                i += 1;
-            }
-        } else {
-            result.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8_lossy(&result).into_owned()
-}
-
-/// Set an accept timeout on the listener using socket options.
-fn set_accept_timeout(listener: &TcpListener, timeout: Duration) -> Result<(), SfaeError> {
-    use std::os::fd::AsRawFd;
-
-    let fd = listener.as_raw_fd();
-    let tv = libc::timeval {
-        tv_sec: timeout.as_secs() as _,
-        tv_usec: 0,
-    };
-    let ret = unsafe {
-        libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_RCVTIMEO,
-            &tv as *const libc::timeval as *const libc::c_void,
-            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
-        )
-    };
-    if ret != 0 {
-        return Err(SfaeError::Other("failed to set socket timeout".into()));
-    }
-    Ok(())
 }

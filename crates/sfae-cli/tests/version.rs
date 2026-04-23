@@ -1,3 +1,5 @@
+//! Smoke test verifying that `--version` prints whatever name the binary was invoked under.
+
 use assert_cmd::Command;
 use std::fs;
 

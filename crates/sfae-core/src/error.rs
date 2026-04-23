@@ -1,3 +1,5 @@
+//! The shared error type returned by every fallible operation in sfae-core.
+
 use std::io;
 
 /// All errors that can occur in the sfae-core library.

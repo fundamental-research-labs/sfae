@@ -1,3 +1,5 @@
+//! Abstraction over interactive terminal prompts so tests can stub user input.
+
 use crate::error::SfaeError;
 
 /// Abstraction over user interaction, allowing the CLI to prompt for input

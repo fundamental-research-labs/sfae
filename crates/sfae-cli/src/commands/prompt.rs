@@ -1,3 +1,5 @@
+//! `sfae prompt`: collect credentials from the user via the browser flow or terminal fallback.
+
 use std::collections::HashMap;
 
 use sfae_core::spec::{FieldSpec, PromptSpec};
@@ -6,12 +8,21 @@ use sfae_core::ui::UserPrompt;
 use crate::prompt::TerminalPrompt;
 use crate::store_factory::{create_store, is_api_mode};
 
-pub fn run(
-    domain: &str,
-    spec: &PromptSpec,
-    username: Option<&str>,
-    terminal: bool,
-) -> anyhow::Result<()> {
+/// All inputs for `prompt::run`: target domain + spec + runtime options.
+pub struct RunArgs<'a> {
+    pub domain: &'a str,
+    pub spec: &'a PromptSpec,
+    pub username: Option<&'a str>,
+    pub terminal: bool,
+}
+
+pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
+    let RunArgs {
+        domain,
+        spec,
+        username,
+        terminal,
+    } = args;
     if is_api_mode() {
         anyhow::bail!(
             "Credential prompting is not available in API store mode. \
@@ -30,12 +41,20 @@ pub fn run(
         }
         terminal_prompt_fields(spec)?
     } else {
-        sfae_core::browser::browser_prompt_spec(domain, &display_label, spec)?
+        sfae_core::browser::browser_prompt_spec(sfae_core::browser::FormContext {
+            domain,
+            label: &display_label,
+            spec,
+        })?
     };
 
     let mut store = create_store();
     if store.supports_credential_sets() {
-        let id = store.store_credential_set(domain, username, &values)?;
+        let id = store.store_credential_set(sfae_core::store::CredentialSetInput {
+            domain,
+            label: username,
+            values: &values,
+        })?;
         eprintln!("Credential stored: {id}");
     } else {
         // Legacy fallback: store each field as a flat key.
@@ -44,7 +63,10 @@ pub fn run(
                 Some(user) => format!("{domain}_{user}_{key}"),
                 None => format!("{domain}_{key}"),
             };
-            store.set(&flat_key, value)?;
+            store.set(sfae_core::store::StoreEntry {
+                key: &flat_key,
+                value,
+            })?;
             eprintln!("Credential stored: {flat_key}");
         }
     }
@@ -59,7 +81,7 @@ fn terminal_prompt_fields(spec: &PromptSpec) -> anyhow::Result<HashMap<String, S
     // Collect common fields.
     if let Some(fields) = &spec.fields {
         for field in fields {
-            if let Some(v) = prompt_field(&tp, field)? {
+            if let Some(v) = prompt_field(PromptFieldCtx { prompt: &tp, field })? {
                 values.insert(field.name.clone(), v);
             }
         }
@@ -89,7 +111,7 @@ fn terminal_prompt_fields(spec: &PromptSpec) -> anyhow::Result<HashMap<String, S
 
         if let Some(fields) = &group.fields {
             for field in fields {
-                if let Some(v) = prompt_field(&tp, field)? {
+                if let Some(v) = prompt_field(PromptFieldCtx { prompt: &tp, field })? {
                     values.insert(field.name.clone(), v);
                 }
             }
@@ -99,7 +121,14 @@ fn terminal_prompt_fields(spec: &PromptSpec) -> anyhow::Result<HashMap<String, S
     Ok(values)
 }
 
-fn prompt_field(prompt: &TerminalPrompt, field: &FieldSpec) -> anyhow::Result<Option<String>> {
+/// Input for `prompt_field`: the terminal prompter plus the field spec to prompt for.
+struct PromptFieldCtx<'a> {
+    prompt: &'a TerminalPrompt,
+    field: &'a FieldSpec,
+}
+
+fn prompt_field(ctx: PromptFieldCtx<'_>) -> anyhow::Result<Option<String>> {
+    let PromptFieldCtx { prompt, field } = ctx;
     let label = field.display_label();
     let optional_hint = if field.is_optional() {
         " (optional)"

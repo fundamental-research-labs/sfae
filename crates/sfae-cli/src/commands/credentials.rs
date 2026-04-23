@@ -1,6 +1,15 @@
+//! `sfae credentials`: list stored credential sets, optionally filtered by domain or username.
+
 use crate::store_factory::create_store;
 
-pub fn run(domain: Option<&str>, username: Option<&str>) -> anyhow::Result<()> {
+/// Filters for the `credentials` listing command.
+pub struct RunArgs<'a> {
+    pub domain: Option<&'a str>,
+    pub username: Option<&'a str>,
+}
+
+pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
+    let RunArgs { domain, username } = args;
     let store = create_store();
 
     if store.supports_credential_sets() {
@@ -39,7 +48,11 @@ pub fn run(domain: Option<&str>, username: Option<&str>) -> anyhow::Result<()> {
     let Some(domain) = domain else {
         anyhow::bail!("domain is required for legacy credential stores");
     };
-    let types = sfae_core::store::list_credential_types(&*store, domain, username)?;
+    let types = sfae_core::store::list_credential_types(sfae_core::store::CredentialTypesQuery {
+        store: &*store,
+        domain,
+        username,
+    })?;
     if types.is_empty() {
         let target = match username {
             Some(user) => format!("{user}@{domain}"),
