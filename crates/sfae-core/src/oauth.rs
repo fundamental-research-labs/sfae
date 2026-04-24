@@ -285,7 +285,7 @@ impl<'a> TokenRequest<'a> {
             .body(body)
             .map_err(|e| SfaeError::HttpError(format!("failed to build token request: {e}")))?;
 
-        let agent = ureq::Agent::new_with_defaults();
+        let agent = crate::http::make_agent();
         let mut response = agent
             .run(req)
             .map_err(|e| SfaeError::HttpError(format!("token request failed: {e}")))?;
@@ -341,7 +341,7 @@ impl<'a> Revocation<'a> {
                 SfaeError::HttpError(format!("failed to build revocation request: {e}"))
             })?;
 
-        let agent = ureq::Agent::new_with_defaults();
+        let agent = crate::http::make_agent();
         agent
             .run(req)
             .map_err(|e| SfaeError::HttpError(format!("token revocation request failed: {e}")))?;

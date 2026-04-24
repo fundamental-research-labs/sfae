@@ -6,6 +6,7 @@ pub mod browser;
 pub mod browser_html;
 pub mod credential;
 pub mod error;
+pub mod http;
 pub mod oauth;
 pub mod proxy;
 pub mod spec;
