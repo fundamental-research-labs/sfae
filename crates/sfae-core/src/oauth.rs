@@ -209,7 +209,7 @@ pub fn exchange_code(
         .body(body)
         .map_err(|e| SfaeError::HttpError(format!("failed to build token request: {e}")))?;
 
-    let agent = ureq::Agent::new_with_defaults();
+    let agent = crate::http::make_agent();
     let mut response = agent
         .run(req)
         .map_err(|e| SfaeError::HttpError(format!("token exchange request failed: {e}")))?;
@@ -268,7 +268,7 @@ pub fn refresh_access_token(
         .body(body)
         .map_err(|e| SfaeError::HttpError(format!("failed to build refresh request: {e}")))?;
 
-    let agent = ureq::Agent::new_with_defaults();
+    let agent = crate::http::make_agent();
     let mut response = agent
         .run(req)
         .map_err(|e| SfaeError::HttpError(format!("token refresh request failed: {e}")))?;
@@ -313,7 +313,7 @@ pub fn revoke_token(revocation_url: &str, token: &str) -> Result<(), SfaeError> 
         .body(body)
         .map_err(|e| SfaeError::HttpError(format!("failed to build revocation request: {e}")))?;
 
-    let agent = ureq::Agent::new_with_defaults();
+    let agent = crate::http::make_agent();
     agent
         .run(req)
         .map_err(|e| SfaeError::HttpError(format!("token revocation request failed: {e}")))?;

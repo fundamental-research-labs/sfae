@@ -25,13 +25,10 @@ impl ApiStore {
                  Both environment variables are required for API store mode."
             )
         });
-        let config = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .build();
         Some(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             token,
-            agent: ureq::Agent::new_with_config(config),
+            agent: crate::http::make_agent(),
         })
     }
 }

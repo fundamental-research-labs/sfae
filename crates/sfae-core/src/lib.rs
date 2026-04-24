@@ -2,6 +2,7 @@ pub mod api_store;
 pub mod browser;
 pub mod credential;
 pub mod error;
+pub mod http;
 pub mod oauth;
 pub mod proxy;
 pub mod store;

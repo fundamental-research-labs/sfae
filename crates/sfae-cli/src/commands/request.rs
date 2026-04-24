@@ -236,10 +236,7 @@ fn try_refresh_and_retry_api(
     let url = format!("{}/credentials/refresh", base_url.trim_end_matches('/'));
     let body = serde_json::json!({ "domain": domain }).to_string();
 
-    let agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .build();
-    let agent = ureq::Agent::new_with_config(agent);
+    let agent = sfae_core::http::make_agent();
 
     let req = ureq::http::Request::builder()
         .method("POST")
