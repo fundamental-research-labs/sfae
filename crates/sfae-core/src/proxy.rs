@@ -406,10 +406,13 @@ pub fn execute(
         builder = builder.header(key.as_str(), value.as_str());
     }
 
-    let config = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .build();
-    let agent = ureq::Agent::new_with_config(config);
+    let mut config_builder = ureq::Agent::config_builder().http_status_as_error(false);
+
+    if let Some(proxy) = ureq::Proxy::try_from_env() {
+        config_builder = config_builder.proxy(Some(proxy));
+    }
+
+    let agent = ureq::Agent::new_with_config(config_builder.build());
     let mut response = if let Some(body) = body {
         let req = builder
             .body(body)
