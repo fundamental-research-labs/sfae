@@ -24,9 +24,9 @@ fn build_tls_config() -> Option<ureq::tls::TlsConfig> {
 
     Some(
         ureq::tls::TlsConfig::builder()
-            .root_certs(ureq::tls::RootCerts::Specific(
-                std::sync::Arc::new(vec![cert]),
-            ))
+            .root_certs(ureq::tls::RootCerts::Specific(std::sync::Arc::new(vec![
+                cert,
+            ])))
             .build(),
     )
 }
