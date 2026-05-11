@@ -207,13 +207,7 @@ impl<'a> CredentialLookup<'a> {
             builder = builder.header(key.as_str(), value.as_str());
         }
 
-        let mut config_builder = ureq::Agent::config_builder().http_status_as_error(false);
-
-        if let Some(proxy) = ureq::Proxy::try_from_env() {
-            config_builder = config_builder.proxy(Some(proxy));
-        }
-
-        let agent = ureq::Agent::new_with_config(config_builder.build());
+        let agent = crate::http::make_agent();
         let mut response = if let Some(body) = body {
             let req = builder
                 .body(body)
