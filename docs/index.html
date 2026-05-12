@@ -319,7 +319,7 @@
       </div>
       <h1>Your agent makes API calls.<br>It never sees your keys.</h1>
       <p class="subheadline">
-        Credentials stay in your OS keychain. Agents use placeholders.
+        Credentials stay in Passwords on macOS. Agents use placeholders.
         Secrets never hit the context window.
       </p>
     </section>
@@ -338,7 +338,7 @@
         </li>
         <li>
           <strong>Communication protocols</strong><br>
-          <span>HTTP, Postgres, and more coming soon.</span>
+          <span>HTTP today; Postgres and other protocols are planned.</span>
         </li>
       </ul>
     </section>
@@ -349,20 +349,22 @@
       <ol class="steps">
         <li>
           <div class="step-label">Check</div>
-          <p class="step-desc">Agent checks what credentials exist for a domain.</p>
+          <p class="step-desc">Agent reads the service's official API/auth docs, then checks what credentials exist for a domain.</p>
           <pre><code>sfae credentials github.com</code></pre>
         </li>
         <li>
           <div class="step-label">Prompt</div>
-          <p class="step-desc">Human provides what's missing via a browser form.</p>
-          <pre><code>sfae prompt github.com ACCESS_TOKEN \
-  --url "https://github.com/settings/tokens"</code></pre>
+          <p class="step-desc">Human provides what's missing via a browser form. The agent keeps this command running and waits until it exits; credential collection is human-paced and should have no agent-side timeout.</p>
+          <pre><code>sfae prompt github.com --spec '{
+  "help_url": "https://github.com/settings/tokens",
+  "fields": ["ACCESS_TOKEN"]
+}'</code></pre>
         </li>
         <li>
           <div class="step-label">Request</div>
           <p class="step-desc">Agent makes calls with placeholders. SFAE resolves them.</p>
           <pre><code>sfae request GET "https://api.github.com/user" \
-  -H "Authorization: Bearer -ACCESS_TOKEN-" \
+  -H "Authorization: Bearer {ACCESS_TOKEN}" \
   -H "User-Agent: sfae"</code></pre>
         </li>
       </ol>
@@ -371,7 +373,7 @@
     <!-- CTA -->
     <section class="cta">
       <div class="cta-install">
-        <pre><code>cargo install sfae</code></pre>
+        <pre><code>cargo build --bin sfae --release</code></pre>
         <button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy to clipboard">
           <svg class="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="9" y="9" width="13" height="13" rx="2"/>
@@ -401,7 +403,7 @@
   </div>
   <script>
     function copyInstall(btn) {
-      navigator.clipboard.writeText('cargo install sfae');
+      navigator.clipboard.writeText('cargo build --bin sfae --release');
       var copy = btn.querySelector('.icon-copy');
       var check = btn.querySelector('.icon-check');
       copy.style.display = 'none';

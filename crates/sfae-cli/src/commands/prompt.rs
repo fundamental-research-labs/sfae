@@ -6,7 +6,7 @@ use sfae_core::spec::{FieldSpec, PromptSpec};
 use sfae_core::ui::UserPrompt;
 
 use crate::prompt::TerminalPrompt;
-use crate::store_factory::{create_store, is_api_mode};
+use crate::store_factory::create_store;
 
 /// All inputs for `prompt::run`: target domain + spec + runtime options.
 pub struct RunArgs<'a> {
@@ -23,13 +23,6 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         username,
         terminal,
     } = args;
-    if is_api_mode() {
-        anyhow::bail!(
-            "Credential prompting is not available in API store mode. \
-             Use the request_credential client tool to request credentials from the user."
-        );
-    }
-
     let display_label = match username {
         Some(user) => format!("Credentials for {user}@{domain}"),
         None => format!("Credentials for {domain}"),
@@ -41,6 +34,9 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         }
         terminal_prompt_fields(spec)?
     } else {
+        eprintln!(
+            "Opening browser for credential collection. This is human-paced and may take an undefined amount of time; keep waiting until this command exits."
+        );
         sfae_core::browser::browser_prompt_spec(sfae_core::browser::FormContext {
             domain,
             label: &display_label,

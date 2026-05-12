@@ -37,6 +37,10 @@ impl PromptSpec {
             ));
         }
 
+        if let Some(fields) = &self.fields {
+            validate_field_names(fields)?;
+        }
+
         if let Some(groups) = &self.groups {
             for group in groups {
                 group.validate()?;
@@ -79,6 +83,22 @@ pub struct FieldSpec {
 const NON_SECRET_KEYWORDS: &[&str] = &["USERNAME", "HOST", "PORT", "URL", "EMAIL"];
 
 impl FieldSpec {
+    /// Validate that the field can be referenced by the request placeholder resolver.
+    fn validate_name(&self) -> Result<(), SfaeError> {
+        if is_placeholder_field_name(&self.name) {
+            return Ok(());
+        }
+        Err(SfaeError::ConfigError(format!(
+            "field name \"{}\" must match [A-Z][A-Z0-9_]* so it can be used as a {{{}}} placeholder",
+            self.name,
+            if self.name.is_empty() {
+                "FIELD_NAME"
+            } else {
+                self.name.as_str()
+            }
+        )))
+    }
+
     /// Whether this field should render as a password input.
     ///
     /// Uses the explicit `secret` flag if set; otherwise auto-detects based on
@@ -221,8 +241,28 @@ impl GroupSpec {
             )));
         }
 
+        if let Some(fields) = &self.fields {
+            validate_field_names(fields)?;
+        }
+
         Ok(())
     }
+}
+
+fn validate_field_names(fields: &[FieldSpec]) -> Result<(), SfaeError> {
+    for field in fields {
+        field.validate_name()?;
+    }
+    Ok(())
+}
+
+fn is_placeholder_field_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_uppercase() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
 /// OAuth flow configuration within a group.
@@ -455,6 +495,36 @@ mod tests {
     fn validate_empty_fields_and_no_groups() {
         let spec: PromptSpec = serde_json::from_str(r#"{"fields": []}"#).unwrap();
         assert!(spec.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_empty_field_name() {
+        let spec: PromptSpec = serde_json::from_str(r#"{"fields": [""]}"#).unwrap();
+        let err = spec.validate().unwrap_err();
+        assert!(err.to_string().contains("[A-Z][A-Z0-9_]*"));
+    }
+
+    #[test]
+    fn validate_rejects_lowercase_field_name() {
+        let spec: PromptSpec = serde_json::from_str(r#"{"fields": ["api_key"]}"#).unwrap();
+        let err = spec.validate().unwrap_err();
+        assert!(err.to_string().contains("api_key"));
+    }
+
+    #[test]
+    fn validate_rejects_hyphenated_group_field_name() {
+        let spec: PromptSpec =
+            serde_json::from_str(r#"{"groups": [{"label": "Key", "fields": ["API-KEY"]}]}"#)
+                .unwrap();
+        let err = spec.validate().unwrap_err();
+        assert!(err.to_string().contains("API-KEY"));
+    }
+
+    #[test]
+    fn validate_accepts_placeholder_field_names() {
+        let spec: PromptSpec =
+            serde_json::from_str(r#"{"fields": ["API_KEY", "TOKEN2", "A_1"]}"#).unwrap();
+        assert!(spec.validate().is_ok());
     }
 
     #[test]

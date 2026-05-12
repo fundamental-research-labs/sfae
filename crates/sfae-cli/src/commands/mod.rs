@@ -5,5 +5,6 @@ pub mod credentials;
 pub mod delete;
 #[cfg(feature = "native-keychain")]
 pub mod flush;
+#[cfg(feature = "native-keychain")]
 pub mod prompt;
 pub mod request;

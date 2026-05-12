@@ -1,6 +1,6 @@
 //! HTTP-backed `SecretStore` implementation for talking to a remote sfae-server.
 //!
-//! Used in CLI client mode when the workstation has no OS keychain access.
+//! Used by client builds that talk to a remote SFAE store.
 
 use std::collections::HashMap;
 
@@ -9,7 +9,7 @@ use crate::store::{CredentialSetInfo, CredentialSetInput, SecretStore, StoreEntr
 
 /// SecretStore backed by the SFAE HTTP API.
 ///
-/// Used when the CLI runs in client mode against a remote sfae-server (no OS keychain).
+/// Used when the CLI talks to a remote sfae-server.
 /// Configured via environment variables:
 /// - `SFAE_STORE_URL`: base URL of the SFAE HTTP API (e.g., "http://sfae-api:3100")
 /// - `SFAE_STORE_TOKEN`: JWT bearer token (contains user_id in `sub` claim)
@@ -28,7 +28,7 @@ impl ApiStore {
         let token = std::env::var("SFAE_STORE_TOKEN").unwrap_or_else(|_| {
             panic!(
                 "SFAE_STORE_URL is set but SFAE_STORE_TOKEN is missing. \
-                 Both environment variables are required for API store mode."
+                 Both environment variables are required for the remote credential store."
             )
         });
         Some(Self {
@@ -130,7 +130,7 @@ impl ApiStore {
 impl SecretStore for ApiStore {
     fn set(&mut self, _entry: StoreEntry<'_>) -> Result<(), SfaeError> {
         Err(SfaeError::Other(
-            "Write not supported in API store mode".to_string(),
+            "Write not supported by the remote credential store".to_string(),
         ))
     }
 
@@ -177,7 +177,7 @@ impl SecretStore for ApiStore {
 
     fn delete(&mut self, _key: &str) -> Result<(), SfaeError> {
         Err(SfaeError::Other(
-            "Delete not supported in API store mode".to_string(),
+            "Delete not supported by the remote credential store".to_string(),
         ))
     }
 
