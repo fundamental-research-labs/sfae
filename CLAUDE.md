@@ -2,7 +2,7 @@
 
 ## Using external APIs
 
-When you need to call an external API that requires authentication, use the `sfae` CLI instead of calling the API directly. This keeps credentials secure — you never see or handle raw secrets.
+When you need to call an external API that requires authentication, use the `sfae` CLI instead of calling the API directly. This keeps credentials secure — you never see or handle raw secrets. SFAE is not a service-specific CLI; read the target service's official online API and authentication docs to choose endpoints, auth method, scopes, and credential fields.
 
 The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin sfae --release` if missing).
 
@@ -21,9 +21,9 @@ The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin s
    sfae prompt <domain> --spec '<JSON>'
    ```
 
-   The `--spec` flag takes a JSON object describing what credentials to collect. This opens a web page in the human's browser with a form. The command blocks until the human submits the form, then stores all fields as a JSON blob in the OS keychain and returns the UUID.
+   The `--spec` flag takes a JSON object describing what credentials to collect. This opens a web page in the human's browser with a form. The command is a blocking human-interaction step: wait indefinitely until it exits. Credential collection may take as long as the human needs to create a token, grant OAuth consent, or switch accounts. Do not cancel it, impose a timeout, or continue to `sfae request` until it prints `Credential stored: ...` and exits successfully.
 
-   **Simple example** (single API key):
+   **Simple example** (personal access token):
    ```
    sfae prompt github.com --spec '{"help_url": "https://github.com/settings/tokens", "fields": ["ACCESS_TOKEN"]}'
    ```
@@ -55,6 +55,7 @@ The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin s
    ```
    {"name": "HOST", "label": "Server URL", "default": "https://...", "secret": false, "optional": true}
    ```
+   - `name` must match `[A-Z][A-Z0-9_]*` so it can be referenced later as `{NAME}`
    - `label` defaults to a humanized version of the name (e.g. `ACCESS_TOKEN` → "Access Token")
    - `secret` auto-detects: true unless name contains USERNAME, HOST, PORT, URL, or EMAIL
    - `default` pre-fills the input
@@ -102,7 +103,7 @@ Use `{KEY}` in URLs, headers, or request bodies. Any `{ALLCAPS_NAME}` pattern is
 - `{HOST}`, `{PORT}`, `{DATABASE}` — connection fields (ClickHouse, Postgres, etc.)
 - `{OAUTH_ACCESS_TOKEN}` — OAuth bearer tokens (see OAuth section below)
 
-There is no fixed list — any field stored in the credential blob can be used as a placeholder. SFAE resolves them from the OS keychain at request time. You never see the actual values.
+There is no fixed list — any field stored in the credential blob can be used as a placeholder. SFAE resolves them from the local OS credential store, including Passwords/login keychain on macOS, at request time. You never see the actual values.
 
 ### Multi-credential support
 
@@ -115,7 +116,7 @@ A domain can have multiple credential sets (e.g., "Work GitHub" and "Personal Gi
   ```
 - Get UUIDs via `sfae credentials <domain>`.
 
-### OAuth flow (for Google, GitHub Apps, etc.)
+### OAuth flow (for Google and configured providers)
 
 For APIs that use OAuth 2.0 instead of static tokens, use an OAuth group in the spec:
 
@@ -130,22 +131,7 @@ For APIs that use OAuth 2.0 instead of static tokens, use an OAuth group in the 
 
    Built-in presets: `googleapis.com` (covers all Google API subdomains). SFAE fills in `auth_url`/`token_url` automatically.
 
-   **Other providers:** pass OAuth URLs explicitly in the spec:
-   ```
-   sfae prompt api.custom-saas.com --spec '{
-     "groups": [{
-       "label": "OAuth",
-       "oauth": {
-         "auth_url": "https://login.custom-saas.com/oauth/authorize",
-         "token_url": "https://login.custom-saas.com/oauth/token",
-         "revocation_url": "https://login.custom-saas.com/oauth/revoke",
-         "scope": "api.read api.write"
-       }
-     }]
-   }'
-   ```
-
-   For unknown providers, `auth_url` and `token_url` are required. `revocation_url` is optional.
+   **Other providers:** OAuth requires a built-in or configured SFAE provider preset with app credentials. The spec must not include OAuth `client_id` or `client_secret`. If no provider preset exists, use the service's API-key/PAT/basic-auth flow or add provider support first.
 
    **OAuth + API key alternative** — let the user choose:
    ```
@@ -167,9 +153,9 @@ For APIs that use OAuth 2.0 instead of static tokens, use an OAuth group in the 
      -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}"
    ```
 
-3. **Token refresh is automatic.** If a request gets a 401, sfae reads `OAUTH_TOKEN_URL` from the blob and `client_id`/`client_secret` from server env config, refreshes the token, and retries — no action needed from you.
+3. **Token refresh is automatic.** If a request gets a 401, sfae reads `OAUTH_TOKEN_URL` from the blob and SFAE's configured OAuth app credentials, refreshes the token, and retries — no action needed from you.
 
-**OAuth key convention:** All OAuth-related keys use the `OAUTH_` prefix to distinguish from PAT-style credentials. `client_id` and `client_secret` are per-app (from server env), not per-user — they are NOT stored in the credential blob.
+**OAuth key convention:** All OAuth-related keys use the `OAUTH_` prefix to distinguish from PAT-style credentials. `client_id` and `client_secret` are per-app SFAE configuration, not per-user — they are NOT stored in the credential blob.
 
 **Domain matching:** Store credentials under the API's base domain (e.g., `googleapis.com`), not the auth provider domain (e.g., `google.com`). Subdomain fallback works automatically — a credential stored for `googleapis.com` resolves for `www.googleapis.com`, `gmail.googleapis.com`, etc.
 
@@ -194,5 +180,6 @@ Delete a credential set by its UUID. Get UUIDs via `sfae credentials`.
 
 - Never ask the human to paste credentials directly into the conversation
 - Always use `sfae credentials` first to avoid re-prompting for credentials that are already stored
+- When running `sfae prompt`, wait indefinitely until the process exits successfully; credential collection is human-paced and may take an undefined amount of time
 - Use `--verbose` flag if you need to debug a request
 - Use `--dry-run` to preview the resolved request without sending it

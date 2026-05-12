@@ -41,7 +41,7 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
     // If target looks like a UUID, delete by credential set ID.
     if looks_like_uuid(target) {
         if cred_type_str.is_some() || username.is_some() {
-            anyhow::bail!("--type and --user flags are not used with UUID deletion");
+            anyhow::bail!("--type and --label/--user flags are not used with UUID deletion");
         }
         store.delete_credential_set(target)?;
         eprintln!("Deleted credential set: {target}");

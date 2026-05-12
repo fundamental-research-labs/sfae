@@ -12,7 +12,7 @@ use sfae_core::proxy::{
 };
 use sfae_core::store::SecretStore;
 
-use crate::store_factory::{create_store, is_api_mode};
+use crate::store_factory::{create_store, uses_remote_store};
 
 pub struct RequestOpts<'a> {
     pub dry_run: bool,
@@ -165,14 +165,14 @@ impl<'a> RetryCtx<'a> {
     ///
     /// Returns the original response if any precondition is missing or the refresh fails.
     fn try_refresh_and_retry(self) -> anyhow::Result<ProxyResponse> {
-        if is_api_mode() {
-            self.try_refresh_and_retry_api()
+        if uses_remote_store() {
+            self.try_refresh_and_retry_remote()
         } else {
             self.try_refresh_and_retry_local()
         }
     }
 
-    /// Local mode: read OAuth metadata from disk and refresh via the provider directly.
+    /// Local store: read OAuth metadata from disk and refresh via the provider directly.
     fn try_refresh_and_retry_local(self) -> anyhow::Result<ProxyResponse> {
         let RetryCtx {
             request,
@@ -287,11 +287,11 @@ impl<'a> RetryCtx<'a> {
         Ok(retry_response)
     }
 
-    /// API mode refresh: call sfae-server's /credentials/refresh endpoint, then retry.
+    /// Remote-store refresh: call sfae-server's /credentials/refresh endpoint, then retry.
     ///
     /// The server reads OAuth metadata and refresh tokens from the DB, calls the provider,
     /// and updates the tokens — all server-side. The CLI just needs to retry after.
-    fn try_refresh_and_retry_api(self) -> anyhow::Result<ProxyResponse> {
+    fn try_refresh_and_retry_remote(self) -> anyhow::Result<ProxyResponse> {
         let RetryCtx {
             request,
             store,
@@ -306,7 +306,7 @@ impl<'a> RetryCtx<'a> {
         let token = std::env::var("SFAE_STORE_TOKEN").unwrap_or_default();
 
         if verbose {
-            eprintln!("< 401 (API mode, requesting server-side refresh...)");
+            eprintln!("< 401 (requesting server-side refresh from remote store...)");
         }
 
         let url = format!("{}/credentials/refresh", base_url.trim_end_matches('/'));

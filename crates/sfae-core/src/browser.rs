@@ -8,7 +8,6 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 #[cfg(feature = "cli")]
 use std::process::Command;
-use std::time::Duration;
 
 use crate::error::SfaeError;
 #[cfg(feature = "cli")]
@@ -33,7 +32,7 @@ pub struct LocalServer {
 }
 
 impl LocalServer {
-    /// Bind a new server to `127.0.0.1:0` with a 120-second accept timeout.
+    /// Bind a new server to `127.0.0.1:0`.
     pub fn new() -> Result<Self, SfaeError> {
         let listener = TcpListener::bind("127.0.0.1:0")
             .map_err(|e| SfaeError::Other(format!("failed to bind local server: {e}")))?;
@@ -46,28 +45,6 @@ impl LocalServer {
         listener
             .set_nonblocking(false)
             .map_err(|e| SfaeError::Other(format!("failed to configure listener: {e}")))?;
-
-        // Set an accept timeout via SO_RCVTIMEO so blocking accept() times out.
-        {
-            use std::os::fd::AsRawFd;
-            let timeout = Duration::from_secs(120);
-            let tv = libc::timeval {
-                tv_sec: timeout.as_secs() as _,
-                tv_usec: 0,
-            };
-            let ret = unsafe {
-                libc::setsockopt(
-                    listener.as_raw_fd(),
-                    libc::SOL_SOCKET,
-                    libc::SO_RCVTIMEO,
-                    &tv as *const libc::timeval as *const libc::c_void,
-                    std::mem::size_of::<libc::timeval>() as libc::socklen_t,
-                )
-            };
-            if ret != 0 {
-                return Err(SfaeError::Other("failed to set socket timeout".into()));
-            }
-        }
 
         Ok(Self { listener, port })
     }
@@ -94,7 +71,7 @@ impl LocalServer {
 
     /// Accept one HTTP request. Returns (method, path, headers, body).
     ///
-    /// On timeout returns `SfaeError::Cancelled`.
+    /// The caller is responsible for cancelling the process if it should stop waiting.
     /// The caller is responsible for sending a response via `send_response`.
     pub fn accept_request(&self) -> Result<HttpRequest, SfaeError> {
         let (stream, _addr) = self.listener.accept().map_err(|e| match e.kind() {
@@ -297,7 +274,8 @@ fn resolve_oauth_spec(args: OAuthResolve<'_>) -> Result<ResolvedOAuth, SfaeError
 /// Collect credentials from the user via a spec-driven form in the default browser.
 ///
 /// Returns a map of field names to values collected from the form.
-/// Times out after 120 seconds with `SfaeError::Cancelled`.
+/// Waits until the user submits the form or completes the OAuth flow.
+/// There is no built-in timeout.
 #[cfg(feature = "cli")]
 pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, String>, SfaeError> {
     let FormContext {
@@ -581,7 +559,7 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
 ///
 /// Starts a temporary HTTP server on `127.0.0.1` (random port), opens the browser,
 /// waits for the user to submit the form, then returns the secret.
-/// Times out after 120 seconds with `SfaeError::Cancelled`.
+/// There is no built-in timeout.
 #[cfg(feature = "cli")]
 pub fn browser_prompt(args: BrowserPromptArgs<'_>) -> Result<String, SfaeError> {
     let BrowserPromptArgs { label, url } = args;

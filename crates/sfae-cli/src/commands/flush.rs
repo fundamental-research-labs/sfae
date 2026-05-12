@@ -1,4 +1,4 @@
-//! `sfae flush`: bulk-delete every credential set in the OS keychain (with optional dry-run).
+//! `sfae flush`: bulk-delete every local credential set (with optional dry-run).
 
 use sfae_core::oauth;
 

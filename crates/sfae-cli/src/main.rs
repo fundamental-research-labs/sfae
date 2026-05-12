@@ -1,15 +1,37 @@
 //! `sfae` CLI entry point: argument parsing and dispatch to per-command modules.
 
 mod commands;
+#[cfg(feature = "native-keychain")]
 mod prompt;
 mod store_factory;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
-/// sfae - safe credential manager and proxy allowing caller to access any online service
-/// without ever seeing credentials
+#[cfg(feature = "native-keychain")]
+const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
+  SFAE is a credential gateway for agents making HTTP requests to service APIs.
+  It is not a service-specific CLI for GitHub, Google, Stripe, or any other provider, and it does not teach service APIs.
+  1. Read the target service's official online API and authentication docs to choose endpoints, auth method, scopes, and credential fields.
+  2. Run `sfae credentials <domain>` to see stored credential sets for the service. If a suitable set exists, no human action is needed.
+  3. If credentials are missing, run `sfae prompt <domain> --spec '<JSON>'` to ask the human to provide or authorize them. Treat `sfae prompt` as a blocking human-interaction step: credential collection can take as long as the human needs, so wait until the command exits. Do not impose an agent-side timeout, kill/retry it while waiting, or ask the human to paste secrets into chat. If multiple auth methods are acceptable, put several alternatives in the spec with preferred methods first. Use `sfae prompt --help` to learn the spec format.
+  4. Send HTTP requests with `sfae request ...` and `{KEY}` placeholders in headers, URLs, or bodies. HTTP is the only protocol currently supported. SFAE resolves placeholders without revealing secret values to the agent.
+
+SECRETS:
+  Secrets are stored in the local OS credential store: Passwords/login keychain on macOS. The agent sees credential set IDs and field names, not secret values."#;
+
+#[cfg(not(feature = "native-keychain"))]
+const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
+  This client build uses a remote SFAE store. Set `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` before running commands.
+  `credentials` lists remote credential sets, and `request` sends HTTP API requests with `{KEY}` placeholders resolved by the remote store.
+  `prompt`, `delete`, and `flush` are not available in this build. Use the host integration's request_credential client tool when credentials are missing."#;
+
+/// Credential gateway for LLM agents making HTTP API requests
 #[derive(Parser)]
-#[command(version, disable_help_subcommand = true)]
+#[command(
+    version,
+    disable_help_subcommand = true,
+    after_help = ROOT_AFTER_HELP
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -24,12 +46,114 @@ fn bin_name() -> Option<&'static str> {
     })
 }
 
+const CREDENTIALS_AFTER_HELP: &str = r#"OUTPUT:
+  Credential set stores print:
+    <uuid>  <domain>  <label-or->  [KEY, ...]
+
+  Use the UUID with `sfae request --cred <uuid>` when a domain has more than one credential set, or with `sfae delete <uuid>` to remove the set.
+  The domain filter is exact. If requests to api.github.com use credentials stored for github.com, run `sfae credentials github.com`.
+  `--label` filters by credential-set label in current stores. `--user` is accepted as a legacy alias.
+
+EXAMPLES:
+  List all stored credential sets:
+    sfae credentials
+
+  List credential sets for a service:
+    sfae credentials github.com
+
+  List the "Work" credential set for a service:
+    sfae credentials github.com --label Work"#;
+
+const REQUEST_AFTER_HELP: &str = r#"AGENT RULES:
+  Use this command for HTTP API calls only. Read the target service's official API docs for methods, URLs, headers, bodies, and auth scheme.
+  Put `{KEY}` placeholders only where credential values belong. SFAE resolves `{ALLCAPS_NAME}` from the stored credential blob without printing secrets.
+  If a domain has multiple credential sets, pick a UUID from `sfae credentials <domain>` and pass `--cred <uuid>`, or select a label with `--label <label>`.
+  Use `--dry-run` to verify placeholder resolution before sending; dry-run output masks resolved credentials.
+  OAuth access tokens refresh automatically after a 401 when refresh metadata is stored.
+
+PLACEHOLDERS:
+  Use `{FIELD_NAME}` in the URL, headers, or body. Field names must match [A-Z][A-Z0-9_]* and come from the selected credential set.
+
+CREDENTIAL LOOKUP:
+  By default, the lookup domain is the URL host, with parent-domain fallback. For example, api.github.com can use credentials stored for github.com.
+  `--cred <uuid>` loads credentials by UUID. Pass `--domain` too if the URL host cannot be parsed before placeholders are resolved.
+  `--label` selects a credential-set label in current stores. `--user` is accepted as a legacy alias.
+
+OUTPUT:
+  Prints the response body to stdout. Use --verbose for status/timing on stderr and --dry-run to preview a masked request.
+
+EXAMPLES:
+  Bearer token request:
+    sfae request GET "https://api.github.com/user" \
+      -H "Authorization: Bearer {ACCESS_TOKEN}" \
+      -H "User-Agent: sfae"
+
+  JSON POST with an API key:
+    sfae request POST "https://api.example.com/v1/items" \
+      -H "Authorization: Bearer {API_KEY}" \
+      -H "Content-Type: application/json" \
+      -d '{"name":"example"}'
+
+  Select a credential set by label:
+    sfae request GET "https://api.github.com/user" \
+      --label Work \
+      -H "Authorization: Bearer {ACCESS_TOKEN}"
+
+  Select a specific credential set:
+    sfae request GET "https://api.github.com/user" \
+      --cred 550e8400-e29b-41d4-a716-446655440000 \
+      -H "Authorization: Bearer {ACCESS_TOKEN}"
+
+  Preview without sending:
+    sfae request GET "https://api.github.com/user" \
+      -H "Authorization: Bearer {ACCESS_TOKEN}" \
+      --dry-run"#;
+
 #[cfg(feature = "native-keychain")]
-const PROMPT_EXAMPLES: &str = r#"EXAMPLES:
-  Single field (API key):
+const PROMPT_EXAMPLES: &str = r#"AGENT RULES:
+  Build this JSON from the target service's official authentication docs.
+  Use `help_url` for the human-facing page where credentials can be created or managed.
+  Use this command only to collect or authorize credentials; use `sfae request` to send HTTP API requests.
+  Never ask the human to paste secrets into chat.
+
+WAITING BEHAVIOR:
+  Treat this command as a blocking human-interaction step. Browser forms and OAuth consent are human-paced and may take an undefined amount of time while the human creates tokens, grants OAuth consent, or switches accounts.
+  Wait until `sfae prompt` exits. Do not impose an agent-side timeout, kill/retry the command while it is still waiting, continue to `sfae request` before it prints `Credential stored: ...`, or ask the human to paste secrets into chat.
+
+SPEC FORMAT:
+  {
+    "help_url"?: string,
+    "fields"?: Field[],
+    "groups"?: Group[]
+  }
+
+  Field:
+    "API_KEY"
+    {"name": "API_KEY", "label": "API Key", "default": "...", "secret": true, "optional": false}
+
+  Group:
+    {"label": "API Key", "fields": ["API_KEY"]}
+    {"label": "OAuth", "oauth": {"scope": "scope from service docs"}}
+
+  Field names must match [A-Z][A-Z0-9_]*. A field named API_KEY is used later as `{API_KEY}`.
+  OAuth groups are for built-in or configured OAuth providers. They store `OAUTH_ACCESS_TOKEN`; use `{OAUTH_ACCESS_TOKEN}` in `sfae request`. Do not put OAuth client IDs or client secrets in the spec.
+
+OAUTH:
+  Built-in provider: googleapis.com, including subdomains such as gmail.googleapis.com.
+  Other domains require a provider preset in SFAE. Supplying auth_url/token_url in the spec does not configure the OAuth client.
+  --terminal supports field prompts only; OAuth requires browser mode.
+
+EXAMPLES:
+  Personal access token:
     sfae prompt github.com --spec '{
       "help_url": "https://github.com/settings/tokens",
       "fields": ["ACCESS_TOKEN"]
+    }'
+
+  API key:
+    sfae prompt api.example.com --spec '{
+      "help_url": "https://example.com/developers/api-keys",
+      "fields": ["API_KEY"]
     }'
 
   Multi-field with defaults:
@@ -75,38 +199,55 @@ const PROMPT_EXAMPLES: &str = r#"EXAMPLES:
         "label": "OAuth",
         "oauth": {"scope": "https://www.googleapis.com/auth/gmail.readonly"}
       }]
-    }'
-
-  OAuth (custom provider with explicit URLs):
-    sfae prompt api.custom-saas.com --spec '{
-      "groups": [{
-        "label": "OAuth",
-        "oauth": {
-          "auth_url": "https://login.custom-saas.com/oauth/authorize",
-          "token_url": "https://login.custom-saas.com/oauth/token",
-          "revocation_url": "https://login.custom-saas.com/oauth/revoke",
-          "scope": "api.read api.write"
-        }
-      }]
     }'"#;
+
+#[cfg(feature = "native-keychain")]
+const DELETE_AFTER_HELP: &str = r#"PREFERRED USE:
+  Delete by UUID from `sfae credentials`. Domain deletion is for legacy flat credentials.
+  `--type` accepts ACCESS_TOKEN, REFRESH_TOKEN, API_KEY, PASSWORD, USERNAME, or CLIENT_SECRET, and cannot be used with UUID deletion.
+  `--label` filters legacy flat credentials by label/username. `--user` is accepted as a legacy alias.
+
+EXAMPLES:
+  Delete one credential set:
+    sfae delete 550e8400-e29b-41d4-a716-446655440000
+
+  Delete all legacy flat credentials for a domain:
+    sfae delete github.com
+
+  Delete one legacy flat credential type:
+    sfae delete github.com --type ACCESS_TOKEN"#;
+
+#[cfg(feature = "native-keychain")]
+const FLUSH_AFTER_HELP: &str = r#"WARNING:
+  Deletes every locally indexed credential and OAuth metadata from Passwords/login keychain on macOS or the local OS credential store on this machine. Prefer `sfae delete <uuid>` when removing one credential set.
+  Use `sfae flush --dry-run` first.
+
+EXAMPLES:
+  Preview all entries that would be removed:
+    sfae flush --dry-run
+
+  Delete all stored credentials:
+    sfae flush"#;
 
 #[derive(Subcommand)]
 enum Command {
-    /// List credential sets (optionally filtered by domain)
+    /// List credential sets stored for a target service domain
+    #[command(after_help = CREDENTIALS_AFTER_HELP)]
     Credentials {
-        /// Domain to filter by (e.g. github.com). Lists all if omitted.
+        /// Target service domain to filter by (e.g. github.com). Lists all if omitted.
         domain: Option<String>,
-        /// Filter by label
-        #[arg(long)]
-        user: Option<String>,
+        /// Filter by credential-set label (e.g. "Work", "Personal")
+        #[arg(long = "label", alias = "user", value_name = "LABEL")]
+        label: Option<String>,
     },
-    /// Send HTTP request with {KEY} placeholders resolved from stored credentials
+    /// Send an HTTP request, resolving {KEY} placeholders from stored credentials
+    #[command(after_help = REQUEST_AFTER_HELP)]
     Request {
         /// HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)
         method: String,
-        /// Request URL
+        /// Service API URL from the provider's official docs
         url: String,
-        /// Request headers in "Key: Value" format
+        /// Request headers in "Key: Value" format; values may contain {KEY} placeholders
         #[arg(short = 'H', long = "header")]
         headers: Vec<String>,
         /// Request body (may contain {KEY} placeholders)
@@ -115,12 +256,12 @@ enum Command {
         /// Domain for credential lookup (defaults to URL host)
         #[arg(long)]
         domain: Option<String>,
-        /// Credential set UUID (direct lookup, skips domain resolution)
+        /// Credential set UUID; pass --domain too if the URL host cannot be parsed
         #[arg(long)]
         cred: Option<String>,
-        /// Username for credential lookup
-        #[arg(long)]
-        user: Option<String>,
+        /// Select credential-set label (e.g. "Work", "Personal")
+        #[arg(long = "label", alias = "user", value_name = "LABEL")]
+        label: Option<String>,
         /// Show resolved request with masked credentials, without sending
         #[arg(long)]
         dry_run: bool,
@@ -128,36 +269,38 @@ enum Command {
         #[arg(long)]
         verbose: bool,
     },
-    /// Prompt user for credentials
+    /// Collect or authorize missing credentials via browser form
     #[cfg(feature = "native-keychain")]
     #[command(after_help = PROMPT_EXAMPLES)]
     Prompt {
-        /// Domain (e.g. github.com)
+        /// Target service domain where credentials will be stored (e.g. github.com)
         domain: String,
-        /// Credential spec as JSON (see examples with --help)
+        /// JSON describing credential fields/auth options; derive it from official service docs
         #[arg(long)]
         spec: String,
         /// Label for credential set storage (e.g. "Work", "Personal")
-        #[arg(long)]
-        user: Option<String>,
-        /// Use terminal stdin instead of browser-based prompt
+        #[arg(long = "label", alias = "user", value_name = "LABEL")]
+        label: Option<String>,
+        /// Use terminal stdin instead of browser-based prompt; for manual shell use, not agents
         #[arg(long)]
         terminal: bool,
     },
     /// Delete a credential set by UUID or legacy credentials by domain
     #[cfg(feature = "native-keychain")]
+    #[command(after_help = DELETE_AFTER_HELP)]
     Delete {
         /// Credential set UUID or domain (e.g. github.com)
         target: String,
         /// Delete only this credential type (legacy, not used with UUID)
-        #[arg(long, name = "type")]
+        #[arg(long = "type", value_name = "TYPE")]
         cred_type: Option<String>,
-        /// Delete only credentials for this username (legacy, not used with UUID)
-        #[arg(long)]
-        user: Option<String>,
+        /// Delete only credentials for this legacy label/username (not used with UUID)
+        #[arg(long = "label", alias = "user", value_name = "LABEL")]
+        label: Option<String>,
     },
     /// Delete all stored credentials
     #[cfg(feature = "native-keychain")]
+    #[command(after_help = FLUSH_AFTER_HELP)]
     Flush {
         /// Show what would be deleted without actually deleting
         #[arg(long)]
@@ -172,10 +315,10 @@ fn main() -> anyhow::Result<()> {
     }
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
     match cli.command {
-        Command::Credentials { domain, user } => {
+        Command::Credentials { domain, label } => {
             commands::credentials::run(commands::credentials::RunArgs {
                 domain: domain.as_deref(),
-                username: user.as_deref(),
+                username: label.as_deref(),
             })?;
         }
         Command::Request {
@@ -185,7 +328,7 @@ fn main() -> anyhow::Result<()> {
             body,
             domain,
             cred,
-            user,
+            label,
             dry_run,
             verbose,
         } => {
@@ -193,7 +336,7 @@ fn main() -> anyhow::Result<()> {
                 dry_run,
                 verbose,
                 domain: domain.as_deref(),
-                user: user.as_deref(),
+                user: label.as_deref(),
                 cred_id: cred.as_deref(),
             };
             commands::request::run(commands::request::RunArgs {
@@ -208,7 +351,7 @@ fn main() -> anyhow::Result<()> {
         Command::Prompt {
             domain,
             spec,
-            user,
+            label,
             terminal,
         } => {
             let prompt_spec: sfae_core::spec::PromptSpec = serde_json::from_str(&spec)
@@ -217,7 +360,7 @@ fn main() -> anyhow::Result<()> {
             commands::prompt::run(commands::prompt::RunArgs {
                 domain: &domain,
                 spec: &prompt_spec,
-                username: user.as_deref(),
+                username: label.as_deref(),
                 terminal,
             })?;
         }
@@ -225,12 +368,12 @@ fn main() -> anyhow::Result<()> {
         Command::Delete {
             target,
             cred_type,
-            user,
+            label,
         } => {
             commands::delete::run(commands::delete::RunArgs {
                 target: &target,
                 cred_type_str: cred_type.as_deref(),
-                username: user.as_deref(),
+                username: label.as_deref(),
             })?;
         }
         #[cfg(feature = "native-keychain")]
