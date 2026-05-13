@@ -92,6 +92,15 @@ The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin s
    ```
    Example: `sfae request GET "https://api.github.com/user" -H "Authorization: Bearer {ACCESS_TOKEN}" -H "User-Agent: sfae"`
 
+4. **If an active workflow asks for a short-lived 2FA/MFA code, request it from the human:**
+   ```
+   sfae code <domain> [--label <LABEL>] [--message <TEXT>] [--length <N>]
+   ```
+
+   Example: `sfae code github.com --label Work --message "Enter the 6-digit GitHub authentication code." --length 6`
+
+   `sfae code` opens a browser page, waits for the human, then prints only the submitted code to stdout. Use it only for one-time verification challenges that the agent must submit immediately. Unlike `sfae prompt`, this intentionally reveals the short-lived code to the agent and does not store it in the credential store or expose it as a `{KEY}` placeholder.
+
 ### Placeholder syntax
 
 Use `{KEY}` in URLs, headers, or request bodies. Any `{ALLCAPS_NAME}` pattern is resolved from the stored credential blob. Common keys:
@@ -179,5 +188,6 @@ Delete a credential set by its UUID. Get UUIDs via `sfae credentials`.
 - Never ask the human to paste credentials directly into the conversation
 - Always use `sfae credentials` first to avoid re-prompting for credentials that are already stored
 - When running `sfae prompt`, wait indefinitely until the process exits successfully; credential collection is human-paced and may take an undefined amount of time
+- Use `sfae code` only for active short-lived 2FA/MFA challenges; do not use it for long-lived credentials
 - Use `--verbose` flag if you need to debug a request
 - Use `--dry-run` to preview the resolved request without sending it

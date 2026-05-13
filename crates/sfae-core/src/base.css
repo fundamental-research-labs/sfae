@@ -44,6 +44,113 @@ body::before {
   width: 100%;
   max-width: 440px;
 }
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 24px;
+}
+.logo svg {
+  width: 1.2em;
+  height: 1.2em;
+}
+h1 {
+  font-size: 1.25em;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 16px;
+}
+.field { margin-bottom: 14px; }
+label {
+  display: block;
+  font-size: 0.85em;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+input[type="text"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 1em;
+  font-family: inherit;
+  letter-spacing: 0;
+  outline: none;
+  transition: border-color 0.15s;
+}
+input[type="text"]:focus {
+  border-color: var(--link);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+button, .oauth-btn {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--surface);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+button {
+  background: var(--text);
+}
+button:hover {
+  background: #333;
+}
+button:active {
+  background: #000;
+}
+.secondary-button {
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.secondary-button:hover {
+  background: var(--surface);
+  border-color: var(--text-secondary);
+}
+.url-hint, .meta, .message, .help-link, .footer-note, .timer {
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.url-hint, .help-link {
+  margin-bottom: 16px;
+}
+.url-hint a, .help-link a {
+  color: var(--link);
+  text-decoration: none;
+  word-break: break-all;
+}
+.url-hint a:hover, .help-link a:hover {
+  text-decoration: underline;
+}
+.footer-note {
+  color: var(--text-tertiary);
+  font-size: 0.78em;
+  margin-top: 16px;
+}
+.error {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid #e2a7a7;
+  border-radius: 6px;
+  background: #fff4f4;
+  color: #8a1f1f;
+  font-size: 0.85em;
+}
 .done { text-align: center; }
 .done .check {
   width: 48px;

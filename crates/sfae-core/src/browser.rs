@@ -5,10 +5,17 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 #[cfg(feature = "cli")]
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
+#[cfg(feature = "cli")]
+use crate::code::CodeRequest;
+#[cfg(feature = "cli")]
+use crate::code_html::{
+    CodePageContext, build_code_cancelled_page, build_code_done_page, build_code_page,
+};
 use crate::error::SfaeError;
 #[cfg(feature = "cli")]
 use crate::spec::{FieldSpec, PromptSpec};
@@ -52,11 +59,12 @@ impl LocalServer {
         self.port
     }
 
-    /// Open the given URL in the default browser (macOS-only for now).
+    /// Open the given URL in the default browser.
     #[cfg(feature = "cli")]
     pub fn open_browser(&self, url: &str) -> Result<(), SfaeError> {
-        let status = Command::new("open")
-            .arg(url)
+        let mut command = browser_open_command(url);
+        let status = command
+            .stdout(Stdio::null())
             .status()
             .map_err(|e| SfaeError::Other(format!("failed to open browser: {e}")))?;
         if !status.success() {
@@ -77,61 +85,179 @@ impl LocalServer {
             _ => SfaeError::Other(format!("accept error: {e}")),
         })?;
 
-        let mut reader = BufReader::new(&stream);
-
-        // Read request line.
-        let mut request_line = String::new();
-        if reader.read_line(&mut request_line).is_err() {
-            return Ok(HttpRequest {
-                method: String::new(),
-                path: String::new(),
-                body: String::new(),
-                stream,
-            });
-        }
-
-        let parts: Vec<&str> = request_line.trim().splitn(3, ' ').collect();
-        let (method, path) = if parts.len() >= 2 {
-            (parts[0].to_string(), parts[1].to_string())
-        } else {
-            (String::new(), String::new())
-        };
-
-        // Read headers.
-        let mut content_length: usize = 0;
-        loop {
-            let mut header_line = String::new();
-            if reader.read_line(&mut header_line).is_err() {
-                break;
-            }
-            let trimmed = header_line.trim();
-            if trimmed.is_empty() {
-                break;
-            }
-            let lower = trimmed.to_ascii_lowercase();
-            if let Some(val) = lower.strip_prefix("content-length:")
-                && let Ok(len) = val.trim().parse::<usize>()
-            {
-                content_length = len;
-            }
-        }
-
-        // Read body if present.
-        let mut body = String::new();
-        if content_length > 0 {
-            let mut buf = vec![0u8; content_length];
-            if reader.read_exact(&mut buf).is_ok() {
-                body = String::from_utf8_lossy(&buf).into_owned();
-            }
-        }
-
-        Ok(HttpRequest {
-            method,
-            path,
-            body,
+        read_http_request(RequestRead {
             stream,
+            read_timeout: None,
+            max_body_len: None,
         })
     }
+
+    /// Accept one HTTP request before a deadline, using nonblocking polling.
+    fn accept_request_until(&self, opts: TimedAccept<'_>) -> Result<HttpRequest, SfaeError> {
+        self.listener
+            .set_nonblocking(true)
+            .map_err(|e| SfaeError::Other(format!("failed to configure listener: {e}")))?;
+
+        loop {
+            match self.listener.accept() {
+                Ok((stream, _addr)) => {
+                    let remaining = match remaining_until(RemainingDeadline {
+                        deadline: opts.deadline,
+                        timeout_message: opts.timeout_message,
+                    }) {
+                        Ok(remaining) => remaining,
+                        Err(e) => {
+                            let _ = self.listener.set_nonblocking(false);
+                            return Err(e);
+                        }
+                    };
+                    let result = read_http_request(RequestRead {
+                        stream,
+                        read_timeout: Some(remaining.min(opts.read_timeout)),
+                        max_body_len: opts.max_body_len,
+                    });
+                    let _ = self.listener.set_nonblocking(false);
+                    return result;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    let remaining = match remaining_until(RemainingDeadline {
+                        deadline: opts.deadline,
+                        timeout_message: opts.timeout_message,
+                    }) {
+                        Ok(remaining) => remaining,
+                        Err(e) => {
+                            let _ = self.listener.set_nonblocking(false);
+                            return Err(e);
+                        }
+                    };
+                    std::thread::sleep(remaining.min(Duration::from_millis(50)));
+                }
+                Err(e) => {
+                    let _ = self.listener.set_nonblocking(false);
+                    return Err(SfaeError::Other(format!("accept error: {e}")));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(all(feature = "cli", target_os = "macos"))]
+fn browser_open_command(url: &str) -> Command {
+    let mut command = Command::new("open");
+    command.arg(url);
+    command
+}
+
+#[cfg(all(feature = "cli", target_os = "windows"))]
+fn browser_open_command(url: &str) -> Command {
+    let mut command = Command::new("cmd");
+    command.args(["/C", "start", "", url]);
+    command
+}
+
+#[cfg(all(feature = "cli", unix, not(target_os = "macos")))]
+fn browser_open_command(url: &str) -> Command {
+    let mut command = Command::new("xdg-open");
+    command.arg(url);
+    command
+}
+
+struct TimedAccept<'a> {
+    deadline: Instant,
+    read_timeout: Duration,
+    max_body_len: Option<usize>,
+    timeout_message: &'a str,
+}
+
+struct RequestRead {
+    stream: TcpStream,
+    read_timeout: Option<Duration>,
+    max_body_len: Option<usize>,
+}
+
+struct RemainingDeadline<'a> {
+    deadline: Instant,
+    timeout_message: &'a str,
+}
+
+fn remaining_until(args: RemainingDeadline<'_>) -> Result<Duration, SfaeError> {
+    args.deadline
+        .checked_duration_since(Instant::now())
+        .filter(|d| !d.is_zero())
+        .ok_or_else(|| SfaeError::Other(args.timeout_message.to_string()))
+}
+
+fn read_http_request(read: RequestRead) -> Result<HttpRequest, SfaeError> {
+    let RequestRead {
+        stream,
+        read_timeout,
+        max_body_len,
+    } = read;
+
+    if let Some(timeout) = read_timeout {
+        stream
+            .set_read_timeout(Some(timeout))
+            .map_err(|e| SfaeError::Other(format!("failed to configure read timeout: {e}")))?;
+    }
+
+    let mut reader = BufReader::new(&stream);
+
+    // Read request line.
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line).is_err() {
+        return Ok(HttpRequest {
+            method: String::new(),
+            path: String::new(),
+            body: String::new(),
+            stream,
+        });
+    }
+
+    let parts: Vec<&str> = request_line.trim().splitn(3, ' ').collect();
+    let (method, path) = if parts.len() >= 2 {
+        (parts[0].to_string(), parts[1].to_string())
+    } else {
+        (String::new(), String::new())
+    };
+
+    // Read headers.
+    let mut content_length: usize = 0;
+    loop {
+        let mut header_line = String::new();
+        if reader.read_line(&mut header_line).is_err() {
+            break;
+        }
+        let trimmed = header_line.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if let Some(val) = lower.strip_prefix("content-length:")
+            && let Ok(len) = val.trim().parse::<usize>()
+        {
+            content_length = len;
+        }
+    }
+
+    // Read body if present. Code-request callers pass a cap to avoid
+    // unbounded local POST bodies; existing prompt callers preserve old behavior.
+    let mut body = String::new();
+    if content_length > 0 {
+        let read_len = max_body_len
+            .map(|max| content_length.min(max.saturating_add(1)))
+            .unwrap_or(content_length);
+        let mut buf = vec![0u8; read_len];
+        if reader.read_exact(&mut buf).is_ok() {
+            body = String::from_utf8_lossy(&buf).into_owned();
+        }
+    }
+
+    Ok(HttpRequest {
+        method,
+        path,
+        body,
+        stream,
+    })
 }
 
 /// An incoming HTTP request with its underlying TCP stream for sending the response.
@@ -151,15 +277,38 @@ pub struct Reply<'a> {
 impl HttpRequest {
     /// Send an HTML HTTP response.
     pub fn respond(&mut self, reply: Reply<'_>) {
+        self.respond_html(HtmlResponse {
+            reply,
+            no_store: false,
+        });
+    }
+
+    /// Send an HTML HTTP response that should not be cached by the browser.
+    pub fn respond_no_store(&mut self, reply: Reply<'_>) {
+        self.respond_html(HtmlResponse {
+            reply,
+            no_store: true,
+        });
+    }
+
+    fn respond_html(&mut self, response: HtmlResponse<'_>) {
+        let HtmlResponse { reply, no_store } = response;
         let status_text = match reply.status {
             200 => "OK",
+            400 => "Bad Request",
+            413 => "Payload Too Large",
             404 => "Not Found",
             _ => "OK",
         };
         let status = reply.status;
         let html = reply.html;
+        let cache_headers = if no_store {
+            "Cache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\n"
+        } else {
+            ""
+        };
         let response = format!(
-            "HTTP/1.1 {status} {status_text}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}",
+            "HTTP/1.1 {status} {status_text}\r\nContent-Type: text/html; charset=utf-8\r\n{cache_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{html}",
             html.len(),
         );
         let _ = self.stream.write_all(response.as_bytes());
@@ -186,11 +335,148 @@ impl HttpRequest {
     }
 }
 
+struct HtmlResponse<'a> {
+    reply: Reply<'a>,
+    no_store: bool,
+}
+
 /// Parameters for the single-field `browser_prompt` helper.
 #[cfg(feature = "cli")]
 pub struct BrowserPromptArgs<'a> {
     pub label: &'a str,
     pub url: Option<&'a str>,
+}
+
+const MAX_CODE_REQUEST_BODY: usize = 2048;
+const CODE_REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Request a transient one-time code from the user via the default browser.
+///
+/// The returned code is not stored. The caller decides what to do with it,
+/// typically printing it to stdout so an agent can complete a 2FA challenge.
+#[cfg(feature = "cli")]
+pub fn browser_code_request(request: CodeRequest) -> Result<String, SfaeError> {
+    request.validate()?;
+    let server = LocalServer::new()?;
+    let local_url = format!("http://127.0.0.1:{}/", server.port());
+    server.open_browser(&local_url)?;
+    serve_code_request(CodeServe { request, server })
+}
+
+#[cfg(feature = "cli")]
+struct CodeServe {
+    request: CodeRequest,
+    server: LocalServer,
+}
+
+#[cfg(feature = "cli")]
+fn serve_code_request(args: CodeServe) -> Result<String, SfaeError> {
+    let CodeServe { request, server } = args;
+    let csrf_token = uuid::Uuid::new_v4().to_string();
+    let timeout_message = format!("code request timed out after {}s", request.timeout_secs());
+    let deadline = Instant::now()
+        .checked_add(request.timeout)
+        .ok_or_else(|| SfaeError::ConfigError("timeout is too large".into()))?;
+
+    loop {
+        let mut req = server.accept_request_until(TimedAccept {
+            deadline,
+            read_timeout: CODE_REQUEST_READ_TIMEOUT,
+            max_body_len: Some(MAX_CODE_REQUEST_BODY),
+            timeout_message: &timeout_message,
+        })?;
+        let path = req.path.split('?').next().unwrap_or(&req.path).to_string();
+
+        match (req.method.as_str(), path.as_str()) {
+            ("GET", "/") => {
+                let html = build_code_page(CodePageContext {
+                    request: &request,
+                    csrf_token: &csrf_token,
+                    error: None,
+                    timeout_secs: seconds_remaining(deadline),
+                });
+                req.respond_no_store(Reply {
+                    status: 200,
+                    html: &html,
+                });
+            }
+            ("POST", "/") => {
+                if req.body.len() > MAX_CODE_REQUEST_BODY {
+                    respond_body_too_large(&mut req);
+                    continue;
+                }
+                let raw = parse_form_fields(&req.body);
+                if raw.get("_csrf").map(String::as_str) != Some(csrf_token.as_str()) {
+                    req.respond_no_store(Reply {
+                        status: 400,
+                        html: "invalid request token",
+                    });
+                    continue;
+                }
+                let submitted = raw.get("_code").map(String::as_str).unwrap_or("");
+                match request.normalize_code(submitted) {
+                    Ok(code) => {
+                        let html = build_code_done_page();
+                        req.respond_no_store(Reply {
+                            status: 200,
+                            html: &html,
+                        });
+                        return Ok(code);
+                    }
+                    Err(e) => {
+                        let message = e.to_string();
+                        let html = build_code_page(CodePageContext {
+                            request: &request,
+                            csrf_token: &csrf_token,
+                            error: Some(&message),
+                            timeout_secs: seconds_remaining(deadline),
+                        });
+                        req.respond_no_store(Reply {
+                            status: 400,
+                            html: &html,
+                        });
+                    }
+                }
+            }
+            ("POST", "/cancel") => {
+                if req.body.len() > MAX_CODE_REQUEST_BODY {
+                    respond_body_too_large(&mut req);
+                    continue;
+                }
+                let raw = parse_form_fields(&req.body);
+                if raw.get("_csrf").map(String::as_str) != Some(csrf_token.as_str()) {
+                    req.respond_no_store(Reply {
+                        status: 400,
+                        html: "invalid request token",
+                    });
+                    continue;
+                }
+                let html = build_code_cancelled_page();
+                req.respond_no_store(Reply {
+                    status: 200,
+                    html: &html,
+                });
+                return Err(SfaeError::Cancelled);
+            }
+            _ => {
+                req.respond_no_store(Reply {
+                    status: 404,
+                    html: "",
+                });
+            }
+        }
+    }
+}
+
+fn seconds_remaining(deadline: Instant) -> u64 {
+    deadline.saturating_duration_since(Instant::now()).as_secs()
+}
+
+fn respond_body_too_large(req: &mut HttpRequest) {
+    req.respond_no_store(Reply {
+        status: 413,
+        html: "request body too large",
+    });
 }
 
 /// Result of a browser prompt.
@@ -584,3 +870,7 @@ pub fn browser_prompt(args: BrowserPromptArgs<'_>) -> Result<String, SfaeError> 
         )),
     }
 }
+
+#[cfg(test)]
+#[path = "browser_code_tests.rs"]
+mod browser_code_tests;
