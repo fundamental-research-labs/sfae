@@ -1,0 +1,15 @@
+FROM rust:1.92-slim AS builder
+WORKDIR /app
+COPY . .
+RUN cargo build --release -p sfae-oauth-server --bin sfae-oauth-server
+
+FROM debian:bookworm-slim
+ARG GIT_COMMIT=""
+ARG GIT_BRANCH=""
+ENV GIT_COMMIT=${GIT_COMMIT}
+ENV GIT_BRANCH=${GIT_BRANCH}
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/sfae-oauth-server /usr/local/bin/sfae-oauth-server
+EXPOSE 3100
+CMD ["sfae-oauth-server"]
