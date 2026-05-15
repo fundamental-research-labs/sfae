@@ -2,16 +2,19 @@
 
 ## Goal
 
-Deploy `oauth.sfae.io` as the hosted OAuth broker for SFAE, starting with Discord, while keeping provider secrets out of agents, browsers, repo files, and container images.
+Deploy `oauth.sfae.io` as the hosted OAuth broker for SFAE, starting with Discord, while keeping provider app secrets out of agents, browsers, repo files, local CLI config, and container images.
 
-OAuth provider handling is server-side only for every OAuth provider. The initial credential form can remain client-side like other SFAE credential methods: it may let the user choose the auth method, label the connection, and click an OAuth connect button. When the OAuth dance is initiated, the form/app must hand off to `oauth.sfae.io`; it must not own provider OAuth logic: no provider-specific OAuth presets, no provider code exchange, no provider client secret, no provider refresh/revoke calls, and no token materialization in client-side code. Those responsibilities stay in `sfae-oauth-server`.
+OAuth provider handling that depends on provider app credentials is server-side only for every OAuth provider. The initial credential form can remain client-side like other SFAE credential methods: it may let the user choose the auth method, label the connection, and click an OAuth connect button. When the OAuth dance is initiated, the form/app must hand off to `oauth.sfae.io`; it must not own provider OAuth logic: no provider-specific OAuth presets, no provider code exchange, no provider client secret, and no direct provider refresh/revoke calls from the app/browser/agent.
+
+For local CLI users, `oauth.sfae.io` is the OAuth broker, not the durable credential store. After the broker exchanges the provider code, the trusted local SFAE CLI receives the resulting token material through a broker-controlled completion/retrieval flow and stores it in the local OS credential store, such as macOS Passwords/login keychain, exactly like static SFAE credentials. The browser and agent never receive provider tokens. Normal local CLI OAuth must not require `SFAE_STORE_URL`, `SFAE_STORE_TOKEN`, or a running `sfae-server`.
 
 SFAE's credential collection model is:
 
 - Fully local when the credential can be collected and stored locally, such as API keys, personal access tokens, basic auth credentials, or other static fields.
-- Client-side form plus hosted OAuth handoff when OAuth is involved. The browser/app renders the same kind of human-facing credential form as other methods, but provider authorization starts through `oauth.sfae.io`. Discord is only the first hosted provider used to prove the path.
+- Hosted OAuth handoff plus local durable storage when OAuth is involved for the CLI. The browser/app renders the same kind of human-facing credential form as other methods, but provider authorization and code exchange happen through `oauth.sfae.io`. The resulting access token, refresh token, and related OAuth credential fields are stored by the SFAE CLI in the local OS credential store.
+- Remote/backend credential storage is optional infrastructure for a future hosted SFAE product or integrations. It is not the default macOS CLI OAuth path.
 
-Any earlier non-server-side OAuth approach must be removed rather than adapted. This includes the existing local Google OAuth preset/PKCE path and any client-side Discord OAuth attempt. Do not keep client-side OAuth provider presets, browser callback handling, PKCE/code exchange, token refresh/revoke, or credential materialization paths for provider OAuth. This plan does not add hosted Google support yet; it deletes the incorrect local OAuth surface and focuses the first supported hosted OAuth connection on Discord.
+Any earlier non-server-side OAuth provider implementation must be removed rather than adapted. This includes the existing local Google OAuth preset/PKCE path and any client-side Discord OAuth attempt. Do not keep client-side OAuth provider presets, browser-owned provider callback handling, local PKCE/code exchange, or direct provider refresh/revoke calls. Local credential materialization is still correct when it is the trusted SFAE CLI storing broker-returned token material in the OS credential store. This plan does not add hosted Google support yet; it deletes the incorrect local provider OAuth surface and focuses the first supported hosted OAuth connection on Discord.
 
 ## Progress Summary
 
@@ -26,27 +29,31 @@ Any earlier non-server-side OAuth approach must be removed rather than adapted. 
 - [x] Hosted OAuth service is up and reachable at `https://oauth.sfae.io`
 - [x] Plan captured in repo
 - [x] First manual Discord OAuth smoke test completed
-- [x] SFAE app/backend wired to start OAuth sessions
-- [x] Existing SFAE remote credential proxy path wired end to end
-- [ ] Refresh/revoke delegation implemented
+- [x] SFAE app/backend wired to start OAuth sessions as a backend proof path
+- [x] Existing SFAE remote credential proxy path wired as a backend proof path
+- [ ] Local CLI hosted Discord OAuth stores token material in OS credential store
+- [ ] Local `sfae request` resolves hosted Discord OAuth credentials from OS credential store
+- [ ] Refresh/revoke through broker for locally stored OAuth tokens implemented
 - [ ] Mock-provider integration tests added
 
 ## Current Decisions
 
 - Fly app: `sfae-oauth`
 - Fly primary region: `iad` (Virginia)
-- Database: Fly Postgres, exposed to the service through `OAUTH_DATABASE_URL` in GitHub Actions and synced to Fly as `DATABASE_URL`
+- Database: Fly Postgres, exposed to the service through `OAUTH_DATABASE_URL` in GitHub Actions and synced to Fly as `DATABASE_URL`; for local CLI OAuth this database is for broker session/audit state, not durable CLI token storage.
 - Canonical secrets: GitHub `production` environment secrets
 - Runtime secret copy: Fly app secrets, synced by deploy workflow
 - Public OAuth callback: `https://oauth.sfae.io/v1/callback/discord`
 - First hosted OAuth provider: Discord
 - First scope: `identify`
-- First app/backend integration target: a server-side Discord connection flow.
+- First CLI integration target: a local macOS SFAE CLI Discord connection flow that uses `oauth.sfae.io` for the OAuth dance and stores the resulting credential in Passwords/login keychain.
+- Existing app/backend integration target: a server-side Discord connection proof path. This is not the default local CLI storage model.
 - Ownership split:
-  - `sfae-oauth-server` owns provider OAuth: provider client secrets, authorization session creation, callback handling, code exchange, token encryption, token storage, refresh/revoke behavior, and SFAE credential materialization.
-  - SFAE app/backend owns authenticated user context, calls the hosted broker's internal APIs with `SFAE_INTERNAL_AUTH_SECRET`, and returns only non-secret session/status data to the UI.
-  - Browser/UI owns user interaction and form state: choose OAuth vs other methods, set non-secret labels/options, start connection, open the returned authorization URL, and show/poll sanitized status through the SFAE backend.
-  - `sfae-core`/CLI owns local collection only for non-OAuth credential fields.
+  - `sfae-oauth-server` owns provider OAuth operations that require hosted app credentials: provider client secrets, authorization session creation, callback handling, code exchange, and provider refresh/revoke calls.
+  - `sfae-oauth-server` may hold token material transiently only long enough to complete a broker-controlled handoff, refresh, revoke, or audit event. For local CLI OAuth it must not be the durable token vault.
+  - `sfae-core`/CLI owns durable local storage for both static credentials and broker-returned OAuth token material in the OS credential store. On macOS this means Passwords/login keychain.
+  - Browser/UI owns user interaction and form state: choose OAuth vs other methods, set non-secret labels/options, start connection, and open the broker-generated authorization URL. The browser must not receive access tokens, refresh tokens, provider codes, or provider client secrets.
+  - SFAE app/backend may own authenticated hosted-product user context and remote credential APIs for future hosted/non-local flows. It is not required for normal local macOS CLI OAuth.
 - Cloudflare zone default may remain `Full`; use a hostname-specific rule for `oauth.sfae.io` set to `Full (strict)` once Fly has issued a valid cert
 
 ## Phase 1: Provider And Secret Setup
@@ -93,8 +100,8 @@ Status: complete in this branch.
   - `POST /internal/oauth/sessions`
   - `GET /internal/oauth/sessions/{id}`
 - [x] Added Discord OAuth code exchange and `/users/@me` identity lookup
-- [x] Added encrypted token storage in `oauth_tokens`
-- [x] Added SFAE-compatible credential materialization in `sfae_credentials`
+- [x] Added encrypted token storage in `oauth_tokens` for the initial hosted/backend proof path. This is no longer the target durable storage for local CLI OAuth.
+- [x] Added SFAE-compatible credential materialization in `sfae_credentials` for the initial hosted/backend proof path. Local CLI OAuth must instead materialize credentials into the local OS credential store.
 - [x] Switched OAuth service `reqwest` to Rustls TLS so the slim Docker image does not need OpenSSL build tooling.
 - [x] Verified workspace checks:
   - `cargo xtask ci`
@@ -217,13 +224,14 @@ curl -sS https://oauth.sfae.io/internal/oauth/sessions \
 
 Open the returned `authorization_url`.
 
-Expected result:
+Expected result for this backend smoke path:
 
 - Discord consent screen appears
 - Discord redirects to `https://oauth.sfae.io/v1/callback/discord`
 - Service redirects to `/v1/done?session_id=...&status=success`
 - `oauth_sessions.status` becomes `success`
 - `oauth_accounts`, `oauth_tokens`, and `sfae_credentials` have rows for the connection
+- This confirms the hosted broker can complete Discord OAuth, but it is not the target durable storage path for local CLI users.
 
 Poll the session:
 
@@ -232,13 +240,15 @@ curl -sS "https://oauth.sfae.io/internal/oauth/sessions/<session-id>" \
   -H "x-internal-auth: $SFAE_INTERNAL_AUTH_SECRET"
 ```
 
-## Phase 5: SFAE App Starts Hosted OAuth Server-Side
+## Phase 5: SFAE Backend Hosted OAuth Proof Path
 
-Status: complete in this branch.
+Status: complete as a backend proof path; superseded for normal local macOS CLI OAuth storage by Phase 6.
 
 ### Boundary
 
-This phase is not a client-side provider OAuth implementation. The credential form can be client-side and can initiate the OAuth handoff, but it must do that through the SFAE backend and `oauth.sfae.io`. Do not add provider OAuth handling to `sfae-core` browser flows, do not exchange provider codes from the app/browser/agent, and do not expose provider tokens or provider secrets to the UI. The UI can open the broker-generated authorization URL, but all trusted OAuth work remains in `sfae-oauth-server`.
+This phase proved that `sfae-server` can authenticate a caller and start/poll hosted OAuth sessions through `oauth.sfae.io`. It is useful as a backend/hosted-product proof path, but it is not the desired local CLI storage model.
+
+For normal local macOS CLI usage, the credential form can be client-side and can initiate the OAuth handoff directly with `oauth.sfae.io`; it must not require `SFAE_STORE_URL`, `SFAE_STORE_TOKEN`, or a running `sfae-server`. Do not add provider OAuth handling to `sfae-core` browser flows, do not exchange provider codes from the app/browser/agent, and do not expose provider tokens or provider secrets to the browser/UI. The trusted CLI may receive broker-returned token material only to store it in the OS credential store.
 
 If there is leftover non-server-side OAuth code or documentation from the earlier approach, remove it as part of this phase before adding the server-side integration. This includes the local Google OAuth preset/PKCE/browser callback flow, but does not mean implementing hosted Google OAuth now. Static local credential collection remains supported.
 
@@ -260,44 +270,66 @@ If there is leftover non-server-side OAuth code or documentation from the earlie
 - Added `POST /oauth/sessions` in `sfae-server`; it authenticates the caller, derives `user_id` from the JWT subject or internal `X-User-Id`, and calls the broker's `POST /internal/oauth/sessions` with `SFAE_INTERNAL_AUTH_SECRET`.
 - Added `GET /oauth/sessions/{id}` in `sfae-server`; it polls the broker, verifies the broker session belongs to the authenticated SFAE user, and returns sanitized status fields without `user_id` or token material.
 - Reworked browser OAuth groups to start hosted broker sessions through the SFAE backend, open only the broker-generated `authorization_url`, and keep only the hosted `session_id` plus sanitized completion state locally.
-- Preserved static credential collection; when `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` are set, the CLI uses the authenticated SFAE backend, which also lets hosted OAuth derive user context.
+- Preserved static credential collection. The authenticated backend path currently uses `SFAE_STORE_URL` and `SFAE_STORE_TOKEN`; that is acceptable for backend/hosted-product proof work, but must not be required for local macOS CLI hosted OAuth.
 - Hosted OAuth groups cannot be combined with common local form fields in this phase; the credential label still flows through `sfae prompt --label`.
 - Removed local provider OAuth implementation from `sfae-core`: provider presets, PKCE verifier/challenge/state generation, local callback handling, provider token exchange, provider token refresh/revoke helpers, and local OAuth metadata files.
 - Removed compile-time OAuth secret loading and active docs for build-time Google OAuth secrets.
 - Replaced direct provider refresh in `sfae-server /credentials/refresh` with a non-implemented response so refresh delegation remains in Phase 7 instead of continuing the old provider-token path.
-- Kept broker-owned refresh tokens and provider token/revoke endpoints out of `sfae_credentials`; the compatibility blob now materializes only the access token and broker/account identifiers.
+- Kept broker-owned refresh tokens and provider token/revoke endpoints out of `sfae_credentials`; the backend compatibility blob materializes only the access token and broker/account identifiers. This backend materialization is not the target durable storage for local CLI OAuth.
 
 ### Decisions
 
-- SFAE broker `user_id`: the authenticated SFAE backend user id, using the JWT `sub` for bearer callers or `X-User-Id` for internal callers.
-- Discord credential `label`: the existing `sfae prompt --label` value is passed to the broker and materialized on the SFAE credential row.
+- SFAE broker `user_id` for this backend proof path: the authenticated SFAE backend user id, using the JWT `sub` for bearer callers or `X-User-Id` for internal callers.
+- Discord credential `label` for this backend proof path: the existing `sfae prompt --label` value is passed to the broker and materialized on the SFAE credential row.
 - Connected state shown to UI: sanitized session status includes `provider`, `domain`, `label`, `scopes`, `status`, optional `error_code`, optional `provider_subject`, optional `credential_id`, and `expires_at`.
 
-## Phase 6: End-To-End Credential Proxy Path
+## Phase 6: Local CLI Hosted OAuth To Passwords
 
-Status: implemented and locally verified in this branch; live Discord API smoke remains environment-gated.
+Status: pending. This is the next required phase for the intended macOS CLI UX.
+
+### Boundary
+
+Normal local CLI hosted OAuth must look like local SFAE credential collection:
+
+- The user runs `sfae prompt discord.com ...` without `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
+- The CLI/browser opens a hosted Discord authorization URL generated by `oauth.sfae.io`.
+- `oauth.sfae.io` owns the Discord client secret and code exchange.
+- The browser never receives token material.
+- The trusted local SFAE CLI receives the broker result through a one-time completion/retrieval flow.
+- The CLI stores `OAUTH_ACCESS_TOKEN`, any `OAUTH_REFRESH_TOKEN`, and related non-secret OAuth metadata in the OS credential store, such as macOS Passwords/login keychain.
+- `sfae request` resolves `{OAUTH_ACCESS_TOKEN}` from the OS credential store, the same way it resolves `{API_KEY}` or `{ACCESS_TOKEN}`.
+- `sfae-server` and the shared Postgres `sfae_credentials` table are not required for this local CLI path.
 
 ### Steps
 
-- [x] Connect the existing remote credential lookup path to the same database or expose credential read APIs as needed.
-- [x] Verify `sfae request` can resolve the materialized Discord credential.
-- [ ] Run a real Discord API request with `{OAUTH_ACCESS_TOKEN}`.
+- [ ] Add a broker completion/retrieval API for local CLI OAuth that returns token material only to the initiating trusted CLI session, with short TTL and one-time use.
+- [ ] Update the local CLI/browser OAuth flow to start a hosted broker session without `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
+- [ ] Store broker-returned Discord token material in the local OS credential store using the normal credential-set path.
+- [ ] Store enough non-secret OAuth metadata locally to know that refresh/revoke must go back through `oauth.sfae.io`, without storing provider client secrets locally.
+- [ ] Verify `sfae credentials discord.com` lists the local credential set from Passwords/keychain.
+- [ ] Verify `sfae request` resolves `{OAUTH_ACCESS_TOKEN}` from Passwords/keychain.
+- [ ] Run a real Discord API request with `{OAUTH_ACCESS_TOKEN}` using only the local CLI credential store.
 
-### Completed
+### Backend Proof Work Already Completed
 
-- Added an idempotent `sfae-server` database bootstrap for the shared `sfae_credentials` table, so the authenticated SFAE backend can safely start against the same Postgres database used by `sfae-oauth-server`.
-- Kept the broker-owned token vault boundary unchanged for remote lookup: `sfae-server` resolves requests from the materialized compatibility blob in `sfae_credentials`; provider refresh/revoke remains Phase 7.
-- Added remote-store tests proving a broker-shaped Discord credential blob resolves through the existing `ApiStore`/`CredentialLookup` path for both parent-domain lookup (`api.discord.com` -> `discord.com`) and direct credential UUID lookup (`--cred <uuid>` shape).
-- Added a CLI dry-run integration test proving `sfae request` resolves the materialized Discord credential through the authenticated remote store path and masks `{OAUTH_ACCESS_TOKEN}` in output.
-- Verified the implementation with `cargo xtask ci`.
+The previous Phase 6 implementation wired a remote/backend credential proxy path:
 
-### Remaining
+- `sfae-server` can bootstrap/read the shared `sfae_credentials` table.
+- `ApiStore` and `CredentialLookup` can resolve a broker-shaped Discord credential from the authenticated remote store.
+- A CLI dry-run integration test proves the remote-store path masks `{OAUTH_ACCESS_TOKEN}`.
 
-- A live Discord API smoke test still needs a running SFAE backend configured with the shared OAuth database plus a valid `SFAE_STORE_URL`/`SFAE_STORE_TOKEN` for a user with a fresh Discord OAuth credential. Those values were not present in this execution environment, so the live request was not run.
+That work is not the target path for normal macOS CLI users. It can remain as backend proof infrastructure, but the local CLI path must not depend on it.
 
-Expected command shape:
+Expected local CLI command shape:
 
 ```bash
+sfae prompt discord.com --spec '{
+  "groups": [{
+    "label": "OAuth",
+    "oauth": {"provider": "discord", "scopes": ["identify"]}
+  }]
+}'
+
 sfae request GET "https://discord.com/api/v10/users/@me" \
   --domain discord.com \
   -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}"
@@ -309,11 +341,12 @@ Status: pending.
 
 ### Steps
 
-- [ ] Add refresh endpoint to `sfae-oauth-server`.
-- [ ] Add revoke endpoint to `sfae-oauth-server`.
-- [ ] Teach `sfae-server /credentials/refresh` to delegate to the OAuth service when a credential blob contains `OAUTH_ACCOUNT_ID`.
-- [ ] Decide when to stop materializing refresh tokens in `sfae_credentials`.
-- [ ] Move toward storing only `OAUTH_ACCOUNT_ID` references in credential blobs.
+- [ ] Add refresh endpoint to `sfae-oauth-server` that lets the trusted CLI send a locally stored refresh token over HTTPS and receive replacement token material, while keeping provider client secrets hosted.
+- [ ] Add revoke endpoint to `sfae-oauth-server` that lets the trusted CLI revoke locally stored access/refresh tokens without learning provider app credentials.
+- [ ] Teach local `sfae request` retry-on-401 to call the broker refresh endpoint when a local credential blob contains hosted OAuth metadata.
+- [ ] Teach local `sfae delete` to call the broker revoke endpoint for hosted OAuth credentials when possible, then remove local Passwords/keychain entries.
+- [ ] Keep refresh tokens durably in the local OS credential store for local CLI OAuth. Do not make Fly Postgres the durable token vault for local CLI users.
+- [ ] Decide whether the backend proof path should be removed, hidden behind a feature flag, or explicitly retained only for hosted/non-local deployments.
 
 ## Phase 8: Tests And Operational Hardening
 
@@ -324,8 +357,10 @@ Status: pending.
 - [ ] Add unit tests for provider scope validation.
 - [ ] Add unit tests for state hashing and replay prevention.
 - [ ] Add integration tests with a mock OAuth provider.
+- [ ] Add integration tests for the local CLI hosted OAuth flow: broker callback, one-time token retrieval, local OS-store materialization, and `sfae request` resolution.
+- [ ] Add integration tests for broker-mediated refresh/revoke using locally stored refresh/access tokens.
 - [ ] Add callback failure tests: missing code, provider error, expired state, duplicate callback.
-- [ ] Add a secret-gated live Discord smoke test.
+- [ ] Add a secret-gated live Discord smoke test that uses the local CLI and OS credential store, with no `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
 - [ ] Add metrics or structured audit event coverage for session start, callback success, callback failure, refresh, and revoke.
 
 ## Operational Notes
@@ -333,6 +368,10 @@ Status: pending.
 - Discord Client Secret is required for hosted server-side token exchange.
 - Do not bake secrets into Docker images or Rust binaries.
 - Do not log OAuth codes, raw states, access tokens, refresh tokens, or provider token responses.
+- Normal local CLI hosted OAuth must not require `SFAE_STORE_URL`, `SFAE_STORE_TOKEN`, or `sfae-server`.
+- Durable local CLI OAuth tokens belong in the local OS credential store. On macOS, that means Passwords/login keychain.
+- `oauth.sfae.io` can process token material transiently for code exchange, one-time handoff, refresh, and revoke, but it is not the durable token vault for local CLI users.
+- Browser pages and agents must never receive provider tokens, refresh tokens, provider authorization codes, or provider client secrets.
 - Keep `_fly-ownership.oauth` if Fly asks for it, especially when Cloudflare proxy is enabled.
 
 ## Verification Commands
