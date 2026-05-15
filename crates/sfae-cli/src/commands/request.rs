@@ -5,7 +5,8 @@
 use std::time::Instant;
 
 use sfae_core::proxy::{
-    CredentialLookup, ProxyRequest, ProxyResponse, extract_host, find_dynamic_placeholders,
+    CredentialLookup, PlaceholderMap, ProxyRequest, ProxyResponse, extract_host,
+    find_dynamic_placeholders,
 };
 use sfae_core::store::SecretStore;
 
@@ -80,14 +81,16 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
             username: opts.user,
             cred_id: opts.cred_id,
         };
-        let masked_url = lookup.mask(&request.url)?;
+        let credentials = lookup.fetch()?;
+        let placeholders = PlaceholderMap(&credentials);
+        let masked_url = placeholders.mask(&request.url)?;
         println!("{} {}", request.method, masked_url);
         for (k, v) in &request.headers {
-            let masked_v = lookup.mask(v)?;
+            let masked_v = placeholders.mask(v)?;
             println!("{k}: {masked_v}");
         }
         if let Some(b) = &request.body {
-            let masked_body = lookup.mask(b)?;
+            let masked_body = placeholders.mask(b)?;
             println!();
             println!("{masked_body}");
         }

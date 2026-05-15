@@ -27,7 +27,7 @@ Any earlier non-server-side OAuth approach must be removed rather than adapted. 
 - [x] Plan captured in repo
 - [x] First manual Discord OAuth smoke test completed
 - [x] SFAE app/backend wired to start OAuth sessions
-- [ ] Existing SFAE remote credential proxy path wired end to end
+- [x] Existing SFAE remote credential proxy path wired end to end
 - [ ] Refresh/revoke delegation implemented
 - [ ] Mock-provider integration tests added
 
@@ -275,13 +275,25 @@ If there is leftover non-server-side OAuth code or documentation from the earlie
 
 ## Phase 6: End-To-End Credential Proxy Path
 
-Status: pending.
+Status: implemented and locally verified in this branch; live Discord API smoke remains environment-gated.
 
 ### Steps
 
-- [ ] Connect the existing remote credential lookup path to the same database or expose credential read APIs as needed.
-- [ ] Verify `sfae request` can resolve the materialized Discord credential.
+- [x] Connect the existing remote credential lookup path to the same database or expose credential read APIs as needed.
+- [x] Verify `sfae request` can resolve the materialized Discord credential.
 - [ ] Run a real Discord API request with `{OAUTH_ACCESS_TOKEN}`.
+
+### Completed
+
+- Added an idempotent `sfae-server` database bootstrap for the shared `sfae_credentials` table, so the authenticated SFAE backend can safely start against the same Postgres database used by `sfae-oauth-server`.
+- Kept the broker-owned token vault boundary unchanged for remote lookup: `sfae-server` resolves requests from the materialized compatibility blob in `sfae_credentials`; provider refresh/revoke remains Phase 7.
+- Added remote-store tests proving a broker-shaped Discord credential blob resolves through the existing `ApiStore`/`CredentialLookup` path for both parent-domain lookup (`api.discord.com` -> `discord.com`) and direct credential UUID lookup (`--cred <uuid>` shape).
+- Added a CLI dry-run integration test proving `sfae request` resolves the materialized Discord credential through the authenticated remote store path and masks `{OAUTH_ACCESS_TOKEN}` in output.
+- Verified the implementation with `cargo xtask ci`.
+
+### Remaining
+
+- A live Discord API smoke test still needs a running SFAE backend configured with the shared OAuth database plus a valid `SFAE_STORE_URL`/`SFAE_STORE_TOKEN` for a user with a fresh Discord OAuth credential. Those values were not present in this execution environment, so the live request was not run.
 
 Expected command shape:
 

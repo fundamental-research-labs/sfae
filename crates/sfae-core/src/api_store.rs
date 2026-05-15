@@ -311,3 +311,260 @@ impl SecretStore for ApiStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+
+    use crate::proxy::CredentialLookup;
+
+    use super::*;
+
+    struct ExpectedRequest {
+        method: &'static str,
+        path: String,
+        response: MockResponse,
+    }
+
+    struct MockResponse {
+        status: u16,
+        content_type: &'static str,
+        body: String,
+    }
+
+    struct JsonExpected {
+        path: String,
+        body: serde_json::Value,
+    }
+
+    struct TextExpected {
+        path: String,
+        body: String,
+    }
+
+    struct MockStore {
+        base_url: String,
+        handle: thread::JoinHandle<()>,
+    }
+
+    struct ParsedRequest {
+        method: String,
+        path: String,
+        headers: HashMap<String, String>,
+    }
+
+    struct SendResponse<'a> {
+        stream: &'a mut TcpStream,
+        response: &'a MockResponse,
+    }
+
+    impl ExpectedRequest {
+        fn json(args: JsonExpected) -> Self {
+            Self {
+                method: "GET",
+                path: args.path,
+                response: MockResponse {
+                    status: 200,
+                    content_type: "application/json",
+                    body: args.body.to_string(),
+                },
+            }
+        }
+
+        fn text(args: TextExpected) -> Self {
+            Self {
+                method: "GET",
+                path: args.path,
+                response: MockResponse {
+                    status: 200,
+                    content_type: "text/plain",
+                    body: args.body,
+                },
+            }
+        }
+    }
+
+    impl MockStore {
+        fn api_store(&self) -> ApiStore {
+            let config = ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .build();
+            ApiStore {
+                base_url: self.base_url.clone(),
+                token: "test-token".to_string(),
+                agent: ureq::Agent::new_with_config(config),
+            }
+        }
+
+        fn finish(self) {
+            self.handle.join().unwrap();
+        }
+    }
+
+    fn spawn_mock_store(requests: Vec<ExpectedRequest>) -> MockStore {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            for expected in requests {
+                let (mut stream, _) = listener.accept().unwrap();
+                let actual = read_request(&mut stream);
+                assert_eq!(actual.method, expected.method);
+                assert_eq!(actual.path, expected.path);
+                assert_eq!(
+                    actual.headers.get("authorization").map(String::as_str),
+                    Some("Bearer test-token")
+                );
+                send_response(SendResponse {
+                    stream: &mut stream,
+                    response: &expected.response,
+                });
+            }
+        });
+
+        MockStore {
+            base_url: format!("http://{addr}"),
+            handle,
+        }
+    }
+
+    fn read_request(stream: &mut TcpStream) -> ParsedRequest {
+        let mut reader = BufReader::new(stream);
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line).unwrap();
+        let mut parts = request_line.split_whitespace();
+        let method = parts.next().unwrap_or_default().to_string();
+        let path = parts.next().unwrap_or_default().to_string();
+
+        let mut headers = HashMap::new();
+        let mut content_length = 0usize;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let trimmed = line.trim_end();
+            if trimmed.is_empty() {
+                break;
+            }
+            if let Some((name, value)) = trimmed.split_once(':') {
+                let key = name.to_ascii_lowercase();
+                let value = value.trim().to_string();
+                if key == "content-length" {
+                    content_length = value.parse().unwrap_or(0);
+                }
+                headers.insert(key, value);
+            }
+        }
+
+        if content_length > 0 {
+            let mut body = vec![0u8; content_length];
+            reader.read_exact(&mut body).unwrap();
+        }
+
+        ParsedRequest {
+            method,
+            path,
+            headers,
+        }
+    }
+
+    fn send_response(args: SendResponse<'_>) {
+        let SendResponse { stream, response } = args;
+        let status_text = if response.status == 200 {
+            "OK"
+        } else {
+            "Error"
+        };
+        let http = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response.status,
+            status_text,
+            response.content_type,
+            response.body.len(),
+            response.body
+        );
+        stream.write_all(http.as_bytes()).unwrap();
+        stream.flush().unwrap();
+    }
+
+    #[test]
+    fn remote_store_resolves_materialized_discord_oauth_credential() {
+        let credential_id = "00000000-0000-4000-8000-000000000001";
+        let account_id = "00000000-0000-4000-8000-000000000002";
+        let blob = serde_json::json!({
+            "OAUTH_ACCESS_TOKEN": "discord-access-token",
+            "OAUTH_ACCOUNT_ID": account_id,
+            "OAUTH_PROVIDER": "discord"
+        })
+        .to_string();
+
+        let mock = spawn_mock_store(vec![
+            ExpectedRequest::json(JsonExpected {
+                path: "/credentials/api.discord.com".to_string(),
+                body: serde_json::json!({ "credentials": [] }),
+            }),
+            ExpectedRequest::json(JsonExpected {
+                path: "/credentials/discord.com".to_string(),
+                body: serde_json::json!({
+                    "credentials": [{
+                        "id": credential_id,
+                        "domain": "discord.com",
+                        "label": null,
+                        "keys": [
+                            "OAUTH_ACCESS_TOKEN",
+                            "OAUTH_ACCOUNT_ID",
+                            "OAUTH_PROVIDER"
+                        ]
+                    }]
+                }),
+            }),
+            ExpectedRequest::text(TextExpected {
+                path: format!("/credentials/{credential_id}/blob"),
+                body: blob,
+            }),
+        ]);
+        let store = mock.api_store();
+
+        let resolved = CredentialLookup {
+            store: &store,
+            domain: "api.discord.com",
+            username: None,
+            cred_id: None,
+        }
+        .resolve("Bearer {OAUTH_ACCESS_TOKEN}")
+        .unwrap();
+
+        assert_eq!(resolved, "Bearer discord-access-token");
+        mock.finish();
+    }
+
+    #[test]
+    fn remote_store_resolves_materialized_discord_oauth_credential_by_id() {
+        let credential_id = "00000000-0000-4000-8000-000000000003";
+        let blob = serde_json::json!({
+            "OAUTH_ACCESS_TOKEN": "direct-token",
+            "OAUTH_ACCOUNT_ID": "00000000-0000-4000-8000-000000000004",
+            "OAUTH_PROVIDER": "discord"
+        })
+        .to_string();
+
+        let mock = spawn_mock_store(vec![ExpectedRequest::text(TextExpected {
+            path: format!("/credentials/{credential_id}/blob"),
+            body: blob,
+        })]);
+        let store = mock.api_store();
+
+        let resolved = CredentialLookup {
+            store: &store,
+            domain: "wrong.example",
+            username: None,
+            cred_id: Some(credential_id),
+        }
+        .resolve("{OAUTH_ACCESS_TOKEN}")
+        .unwrap();
+
+        assert_eq!(resolved, "direct-token");
+        mock.finish();
+    }
+}

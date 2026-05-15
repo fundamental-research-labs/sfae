@@ -15,6 +15,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
+mod db;
 mod handlers;
 mod helpers;
 mod state;
@@ -51,6 +52,9 @@ async fn main() {
     let pool = PgPool::connect(&database_url)
         .await
         .expect("Failed to connect to database");
+    db::run_migrations(&pool)
+        .await
+        .expect("Failed to run database migrations");
 
     let state = Arc::new(AppState {
         pool,
