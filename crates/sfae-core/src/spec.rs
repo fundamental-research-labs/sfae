@@ -265,23 +265,35 @@ fn is_placeholder_field_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// OAuth flow configuration within a group.
+/// Hosted OAuth flow configuration within a group.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OAuthSpec {
-    /// Authorization endpoint (defaulted by SFAE for known providers).
+    /// Hosted OAuth provider name. Defaults from the domain when possible.
     #[serde(default)]
-    pub auth_url: Option<String>,
+    pub provider: Option<String>,
 
-    /// Token endpoint — used for both code exchange and refresh.
+    /// Single scope string accepted for compact specs and compatibility.
     #[serde(default)]
-    pub token_url: Option<String>,
+    pub scope: Option<String>,
 
-    /// Token revocation endpoint (optional, enables clean re-auth).
+    /// Requested OAuth scopes. Empty lets the hosted broker apply provider defaults.
     #[serde(default)]
-    pub revocation_url: Option<String>,
+    pub scopes: Vec<String>,
+}
 
-    /// Requested scopes (always specified by the agent).
-    pub scope: String,
+impl OAuthSpec {
+    /// Return all requested scopes, splitting the legacy single-string `scope`.
+    pub fn requested_scopes(&self) -> Vec<String> {
+        let mut scopes = Vec::new();
+        if let Some(scope) = &self.scope {
+            scopes.extend(scope.split_whitespace().map(str::to_string));
+        }
+        scopes.extend(self.scopes.iter().cloned());
+        scopes.sort();
+        scopes.dedup();
+        scopes
+    }
 }
 
 #[cfg(test)]
@@ -609,12 +621,14 @@ mod tests {
 
     #[test]
     fn example_4_oauth_as_alternative() {
-        let spec: PromptSpec = serde_json::from_str(r#"{
+        let spec: PromptSpec = serde_json::from_str(
+            r#"{
             "groups": [
-                {"label": "API Key", "fields": [{"name": "API_KEY", "label": "Google API Key"}]},
-                {"label": "OAuth", "oauth": {"scope": "https://www.googleapis.com/auth/gmail.readonly"}}
+                {"label": "API Key", "fields": [{"name": "API_KEY", "label": "Discord API Key"}]},
+                {"label": "OAuth", "oauth": {"provider": "discord", "scopes": ["identify"]}}
             ]
-        }"#)
+        }"#,
+        )
         .unwrap();
         spec.validate().unwrap();
         let groups = spec.groups.unwrap();
@@ -622,14 +636,18 @@ mod tests {
         assert!(groups[0].fields.is_some());
         assert!(groups[1].oauth.is_some());
         assert_eq!(
-            groups[1].oauth.as_ref().unwrap().scope,
-            "https://www.googleapis.com/auth/gmail.readonly"
+            groups[1].oauth.as_ref().unwrap().provider.as_deref(),
+            Some("discord")
+        );
+        assert_eq!(
+            groups[1].oauth.as_ref().unwrap().requested_scopes(),
+            vec!["identify"]
         );
     }
 
     #[test]
-    fn example_5_custom_oauth_provider() {
-        let spec: PromptSpec = serde_json::from_str(
+    fn oauth_rejects_provider_endpoint_fields() {
+        let err = serde_json::from_str::<PromptSpec>(
             r#"{
             "groups": [
                 {
@@ -644,42 +662,25 @@ mod tests {
             ]
         }"#,
         )
-        .unwrap();
-        spec.validate().unwrap();
-        let groups = spec.groups.unwrap();
-        let oauth = groups[0].oauth.as_ref().unwrap();
-        assert_eq!(
-            oauth.auth_url.as_deref(),
-            Some("https://login.custom-saas.com/oauth/authorize")
-        );
-        assert_eq!(
-            oauth.token_url.as_deref(),
-            Some("https://login.custom-saas.com/oauth/token")
-        );
-        assert_eq!(
-            oauth.revocation_url.as_deref(),
-            Some("https://login.custom-saas.com/oauth/revoke")
-        );
-        assert_eq!(oauth.scope, "api.read api.write");
+        .unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
     }
 
     #[test]
     fn example_6_oauth_only_with_defaults() {
-        let spec: PromptSpec = serde_json::from_str(r#"{
+        let spec: PromptSpec = serde_json::from_str(
+            r#"{
             "groups": [
-                {"label": "OAuth", "oauth": {"scope": "https://www.googleapis.com/auth/calendar.readonly"}}
+                {"label": "OAuth", "oauth": {"scope": "identify email"}}
             ]
-        }"#)
+        }"#,
+        )
         .unwrap();
         spec.validate().unwrap();
         let groups = spec.groups.unwrap();
         let oauth = groups[0].oauth.as_ref().unwrap();
-        assert!(oauth.auth_url.is_none());
-        assert!(oauth.token_url.is_none());
-        assert_eq!(
-            oauth.scope,
-            "https://www.googleapis.com/auth/calendar.readonly"
-        );
+        assert!(oauth.provider.is_none());
+        assert_eq!(oauth.requested_scopes(), vec!["email", "identify"]);
     }
 
     // --- FieldSpec serialization roundtrip ---

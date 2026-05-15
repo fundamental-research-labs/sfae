@@ -1,7 +1,7 @@
-//! Browser-based credential prompt and OAuth2 callback flow.
+//! Browser-based credential prompt and hosted OAuth handoff flow.
 //!
 //! Spins up a temporary local HTTP server, opens the user's default browser,
-//! and waits for the user to submit credentials or complete an OAuth handshake.
+//! and waits for the user to submit credentials or complete a hosted OAuth session.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -11,21 +11,19 @@ use std::process::Command;
 
 use crate::error::SfaeError;
 #[cfg(feature = "cli")]
-use crate::spec::{FieldSpec, OAuthSpec, PromptSpec};
+use crate::spec::{FieldSpec, PromptSpec};
 
 #[cfg(feature = "cli")]
 pub use crate::browser_html::FormContext;
 use crate::browser_html::{QueryLookup, extract_query_param};
 #[cfg(feature = "cli")]
 use crate::browser_html::{
-    build_done_page, build_form_page, build_oauth_done_page, collect_common_fields,
-    parse_form_fields,
+    build_done_page, build_form_page, collect_common_fields, parse_form_fields,
 };
 
 /// A temporary local HTTP server bound to `127.0.0.1` on a random port.
 ///
-/// Shared infrastructure used by both the browser-based secret prompt
-/// and the OAuth2 callback flow.
+/// Shared infrastructure used by the browser-based secret prompt.
 pub struct LocalServer {
     listener: TcpListener,
     port: u16,
@@ -188,24 +186,6 @@ impl HttpRequest {
     }
 }
 
-/// Resolved OAuth configuration with all URLs and app credentials populated.
-#[cfg(feature = "cli")]
-struct ResolvedOAuth {
-    auth_url: String,
-    token_url: String,
-    revocation_url: Option<String>,
-    scope: String,
-    client_id: String,
-    client_secret: Option<String>,
-}
-
-/// Parameters for `resolve_oauth_spec`.
-#[cfg(feature = "cli")]
-struct OAuthResolve<'a> {
-    domain: &'a str,
-    spec: &'a OAuthSpec,
-}
-
 /// Parameters for the single-field `browser_prompt` helper.
 #[cfg(feature = "cli")]
 pub struct BrowserPromptArgs<'a> {
@@ -213,102 +193,57 @@ pub struct BrowserPromptArgs<'a> {
     pub url: Option<&'a str>,
 }
 
-/// Resolve an OAuthSpec against provider presets for the given domain.
-///
-/// Merges spec-provided URLs with preset defaults. Errors if required URLs
-/// or app credentials are missing and no preset covers this domain.
+/// Result of a browser prompt.
 #[cfg(feature = "cli")]
-fn resolve_oauth_spec(args: OAuthResolve<'_>) -> Result<ResolvedOAuth, SfaeError> {
-    let OAuthResolve { domain, spec } = args;
-    let preset = crate::oauth::get_provider_preset(domain);
+pub enum BrowserPromptResult {
+    /// The user supplied local credential fields that the caller should store.
+    Values(HashMap<String, String>),
+    /// Hosted OAuth completed and the hosted broker materialized the credential.
+    HostedOAuth {
+        session_id: String,
+        credential_id: Option<String>,
+    },
+}
 
-    let auth_url = spec
-        .auth_url
-        .clone()
-        .or_else(|| preset.as_ref().map(|p| p.auth_url.to_string()))
-        .ok_or_else(|| {
-            SfaeError::ConfigError(format!(
-                "OAuth auth_url is required (no built-in preset for \"{domain}\")"
-            ))
-        })?;
-
-    let token_url = spec
-        .token_url
-        .clone()
-        .or_else(|| preset.as_ref().map(|p| p.token_url.to_string()))
-        .ok_or_else(|| {
-            SfaeError::ConfigError(format!(
-                "OAuth token_url is required (no built-in preset for \"{domain}\")"
-            ))
-        })?;
-
-    let revocation_url = spec.revocation_url.clone().or_else(|| {
-        preset
-            .as_ref()
-            .and_then(|p| p.revocation_url.map(|s| s.to_string()))
-    });
-
-    let client_id = preset
-        .as_ref()
-        .map(|p| p.client_id.to_string())
-        .ok_or_else(|| {
-            SfaeError::ConfigError(format!(
-                "no OAuth app configured for \"{domain}\" — register app credentials or use a supported provider"
-            ))
-        })?;
-
-    let client_secret = preset
-        .as_ref()
-        .and_then(|p| p.client_secret.map(|s| s.to_string()));
-
-    Ok(ResolvedOAuth {
-        auth_url,
-        token_url,
-        revocation_url,
-        scope: spec.scope.clone(),
-        client_id,
-        client_secret,
-    })
+/// Mutable state for one hosted OAuth flow started from the form.
+#[cfg(feature = "cli")]
+struct HostedOAuthFlow {
+    group_idx: usize,
+    session_id: String,
+    credential_id: Option<String>,
+    status: String,
 }
 
 /// Collect credentials from the user via a spec-driven form in the default browser.
 ///
-/// Returns a map of field names to values collected from the form.
-/// Waits until the user submits the form or completes the OAuth flow.
+/// Returns local field values to store, or a hosted OAuth completion marker.
+/// Waits until the user submits the form or completes the hosted OAuth flow.
 /// There is no built-in timeout.
 #[cfg(feature = "cli")]
-pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, String>, SfaeError> {
+pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<BrowserPromptResult, SfaeError> {
     let FormContext {
         domain,
         label,
+        credential_label,
         spec,
     } = ctx;
-    // Resolve OAuth specs for all groups upfront.
     let groups = spec.groups.as_deref().unwrap_or(&[]);
-    let resolved_oauth: Vec<Option<ResolvedOAuth>> = groups
-        .iter()
-        .map(|g| {
-            g.oauth
-                .as_ref()
-                .map(|oauth_spec| {
-                    resolve_oauth_spec(OAuthResolve {
-                        domain,
-                        spec: oauth_spec,
-                    })
-                })
-                .transpose()
-        })
-        .collect::<Result<_, _>>()?;
+    if spec
+        .fields
+        .as_ref()
+        .is_some_and(|fields| !fields.is_empty())
+        && groups.iter().any(|group| group.oauth.is_some())
+    {
+        return Err(SfaeError::ConfigError(
+            "hosted OAuth groups cannot be combined with common fields in this phase".into(),
+        ));
+    }
 
     let server = LocalServer::new()?;
     let local_url = format!("http://127.0.0.1:{}/", server.port());
     server.open_browser(&local_url)?;
 
-    // Mutable state for the ongoing OAuth flow.
-    let mut pending_verifier: Option<String> = None;
-    let mut pending_state: Option<String> = None;
-    let mut pending_group: Option<usize> = None;
-    let mut oauth_tokens: Option<HashMap<String, String>> = None;
+    let mut hosted_oauth: Option<HostedOAuthFlow> = None;
 
     loop {
         let mut req = server.accept_request()?;
@@ -319,6 +254,7 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
                 let html = build_form_page(FormContext {
                     domain,
                     label,
+                    credential_label,
                     spec,
                 });
                 req.respond(Reply {
@@ -339,7 +275,7 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
                     });
                     continue;
                 };
-                let Some(Some(resolved)) = resolved_oauth.get(idx) else {
+                let Some(Some(oauth)) = groups.get(idx).map(|g| g.oauth.as_ref()) else {
                     req.respond(Reply {
                         status: 400,
                         html: "invalid group or not an OAuth group",
@@ -347,142 +283,64 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
                     continue;
                 };
 
-                let verifier = crate::oauth::generate_code_verifier();
-                let challenge = crate::oauth::compute_code_challenge(&verifier);
-                let state = crate::oauth::generate_state();
-                let redirect_uri = format!("http://127.0.0.1:{}/callback", server.port());
-
-                let auth_url = crate::oauth::AuthorizationUrl {
-                    auth_url: &resolved.auth_url,
-                    client_id: &resolved.client_id,
-                    redirect_uri: &redirect_uri,
-                    code_challenge: &challenge,
-                    scope: Some(&resolved.scope),
-                    state: &state,
-                }
-                .build();
-
-                pending_verifier = Some(verifier);
-                pending_state = Some(state);
-                pending_group = Some(idx);
-
-                req.redirect(&auth_url);
-            }
-            ("GET", "/callback") => {
-                let code = extract_query_param(QueryLookup {
-                    path: &req.path,
-                    key: "code",
-                });
-                let state = extract_query_param(QueryLookup {
-                    path: &req.path,
-                    key: "state",
-                });
-
-                let (Some(code), Some(state)) = (code, state) else {
-                    req.respond(Reply {
-                        status: 400,
-                        html: "missing code or state parameter",
-                    });
-                    continue;
-                };
-
-                // Validate state matches the pending OAuth flow.
-                if pending_state.as_deref() != Some(&state) {
-                    req.respond(Reply {
-                        status: 400,
-                        html: "invalid state parameter",
-                    });
-                    continue;
-                }
-
-                let Some(verifier) = pending_verifier.take() else {
-                    req.respond(Reply {
-                        status: 400,
-                        html: "no pending OAuth flow",
-                    });
-                    continue;
-                };
-                let Some(idx) = pending_group.take() else {
-                    req.respond(Reply {
-                        status: 400,
-                        html: "no pending OAuth flow",
-                    });
-                    continue;
-                };
-                let Some(Some(resolved)) = resolved_oauth.get(idx) else {
-                    req.respond(Reply {
-                        status: 400,
-                        html: "invalid OAuth group",
-                    });
-                    continue;
-                };
-                pending_state = None;
-
-                let redirect_uri = format!("http://127.0.0.1:{}/callback", server.port());
-                let token_resp = crate::oauth::TokenRequest {
-                    token_url: &resolved.token_url,
-                    client_id: &resolved.client_id,
-                    client_secret: resolved.client_secret.as_deref(),
-                    grant: crate::oauth::Grant::AuthorizationCode {
-                        code: &code,
-                        redirect_uri: &redirect_uri,
-                        code_verifier: &verifier,
-                    },
-                }
-                .send()?;
-
-                // Save OAuth metadata for future token refresh.
-                crate::oauth::MetadataKey {
+                let provider =
+                    crate::oauth::resolve_hosted_provider(crate::oauth::HostedProviderResolve {
+                        domain,
+                        requested_provider: oauth.provider.as_deref(),
+                    })?;
+                let client = crate::oauth::HostedOAuthClient::from_env()?;
+                let session = client.create_session(crate::oauth::HostedOAuthSessionInput {
+                    provider: &provider,
                     domain,
-                    username: None,
-                }
-                .save(crate::oauth::OAuthMetadata {
-                    token_url: resolved.token_url.clone(),
-                    client_id: resolved.client_id.clone(),
-                    revocation_url: resolved.revocation_url.clone(),
+                    label: credential_label,
+                    scopes: oauth.requested_scopes(),
                 })?;
 
-                let mut tokens = HashMap::new();
-                tokens.insert("OAUTH_ACCESS_TOKEN".to_string(), token_resp.access_token);
-                if let Some(rt) = token_resp.refresh_token {
-                    tokens.insert("OAUTH_REFRESH_TOKEN".to_string(), rt);
-                }
-                tokens.insert("OAUTH_TOKEN_URL".to_string(), resolved.token_url.clone());
-                if let Some(rev) = &resolved.revocation_url {
-                    tokens.insert("OAUTH_REVOCATION_URL".to_string(), rev.clone());
-                }
-                oauth_tokens = Some(tokens);
-
-                req.respond(Reply {
-                    status: 200,
-                    html: &build_oauth_done_page(),
+                let authorization_url = session.authorization_url;
+                hosted_oauth = Some(HostedOAuthFlow {
+                    group_idx: idx,
+                    session_id: session.session_id,
+                    credential_id: None,
+                    status: "pending".to_string(),
                 });
+
+                req.redirect(&authorization_url);
             }
             ("GET", "/oauth-status") => {
-                let json = if oauth_tokens.is_some() {
-                    r#"{"authorized":true}"#
-                } else {
-                    r#"{"authorized":false}"#
-                };
-                req.respond_json(json);
+                let mut authorized = false;
+                let mut error = false;
+                if let Some(flow) = hosted_oauth.as_mut() {
+                    match crate::oauth::HostedOAuthClient::from_env()
+                        .and_then(|client| client.session_status(&flow.session_id))
+                    {
+                        Ok(status) => {
+                            flow.status = status.status.clone();
+                            flow.credential_id = status.credential_id.clone();
+                            authorized = status.is_success();
+                            error = status.is_error();
+                        }
+                        Err(_) => {
+                            flow.status = "error".to_string();
+                            error = true;
+                        }
+                    }
+                }
+                let json = format!(r#"{{"authorized":{authorized},"error":{error}}}"#);
+                req.respond_json(&json);
             }
             ("POST", "/") => {
                 let raw = parse_form_fields(&req.body);
-                req.respond(Reply {
-                    status: 200,
-                    html: &build_done_page(),
-                });
 
                 // Determine expected fields: common fields first, then
                 // the active group's fields.  The HTML used opaque names
                 // `_f0`, `_f1`, … — the index matches this ordered list.
                 let common = collect_common_fields(spec);
                 let mut expected = common.clone();
-                if let Some(groups) = &spec.groups
-                    && let Some(group_idx) = raw.get("_group")
-                    && let Ok(idx) = group_idx.parse::<usize>()
-                    && let Some(group) = groups.get(idx)
-                    && let Some(fields) = &group.fields
+                let selected_group_idx = selected_group_idx(&raw);
+                let selected_oauth = selected_group_idx
+                    .and_then(|idx| groups.get(idx).map(|group| (idx, group.oauth.is_some())));
+                if let Some((idx, false)) = selected_oauth
+                    && let Some(fields) = groups.get(idx).and_then(|group| group.fields.as_ref())
                 {
                     expected.extend(fields.iter().cloned());
                 }
@@ -502,11 +360,6 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
                         values.insert(field.name.clone(), v.clone());
                     }
                 }
-                // Pass through the _group selector as-is.
-                if let Some(g) = raw.get("_group") {
-                    values.insert("_group".to_string(), g.clone());
-                }
-
                 // Validate no empty values for expected required fields.
                 for field in &expected {
                     if field.is_optional() {
@@ -514,16 +367,18 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
                     }
                     let val = values.get(&field.name).map(|s| s.as_str()).unwrap_or("");
                     if val.is_empty() {
-                        return Err(SfaeError::Other(format!(
-                            "credential value for {} cannot be empty",
-                            field.name
-                        )));
+                        let message =
+                            format!("credential value for {} cannot be empty", field.name);
+                        req.respond(Reply {
+                            status: 400,
+                            html: &message,
+                        });
+                        return Err(SfaeError::Other(message));
                     }
                 }
 
-                // Return expected field values plus any OAuth tokens.
-                // Omit empty optional fields from the result.
-                let mut result: HashMap<String, String> = expected
+                // Return expected field values. Omit empty optional fields.
+                let result: HashMap<String, String> = expected
                     .iter()
                     .filter_map(|f| {
                         values.remove(&f.name).and_then(|v| {
@@ -536,11 +391,58 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
                     })
                     .collect();
 
-                if let Some(tokens) = oauth_tokens.take() {
-                    result.extend(tokens);
+                if let Some((group_idx, true)) = selected_oauth {
+                    let Some(flow) = hosted_oauth.as_ref() else {
+                        req.respond(Reply {
+                            status: 400,
+                            html: "OAuth authorization has not started",
+                        });
+                        return Err(SfaeError::Other(
+                            "OAuth authorization has not started".into(),
+                        ));
+                    };
+                    if flow.group_idx != group_idx {
+                        req.respond(Reply {
+                            status: 400,
+                            html: "OAuth authorization was started for a different group",
+                        });
+                        return Err(SfaeError::Other(
+                            "OAuth authorization was started for a different group".into(),
+                        ));
+                    }
+                    if flow.status != "success" {
+                        req.respond(Reply {
+                            status: 400,
+                            html: "OAuth authorization has not completed",
+                        });
+                        return Err(SfaeError::Other(
+                            "OAuth authorization has not completed".into(),
+                        ));
+                    }
+                    if !result.is_empty() {
+                        req.respond(Reply {
+                            status: 400,
+                            html: "Hosted OAuth cannot store local form fields in this phase",
+                        });
+                        return Err(SfaeError::ConfigError(
+                            "hosted OAuth cannot store local form fields in this phase".into(),
+                        ));
+                    }
+                    req.respond(Reply {
+                        status: 200,
+                        html: &build_done_page(),
+                    });
+                    return Ok(BrowserPromptResult::HostedOAuth {
+                        session_id: flow.session_id.clone(),
+                        credential_id: flow.credential_id.clone(),
+                    });
                 }
 
-                return Ok(result);
+                req.respond(Reply {
+                    status: 200,
+                    html: &build_done_page(),
+                });
+                return Ok(BrowserPromptResult::Values(result));
             }
             _ => {
                 req.respond(Reply {
@@ -550,6 +452,11 @@ pub fn browser_prompt_spec(ctx: FormContext<'_>) -> Result<HashMap<String, Strin
             }
         }
     }
+}
+
+#[cfg(feature = "cli")]
+fn selected_group_idx(raw: &HashMap<String, String>) -> Option<usize> {
+    raw.get("_group").and_then(|idx| idx.parse::<usize>().ok())
 }
 
 /// Collect a secret from the user via a local web page opened in the default browser.
@@ -575,54 +482,17 @@ pub fn browser_prompt(args: BrowserPromptArgs<'_>) -> Result<String, SfaeError> 
         }]),
         groups: None,
     };
-    let mut values = browser_prompt_spec(FormContext {
+    match browser_prompt_spec(FormContext {
         domain: "",
         label,
+        credential_label: None,
         spec: &spec,
-    })?;
-    values
-        .remove("secret")
-        .ok_or_else(|| SfaeError::Other("credential value cannot be empty".into()))
-}
-
-/// Run the OAuth2 callback server: wait for the provider to redirect back with an auth code.
-///
-/// Returns `(code, state)` extracted from the callback query parameters.
-/// The server shows a "Done" page to the user and shuts down.
-pub fn oauth_callback(server: &LocalServer) -> Result<(String, String), SfaeError> {
-    loop {
-        let mut req = server.accept_request()?;
-
-        // We only care about GET /callback?code=...&state=...
-        if req.method == "GET" && req.path.starts_with("/callback") {
-            let code = extract_query_param(QueryLookup {
-                path: &req.path,
-                key: "code",
-            });
-            let state = extract_query_param(QueryLookup {
-                path: &req.path,
-                key: "state",
-            });
-
-            req.respond(Reply {
-                status: 200,
-                html: &build_done_page(),
-            });
-
-            let code = code.ok_or_else(|| {
-                SfaeError::Other("OAuth callback missing 'code' parameter".into())
-            })?;
-            let state = state.ok_or_else(|| {
-                SfaeError::Other("OAuth callback missing 'state' parameter".into())
-            })?;
-
-            return Ok((code, state));
-        }
-
-        // Ignore other requests (favicon, etc.).
-        req.respond(Reply {
-            status: 404,
-            html: "",
-        });
+    })? {
+        BrowserPromptResult::Values(mut values) => values
+            .remove("secret")
+            .ok_or_else(|| SfaeError::Other("credential value cannot be empty".into())),
+        BrowserPromptResult::HostedOAuth { .. } => Err(SfaeError::Other(
+            "single-field browser prompt cannot complete hosted OAuth".into(),
+        )),
     }
 }

@@ -21,7 +21,7 @@ The `sfae` binary is at `./target/release/sfae` (build with `cargo build --bin s
    sfae prompt <domain> --spec '<JSON>'
    ```
 
-   The `--spec` flag takes a JSON object describing what credentials to collect. This opens a web page in the human's browser with a form. The command is a blocking human-interaction step: wait indefinitely until it exits. Credential collection may take as long as the human needs to create a token, grant OAuth consent, or switch accounts. Do not cancel it, impose a timeout, or continue to `sfae request` until it prints `Credential stored: ...` and exits successfully.
+   The `--spec` flag takes a JSON object describing what credentials to collect. This opens a web page in the human's browser with a form. The command is a blocking human-interaction step: wait indefinitely until it exits. Credential collection may take as long as the human needs to create a token, grant OAuth consent, or switch accounts. Do not cancel it, impose a timeout, or continue to `sfae request` until it exits successfully after printing a stored or connected credential message.
 
    **Simple example** (personal access token):
    ```
@@ -116,48 +116,46 @@ A domain can have multiple credential sets (e.g., "Work GitHub" and "Personal Gi
   ```
 - Get UUIDs via `sfae credentials <domain>`.
 
-### OAuth flow (for Google and configured providers)
+### Hosted OAuth flow (Discord)
 
-For APIs that use OAuth 2.0 instead of static tokens, use an OAuth group in the spec:
+For APIs that use SFAE-hosted OAuth instead of static tokens, use an OAuth group in the spec. Hosted OAuth requires `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` so the SFAE backend can derive the current user and call `oauth.sfae.io`.
 
 1. **Set up the OAuth credential:**
 
-   **Known providers (Google):** sfae has built-in OAuth presets — just specify the domain and scope:
+   Discord is the first hosted provider:
    ```
-   sfae prompt googleapis.com --spec '{
-     "groups": [{"label": "OAuth", "oauth": {"scope": "https://www.googleapis.com/auth/gmail.readonly"}}]
+   sfae prompt discord.com --spec '{
+     "groups": [{"label": "OAuth", "oauth": {"provider": "discord", "scopes": ["identify"]}}]
    }'
    ```
 
-   Built-in presets: `googleapis.com` (covers all Google API subdomains). SFAE fills in `auth_url`/`token_url` automatically.
-
-   **Other providers:** OAuth requires a built-in or configured SFAE provider preset with app credentials. The spec must not include OAuth `client_id` or `client_secret`. If no provider preset exists, use the service's API-key/PAT/basic-auth flow or add provider support first.
+   The spec must not include OAuth `client_id`, `client_secret`, `auth_url`, `token_url`, provider codes, or provider tokens. If no hosted provider exists for the service, use the service's API-key/PAT/basic-auth flow or add hosted provider support first.
 
    **OAuth + API key alternative** — let the user choose:
    ```
-   sfae prompt googleapis.com --spec '{
+   sfae prompt discord.com --spec '{
      "groups": [
        {"label": "API Key", "fields": ["API_KEY"]},
-       {"label": "OAuth", "oauth": {"scope": "https://www.googleapis.com/auth/gmail.readonly"}}
+       {"label": "OAuth", "oauth": {"provider": "discord", "scopes": ["identify"]}}
      ]
    }'
    ```
 
-   OAuth app credentials (`client_id`, `client_secret`) are managed by SFAE internally — never in the spec.
+   OAuth app credentials are managed only by `sfae-oauth-server` — never in the spec, browser, agent, or client-side code.
 
-   This opens the provider's consent page in the human's browser. After they authorize, sfae stores `OAUTH_ACCESS_TOKEN`, `OAUTH_REFRESH_TOKEN`, `OAUTH_TOKEN_URL`, and `OAUTH_REVOCATION_URL` (if provided) in the credential set.
+   This opens the provider's consent page in the human's browser. After they authorize, the hosted broker materializes an SFAE credential containing `OAUTH_ACCESS_TOKEN` and related broker-managed metadata.
 
 2. **Make requests normally** — use `{OAUTH_ACCESS_TOKEN}` as the placeholder:
    ```
-   sfae request GET "https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1" \
+   sfae request GET "https://discord.com/api/v10/users/@me" \
      -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}"
    ```
 
-3. **Token refresh is automatic.** If a request gets a 401, sfae reads `OAUTH_TOKEN_URL` from the blob and SFAE's configured OAuth app credentials, refreshes the token, and retries — no action needed from you.
+3. **Refresh/revoke are broker responsibilities.** Do not implement provider refresh or revoke in client-side code.
 
 **OAuth key convention:** All OAuth-related keys use the `OAUTH_` prefix to distinguish from PAT-style credentials. `client_id` and `client_secret` are per-app SFAE configuration, not per-user — they are NOT stored in the credential blob.
 
-**Domain matching:** Store credentials under the API's base domain (e.g., `googleapis.com`), not the auth provider domain (e.g., `google.com`). Subdomain fallback works automatically — a credential stored for `googleapis.com` resolves for `www.googleapis.com`, `gmail.googleapis.com`, etc.
+**Domain matching:** Store credentials under the API's base domain. Subdomain fallback works automatically.
 
 ### JSON blob storage
 

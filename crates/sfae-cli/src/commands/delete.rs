@@ -1,8 +1,6 @@
-//! `sfae delete`: remove a credential set by UUID and revoke any associated OAuth tokens.
+//! `sfae delete`: remove a credential set by UUID or legacy flat credentials.
 
 use sfae_core::credential::{CredentialKey, CredentialType, credential_key};
-use sfae_core::oauth;
-use sfae_core::store::SecretStore;
 
 use crate::store_factory::create_store;
 
@@ -60,16 +58,6 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         });
         store.delete(&key)?;
         eprintln!("Deleted: {key}");
-
-        // When deleting ACCESS_TOKEN, also clean up OAuth metadata and client secret
-        // since the refresh flow is useless without an access token placeholder.
-        if cred_type == CredentialType::AccessToken {
-            cleanup_oauth(CleanupOAuth {
-                domain,
-                username,
-                store: &mut *store,
-            });
-        }
     } else {
         let mut deleted = 0;
         for ct in CredentialType::all() {
@@ -89,42 +77,7 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
                 None => domain.to_string(),
             };
             eprintln!("No credentials found for '{target}'.");
-        } else {
-            // Full-domain deletion: clean up OAuth metadata too.
-            cleanup_oauth(CleanupOAuth {
-                domain,
-                username,
-                store: &mut *store,
-            });
         }
     }
     Ok(())
-}
-
-/// Inputs for `cleanup_oauth`: the target credential plus a mutable store handle.
-struct CleanupOAuth<'a> {
-    domain: &'a str,
-    username: Option<&'a str>,
-    store: &'a mut dyn SecretStore,
-}
-
-/// Remove OAuth metadata and client secret for a domain.
-fn cleanup_oauth(ctx: CleanupOAuth<'_>) {
-    let CleanupOAuth {
-        domain,
-        username,
-        store,
-    } = ctx;
-    let metadata_key = oauth::MetadataKey { domain, username };
-    if let Err(e) = metadata_key.remove() {
-        eprintln!("Warning: failed to remove OAuth metadata: {e}");
-    }
-    let cs_key = credential_key(CredentialKey {
-        domain,
-        username,
-        cred_type: CredentialType::ClientSecret,
-    });
-    if store.delete(&cs_key).is_ok() {
-        eprintln!("Deleted: {cs_key}");
-    }
 }

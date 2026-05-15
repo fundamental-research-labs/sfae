@@ -60,37 +60,77 @@ pub(crate) struct HealthResponse {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct CreatePendingOAuthReq {
-    pub(crate) state: String,
-    pub(crate) user_id: String,
-    pub(crate) verifier: String,
-    pub(crate) domain: String,
-    pub(crate) token_url: String,
-    pub(crate) client_id: String,
-    pub(crate) client_secret: Option<String>,
-    pub(crate) redirect_uri: String,
-    pub(crate) scope: Option<String>,
-    pub(crate) redirect_origin: Option<String>,
+pub(crate) struct HostedOAuthSessionReq {
+    pub(crate) provider: String,
+    #[serde(default)]
+    pub(crate) domain: Option<String>,
+    #[serde(default)]
+    pub(crate) label: Option<String>,
+    #[serde(default)]
+    pub(crate) scopes: Vec<String>,
 }
 
 #[derive(Serialize)]
-pub(crate) struct PendingOAuthRow {
-    pub(crate) state: String,
-    pub(crate) user_id: String,
-    pub(crate) verifier: String,
+pub(crate) struct HostedOAuthSessionResp {
+    pub(crate) session_id: String,
+    pub(crate) authorization_url: String,
+    pub(crate) expires_at: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct HostedOAuthStatusResp {
+    pub(crate) session_id: String,
+    pub(crate) provider: String,
     pub(crate) domain: String,
-    pub(crate) token_url: String,
-    pub(crate) client_id: String,
-    pub(crate) client_secret: Option<String>,
-    pub(crate) redirect_uri: String,
-    pub(crate) scope: Option<String>,
-    pub(crate) redirect_origin: Option<String>,
+    #[serde(default)]
+    pub(crate) label: Option<String>,
+    #[serde(default)]
+    pub(crate) scopes: Vec<String>,
+    pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) error_code: Option<String>,
+    #[serde(default)]
+    pub(crate) provider_subject: Option<String>,
+    #[serde(default)]
+    pub(crate) credential_id: Option<String>,
+    pub(crate) expires_at: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct BrokerCreateSessionReq<'a> {
+    pub(crate) provider: &'a str,
+    pub(crate) user_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) domain: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) label: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) scopes: Vec<String>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct RefreshReq {
+pub(crate) struct BrokerCreateSessionResp {
+    pub(crate) session_id: String,
+    pub(crate) authorization_url: String,
+    pub(crate) expires_at: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BrokerSessionStatusResp {
+    pub(crate) id: String,
+    pub(crate) provider: String,
+    pub(crate) user_id: String,
+    pub(crate) domain: String,
     #[serde(default)]
-    pub(crate) id: Option<String>,
+    pub(crate) label: Option<String>,
     #[serde(default)]
-    pub(crate) domain: Option<String>,
+    pub(crate) scopes: Vec<String>,
+    pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) error_code: Option<String>,
+    #[serde(default)]
+    pub(crate) provider_subject: Option<String>,
+    #[serde(default)]
+    pub(crate) credential_id: Option<String>,
+    pub(crate) expires_at: String,
 }

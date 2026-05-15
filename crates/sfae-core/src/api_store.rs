@@ -175,7 +175,10 @@ impl SecretStore for ApiStore {
         }
     }
 
-    fn delete(&mut self, _key: &str) -> Result<(), SfaeError> {
+    fn delete(&mut self, key: &str) -> Result<(), SfaeError> {
+        if uuid::Uuid::parse_str(key).is_ok() {
+            return self.delete_credential_set(key);
+        }
         Err(SfaeError::Other(
             "Delete not supported by the remote credential store".to_string(),
         ))

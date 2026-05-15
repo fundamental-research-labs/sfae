@@ -28,10 +28,10 @@ fn root_help_explains_agent_workflow() {
         assert!(stdout.contains("HTTP is the only protocol currently supported"));
         assert!(stdout.contains("SECRETS:"));
         assert!(stdout.contains("Passwords/login keychain on macOS"));
+        assert!(stdout.contains("SFAE_STORE_URL"));
+        assert!(stdout.contains("hosted OAuth requires that backend path"));
         assert!(stdout.contains("not secret values"));
         assert!(!stdout.contains("STORE MODES:"));
-        assert!(!stdout.contains("SFAE_STORE_URL"));
-        assert!(!stdout.contains("remote store"));
         assert!(stdout.contains("sfae prompt --help"));
         assert!(stdout.contains("sfae request ..."));
     }
@@ -54,8 +54,9 @@ fn prompt_help_explains_spec_and_secret_handling() {
         assert!(stdout.contains("Field names must match [A-Z][A-Z0-9_]*"));
         assert!(stdout.contains("{API_KEY}"));
         assert!(stdout.contains("{OAUTH_ACCESS_TOKEN}"));
-        assert!(stdout.contains("Do not put OAuth client IDs or client secrets in the spec"));
-        assert!(stdout.contains("Built-in provider: googleapis.com"));
+        assert!(stdout.contains("authorization URLs, token URLs, or provider secrets"));
+        assert!(stdout.contains("Hosted provider in this build: discord"));
+        assert!(stdout.contains("SFAE_STORE_URL"));
         assert!(stdout.contains("OAuth requires browser mode"));
         assert!(stdout.contains("--label <LABEL>"));
         assert!(stdout.contains("not agents"));
@@ -86,7 +87,7 @@ fn request_help_explains_placeholders_lookup_and_output() {
     assert!(stdout.contains("Pass `--domain` too if the URL host cannot be parsed"));
     assert!(stdout.contains("Prints the response body to stdout"));
     assert!(stdout.contains("dry-run output masks resolved credentials"));
-    assert!(stdout.contains("OAuth access tokens refresh automatically"));
+    assert!(stdout.contains("Hosted OAuth credentials use the same"));
     assert!(!stdout.contains("Username for credential lookup"));
 }
 
@@ -100,7 +101,6 @@ fn destructive_command_help_explains_scope_and_dry_run() {
 
     let flush_stdout = help_output(&["flush", "--help"]);
     assert!(flush_stdout.contains("Deletes every locally indexed credential"));
-    assert!(flush_stdout.contains("OAuth metadata"));
     assert!(flush_stdout.contains("sfae flush --dry-run"));
     assert!(!flush_stdout.contains("remote store"));
 }

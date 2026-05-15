@@ -26,7 +26,7 @@ Any earlier non-server-side OAuth approach must be removed rather than adapted. 
 - [x] Hosted OAuth service is up and reachable at `https://oauth.sfae.io`
 - [x] Plan captured in repo
 - [x] First manual Discord OAuth smoke test completed
-- [ ] SFAE app/backend wired to start OAuth sessions
+- [x] SFAE app/backend wired to start OAuth sessions
 - [ ] Existing SFAE remote credential proxy path wired end to end
 - [ ] Refresh/revoke delegation implemented
 - [ ] Mock-provider integration tests added
@@ -234,7 +234,7 @@ curl -sS "https://oauth.sfae.io/internal/oauth/sessions/<session-id>" \
 
 ## Phase 5: SFAE App Starts Hosted OAuth Server-Side
 
-Status: pending.
+Status: complete in this branch.
 
 ### Boundary
 
@@ -244,16 +244,34 @@ If there is leftover non-server-side OAuth code or documentation from the earlie
 
 ### Steps
 
-- [ ] Remove any leftover non-server-side OAuth implementation or docs from the earlier approach, including local Google OAuth provider presets and PKCE/browser callback handling, without adding Google as a hosted provider in this phase.
-- [ ] Add an SFAE backend endpoint that authenticates the current SFAE user and calls `POST /internal/oauth/sessions` on the hosted OAuth broker.
-- [ ] Derive the broker `user_id` from authenticated SFAE backend context; do not trust a browser-supplied user id.
-- [ ] Add an SFAE app/UI connection control that calls the SFAE backend endpoint, receives only `session_id`, `authorization_url`, and expiry/status metadata, then opens the returned authorization URL for user consent.
-- [ ] Store and use only the OAuth `session_id` in the SFAE app connection UI; do not store codes, provider tokens, or provider secrets client-side.
-- [ ] Add an SFAE backend status endpoint that polls `GET /internal/oauth/sessions/{id}` on the hosted broker and returns sanitized status to the UI.
-- [ ] Poll the SFAE backend status endpoint after the broker callback return.
-- [ ] Decide the real SFAE user id format passed as `user_id`; replace `manual-test`.
-- [ ] Decide the credential `label` behavior for user-facing Discord connections.
-- [ ] Show connected Discord account state in SFAE.
+- [x] Remove any leftover non-server-side OAuth implementation or docs from the earlier approach, including local Google OAuth provider presets and PKCE/browser callback handling, without adding Google as a hosted provider in this phase.
+- [x] Add an SFAE backend endpoint that authenticates the current SFAE user and calls `POST /internal/oauth/sessions` on the hosted OAuth broker.
+- [x] Derive the broker `user_id` from authenticated SFAE backend context; do not trust a browser-supplied user id.
+- [x] Add an SFAE app/UI connection control that calls the SFAE backend endpoint, receives only `session_id`, `authorization_url`, and expiry/status metadata, then opens the returned authorization URL for user consent.
+- [x] Store and use only the OAuth `session_id` in the SFAE app connection UI; do not store codes, provider tokens, or provider secrets client-side.
+- [x] Add an SFAE backend status endpoint that polls `GET /internal/oauth/sessions/{id}` on the hosted broker and returns sanitized status to the UI.
+- [x] Poll the SFAE backend status endpoint after the broker callback return.
+- [x] Decide the real SFAE user id format passed as `user_id`; replace `manual-test`.
+- [x] Decide the credential `label` behavior for user-facing Discord connections.
+- [x] Show connected Discord account state in SFAE.
+
+### Completed
+
+- Added `POST /oauth/sessions` in `sfae-server`; it authenticates the caller, derives `user_id` from the JWT subject or internal `X-User-Id`, and calls the broker's `POST /internal/oauth/sessions` with `SFAE_INTERNAL_AUTH_SECRET`.
+- Added `GET /oauth/sessions/{id}` in `sfae-server`; it polls the broker, verifies the broker session belongs to the authenticated SFAE user, and returns sanitized status fields without `user_id` or token material.
+- Reworked browser OAuth groups to start hosted broker sessions through the SFAE backend, open only the broker-generated `authorization_url`, and keep only the hosted `session_id` plus sanitized completion state locally.
+- Preserved static credential collection; when `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` are set, the CLI uses the authenticated SFAE backend, which also lets hosted OAuth derive user context.
+- Hosted OAuth groups cannot be combined with common local form fields in this phase; the credential label still flows through `sfae prompt --label`.
+- Removed local provider OAuth implementation from `sfae-core`: provider presets, PKCE verifier/challenge/state generation, local callback handling, provider token exchange, provider token refresh/revoke helpers, and local OAuth metadata files.
+- Removed compile-time OAuth secret loading and active docs for build-time Google OAuth secrets.
+- Replaced direct provider refresh in `sfae-server /credentials/refresh` with a non-implemented response so refresh delegation remains in Phase 7 instead of continuing the old provider-token path.
+- Kept broker-owned refresh tokens and provider token/revoke endpoints out of `sfae_credentials`; the compatibility blob now materializes only the access token and broker/account identifiers.
+
+### Decisions
+
+- SFAE broker `user_id`: the authenticated SFAE backend user id, using the JWT `sub` for bearer callers or `X-User-Id` for internal callers.
+- Discord credential `label`: the existing `sfae prompt --label` value is passed to the broker and materialized on the SFAE credential row.
+- Connected state shown to UI: sanitized session status includes `provider`, `domain`, `label`, `scopes`, `status`, optional `error_code`, optional `provider_subject`, optional `credential_id`, and `expires_at`.
 
 ## Phase 6: End-To-End Credential Proxy Path
 

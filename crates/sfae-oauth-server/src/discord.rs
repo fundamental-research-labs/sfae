@@ -8,7 +8,6 @@ use crate::config::Config;
 
 const AUTH_URL: &str = "https://discord.com/oauth2/authorize";
 pub(crate) const TOKEN_URL: &str = "https://discord.com/api/oauth2/token";
-pub(crate) const REVOCATION_URL: &str = "https://discord.com/api/oauth2/token/revoke";
 const USERINFO_URL: &str = "https://discord.com/api/v10/users/@me";
 const ALLOWED_SCOPES: &[&str] = &["identify", "email", "guilds"];
 

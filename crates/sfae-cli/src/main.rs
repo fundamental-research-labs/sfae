@@ -17,7 +17,7 @@ const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
   4. Send HTTP requests with `sfae request ...` and `{KEY}` placeholders in headers, URLs, or bodies. HTTP is the only protocol currently supported. SFAE resolves placeholders without revealing secret values to the agent.
 
 SECRETS:
-  Secrets are stored in the local OS credential store: Passwords/login keychain on macOS. The agent sees credential set IDs and field names, not secret values."#;
+  By default, static credentials are stored in the local OS credential store: Passwords/login keychain on macOS. If `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` are set, this CLI uses the authenticated SFAE backend instead; hosted OAuth requires that backend path. The agent sees credential set IDs and field names, not secret values."#;
 
 #[cfg(not(feature = "native-keychain"))]
 const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
@@ -69,7 +69,7 @@ const REQUEST_AFTER_HELP: &str = r#"AGENT RULES:
   Put `{KEY}` placeholders only where credential values belong. SFAE resolves `{ALLCAPS_NAME}` from the stored credential blob without printing secrets.
   If a domain has multiple credential sets, pick a UUID from `sfae credentials <domain>` and pass `--cred <uuid>`, or select a label with `--label <label>`.
   Use `--dry-run` to verify placeholder resolution before sending; dry-run output masks resolved credentials.
-  OAuth access tokens refresh automatically after a 401 when refresh metadata is stored.
+  Hosted OAuth credentials use the same `{OAUTH_ACCESS_TOKEN}` placeholder as other credential fields.
 
 PLACEHOLDERS:
   Use `{FIELD_NAME}` in the URL, headers, or body. Field names must match [A-Z][A-Z0-9_]* and come from the selected credential set.
@@ -118,7 +118,7 @@ const PROMPT_EXAMPLES: &str = r#"AGENT RULES:
 
 WAITING BEHAVIOR:
   Treat this command as a blocking human-interaction step. Browser forms and OAuth consent are human-paced and may take an undefined amount of time while the human creates tokens, grants OAuth consent, or switches accounts.
-  Wait until `sfae prompt` exits. Do not impose an agent-side timeout, kill/retry the command while it is still waiting, continue to `sfae request` before it prints `Credential stored: ...`, or ask the human to paste secrets into chat.
+  Wait until `sfae prompt` exits. Do not impose an agent-side timeout, kill/retry the command while it is still waiting, continue to `sfae request` before it prints a stored or connected credential message, or ask the human to paste secrets into chat.
 
 SPEC FORMAT:
   {
@@ -133,14 +133,14 @@ SPEC FORMAT:
 
   Group:
     {"label": "API Key", "fields": ["API_KEY"]}
-    {"label": "OAuth", "oauth": {"scope": "scope from service docs"}}
+    {"label": "OAuth", "oauth": {"provider": "discord", "scopes": ["identify"]}}
 
   Field names must match [A-Z][A-Z0-9_]*. A field named API_KEY is used later as `{API_KEY}`.
-  OAuth groups are for built-in or configured OAuth providers. They store `OAUTH_ACCESS_TOKEN`; use `{OAUTH_ACCESS_TOKEN}` in `sfae request`. Do not put OAuth client IDs or client secrets in the spec.
+  OAuth groups are hosted by SFAE's OAuth broker. Use `{OAUTH_ACCESS_TOKEN}` in `sfae request` after authorization. Do not put OAuth client IDs, client secrets, authorization URLs, token URLs, or provider secrets in the spec.
 
 OAUTH:
-  Built-in provider: googleapis.com, including subdomains such as gmail.googleapis.com.
-  Other domains require a provider preset in SFAE. Supplying auth_url/token_url in the spec does not configure the OAuth client.
+  Hosted provider in this build: discord.
+  Hosted OAuth requires `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` so the SFAE backend can derive the current user and call the broker.
   --terminal supports field prompts only; OAuth requires browser mode.
 
 EXAMPLES:
@@ -193,11 +193,11 @@ EXAMPLES:
       ]
     }'
 
-  OAuth (Google):
-    sfae prompt googleapis.com --spec '{
+  OAuth (Discord):
+    sfae prompt discord.com --spec '{
       "groups": [{
         "label": "OAuth",
-        "oauth": {"scope": "https://www.googleapis.com/auth/gmail.readonly"}
+        "oauth": {"provider": "discord", "scopes": ["identify"]}
       }]
     }'"#;
 
@@ -219,7 +219,7 @@ EXAMPLES:
 
 #[cfg(feature = "native-keychain")]
 const FLUSH_AFTER_HELP: &str = r#"WARNING:
-  Deletes every locally indexed credential and OAuth metadata from Passwords/login keychain on macOS or the local OS credential store on this machine. Prefer `sfae delete <uuid>` when removing one credential set.
+  Deletes every locally indexed credential from Passwords/login keychain on macOS or the local OS credential store on this machine. Prefer `sfae delete <uuid>` when removing one credential set.
   Use `sfae flush --dry-run` first.
 
 EXAMPLES:

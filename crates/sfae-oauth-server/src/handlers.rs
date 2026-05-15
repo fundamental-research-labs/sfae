@@ -13,9 +13,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::crypto::generate_state;
-use crate::discord::{
-    self, DiscordAuthorize, DiscordTokenRequest, DiscordUserRequest, REVOCATION_URL, TOKEN_URL,
-};
+use crate::discord::{self, DiscordAuthorize, DiscordTokenRequest, DiscordUserRequest};
 use crate::state::AppState;
 use crate::types::{CreateSessionReq, CreateSessionResp, HealthResp, SessionStatusResp};
 
@@ -516,14 +514,6 @@ fn credential_blob(args: CredentialBlob<'_>) -> HashMap<String, String> {
     let CredentialBlob { account_id, token } = args;
     let mut values = HashMap::new();
     values.insert("OAUTH_ACCESS_TOKEN".to_string(), token.access_token.clone());
-    if let Some(refresh) = &token.refresh_token {
-        values.insert("OAUTH_REFRESH_TOKEN".to_string(), refresh.clone());
-    }
-    values.insert("OAUTH_TOKEN_URL".to_string(), TOKEN_URL.to_string());
-    values.insert(
-        "OAUTH_REVOCATION_URL".to_string(),
-        REVOCATION_URL.to_string(),
-    );
     values.insert("OAUTH_PROVIDER".to_string(), "discord".to_string());
     values.insert("OAUTH_ACCOUNT_ID".to_string(), account_id.to_string());
     values

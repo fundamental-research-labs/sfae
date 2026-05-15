@@ -4,9 +4,6 @@
 
 use std::time::Instant;
 
-use sfae_core::credential::{CredentialKey, CredentialType, credential_key};
-use sfae_core::error::SfaeError;
-use sfae_core::oauth;
 use sfae_core::proxy::{
     CredentialLookup, ProxyRequest, ProxyResponse, extract_host, find_dynamic_placeholders,
 };
@@ -168,129 +165,16 @@ impl<'a> RetryCtx<'a> {
         if uses_remote_store() {
             self.try_refresh_and_retry_remote()
         } else {
-            self.try_refresh_and_retry_local()
-        }
-    }
-
-    /// Local store: read OAuth metadata from disk and refresh via the provider directly.
-    fn try_refresh_and_retry_local(self) -> anyhow::Result<ProxyResponse> {
-        let RetryCtx {
-            request,
-            store,
-            domain,
-            username,
-            cred_id,
-            verbose,
-            original_response,
-        } = self;
-
-        // Check: OAuth metadata exists for this domain.
-        let metadata_key = oauth::MetadataKey { domain, username };
-        let metadata = match metadata_key.get()? {
-            Some(m) => m,
-            None => return Ok(original_response),
-        };
-
-        // Check: a refresh token is stored for this domain.
-        let refresh_token = match (CredentialLookup {
-            store: &*store,
-            domain,
-            username,
-            cred_id,
-        })
-        .get_by_type(CredentialType::RefreshToken)
-        {
-            Ok(t) => t,
-            Err(SfaeError::CredentialNotFound(_)) => return Ok(original_response),
-            Err(e) => return Err(e.into()),
-        };
-
-        if verbose {
-            eprintln!("< 401 (refresh token available, attempting refresh...)");
-        }
-
-        // Look up the client secret (may be absent for public clients).
-        let client_secret = match (CredentialLookup {
-            store: &*store,
-            domain,
-            username,
-            cred_id,
-        })
-        .get_by_type(CredentialType::ClientSecret)
-        {
-            Ok(s) => Some(s),
-            Err(SfaeError::CredentialNotFound(_)) => None,
-            Err(e) => return Err(e.into()),
-        };
-
-        // Attempt the refresh.
-        let token_response = match (oauth::TokenRequest {
-            token_url: &metadata.token_url,
-            client_id: &metadata.client_id,
-            client_secret: client_secret.as_deref(),
-            grant: oauth::Grant::RefreshToken {
-                refresh_token: &refresh_token,
-            },
-        })
-        .send()
-        {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("Token refresh failed for {domain}: {e}");
-                return Ok(original_response);
+            if self.verbose {
+                eprintln!(
+                    "< 401 (hosted OAuth refresh requires the remote SFAE backend; returning original response)"
+                );
             }
-        };
-
-        // Update the access token in the store.
-        let access_key = credential_key(CredentialKey {
-            domain,
-            username,
-            cred_type: CredentialType::AccessToken,
-        });
-        store.set(sfae_core::store::StoreEntry {
-            key: &access_key,
-            value: &token_response.access_token,
-        })?;
-
-        // If the provider rotated the refresh token, update it too.
-        if let Some(new_refresh) = &token_response.refresh_token {
-            let refresh_key = credential_key(CredentialKey {
-                domain,
-                username,
-                cred_type: CredentialType::RefreshToken,
-            });
-            store.set(sfae_core::store::StoreEntry {
-                key: &refresh_key,
-                value: new_refresh,
-            })?;
+            Ok(self.original_response)
         }
-
-        if verbose {
-            eprintln!("< Token refreshed successfully, retrying request...");
-        }
-
-        // Retry the request once.
-        let start = Instant::now();
-        let retry_response = CredentialLookup {
-            store: &*store,
-            domain,
-            username,
-            cred_id,
-        }
-        .execute(request)?;
-        let elapsed = start.elapsed();
-
-        if verbose {
-            eprintln!("< {} ({:.1?})", retry_response.status, elapsed);
-        }
-
-        Ok(retry_response)
     }
 
     /// Remote-store refresh: call sfae-server's /credentials/refresh endpoint, then retry.
-    ///
-    /// The server reads OAuth metadata and refresh tokens from the DB, calls the provider,
-    /// and updates the tokens — all server-side. The CLI just needs to retry after.
     fn try_refresh_and_retry_remote(self) -> anyhow::Result<ProxyResponse> {
         let RetryCtx {
             request,

@@ -28,11 +28,11 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         None => format!("Credentials for {domain}"),
     };
 
-    let values = if terminal {
+    let prompt_result = if terminal {
         if let Some(u) = &spec.help_url {
             eprintln!("Obtain your credential here: {u}");
         }
-        terminal_prompt_fields(spec)?
+        sfae_core::browser::BrowserPromptResult::Values(terminal_prompt_fields(spec)?)
     } else {
         eprintln!(
             "Opening browser for credential collection. This is human-paced and may take an undefined amount of time; keep waiting until this command exits."
@@ -40,8 +40,23 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         sfae_core::browser::browser_prompt_spec(sfae_core::browser::FormContext {
             domain,
             label: &display_label,
+            credential_label: username,
             spec,
         })?
+    };
+
+    let values = match prompt_result {
+        sfae_core::browser::BrowserPromptResult::Values(values) => values,
+        sfae_core::browser::BrowserPromptResult::HostedOAuth {
+            session_id,
+            credential_id,
+        } => {
+            match credential_id {
+                Some(id) => eprintln!("OAuth credential connected: {id}"),
+                None => eprintln!("OAuth session completed: {session_id}"),
+            }
+            return Ok(());
+        }
     };
 
     let mut store = create_store();
