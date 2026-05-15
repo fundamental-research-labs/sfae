@@ -2,7 +2,16 @@
 
 ## Goal
 
-Deploy `oauth.sfae.io` as a hosted OAuth broker for SFAE, starting with Discord, while keeping provider secrets out of agents, browsers, repo files, and container images.
+Deploy `oauth.sfae.io` as the hosted OAuth broker for SFAE, starting with Discord, while keeping provider secrets out of agents, browsers, repo files, and container images.
+
+OAuth provider handling is server-side only for every OAuth provider. The initial credential form can remain client-side like other SFAE credential methods: it may let the user choose the auth method, label the connection, and click an OAuth connect button. When the OAuth dance is initiated, the form/app must hand off to `oauth.sfae.io`; it must not own provider OAuth logic: no provider-specific OAuth presets, no provider code exchange, no provider client secret, no provider refresh/revoke calls, and no token materialization in client-side code. Those responsibilities stay in `sfae-oauth-server`.
+
+SFAE's credential collection model is:
+
+- Fully local when the credential can be collected and stored locally, such as API keys, personal access tokens, basic auth credentials, or other static fields.
+- Client-side form plus hosted OAuth handoff when OAuth is involved. The browser/app renders the same kind of human-facing credential form as other methods, but provider authorization starts through `oauth.sfae.io`. Discord is only the first hosted provider used to prove the path.
+
+Any earlier non-server-side OAuth approach must be removed rather than adapted. This includes the existing local Google OAuth preset/PKCE path and any client-side Discord OAuth attempt. Do not keep client-side OAuth provider presets, browser callback handling, PKCE/code exchange, token refresh/revoke, or credential materialization paths for provider OAuth. This plan does not add hosted Google support yet; it deletes the incorrect local OAuth surface and focuses the first supported hosted OAuth connection on Discord.
 
 ## Progress Summary
 
@@ -30,8 +39,14 @@ Deploy `oauth.sfae.io` as a hosted OAuth broker for SFAE, starting with Discord,
 - Canonical secrets: GitHub `production` environment secrets
 - Runtime secret copy: Fly app secrets, synced by deploy workflow
 - Public OAuth callback: `https://oauth.sfae.io/v1/callback/discord`
-- First provider: Discord
+- First hosted OAuth provider: Discord
 - First scope: `identify`
+- First app/backend integration target: a server-side Discord connection flow.
+- Ownership split:
+  - `sfae-oauth-server` owns provider OAuth: provider client secrets, authorization session creation, callback handling, code exchange, token encryption, token storage, refresh/revoke behavior, and SFAE credential materialization.
+  - SFAE app/backend owns authenticated user context, calls the hosted broker's internal APIs with `SFAE_INTERNAL_AUTH_SECRET`, and returns only non-secret session/status data to the UI.
+  - Browser/UI owns user interaction and form state: choose OAuth vs other methods, set non-secret labels/options, start connection, open the returned authorization URL, and show/poll sanitized status through the SFAE backend.
+  - `sfae-core`/CLI owns local collection only for non-OAuth credential fields.
 - Cloudflare zone default may remain `Full`; use a hostname-specific rule for `oauth.sfae.io` set to `Full (strict)` once Fly has issued a valid cert
 
 ## Phase 1: Provider And Secret Setup
@@ -217,15 +232,25 @@ curl -sS "https://oauth.sfae.io/internal/oauth/sessions/<session-id>" \
   -H "x-internal-auth: $SFAE_INTERNAL_AUTH_SECRET"
 ```
 
-## Phase 5: SFAE App Starts Hosted OAuth
+## Phase 5: SFAE App Starts Hosted OAuth Server-Side
 
 Status: pending.
 
+### Boundary
+
+This phase is not a client-side provider OAuth implementation. The credential form can be client-side and can initiate the OAuth handoff, but it must do that through the SFAE backend and `oauth.sfae.io`. Do not add provider OAuth handling to `sfae-core` browser flows, do not exchange provider codes from the app/browser/agent, and do not expose provider tokens or provider secrets to the UI. The UI can open the broker-generated authorization URL, but all trusted OAuth work remains in `sfae-oauth-server`.
+
+If there is leftover non-server-side OAuth code or documentation from the earlier approach, remove it as part of this phase before adding the server-side integration. This includes the local Google OAuth preset/PKCE/browser callback flow, but does not mean implementing hosted Google OAuth now. Static local credential collection remains supported.
+
 ### Steps
 
-- [ ] Add an SFAE app/backend endpoint or UI button that calls `POST /internal/oauth/sessions`.
-- [ ] Store and use the OAuth `session_id` in the SFAE app connection UI.
-- [ ] Poll `GET /internal/oauth/sessions/{id}` after callback return.
+- [ ] Remove any leftover non-server-side OAuth implementation or docs from the earlier approach, including local Google OAuth provider presets and PKCE/browser callback handling, without adding Google as a hosted provider in this phase.
+- [ ] Add an SFAE backend endpoint that authenticates the current SFAE user and calls `POST /internal/oauth/sessions` on the hosted OAuth broker.
+- [ ] Derive the broker `user_id` from authenticated SFAE backend context; do not trust a browser-supplied user id.
+- [ ] Add an SFAE app/UI connection control that calls the SFAE backend endpoint, receives only `session_id`, `authorization_url`, and expiry/status metadata, then opens the returned authorization URL for user consent.
+- [ ] Store and use only the OAuth `session_id` in the SFAE app connection UI; do not store codes, provider tokens, or provider secrets client-side.
+- [ ] Add an SFAE backend status endpoint that polls `GET /internal/oauth/sessions/{id}` on the hosted broker and returns sanitized status to the UI.
+- [ ] Poll the SFAE backend status endpoint after the broker callback return.
 - [ ] Decide the real SFAE user id format passed as `user_id`; replace `manual-test`.
 - [ ] Decide the credential `label` behavior for user-facing Discord connections.
 - [ ] Show connected Discord account state in SFAE.
