@@ -16,7 +16,7 @@ Deploy `oauth.sfae.io` as a hosted OAuth broker for SFAE, starting with Discord,
 - [x] Cloudflare/Fly DNS verified for `oauth.sfae.io`
 - [x] Hosted OAuth service is up and reachable at `https://oauth.sfae.io`
 - [x] Plan captured in repo
-- [ ] First manual Discord OAuth smoke test completed
+- [x] First manual Discord OAuth smoke test completed
 - [ ] SFAE app/backend wired to start OAuth sessions
 - [ ] Existing SFAE remote credential proxy path wired end to end
 - [ ] Refresh/revoke delegation implemented
@@ -174,11 +174,18 @@ Cloudflare proxy can then be enabled for `oauth`. If the rest of the zone must s
 
 ## Phase 4: First Manual OAuth Smoke Test
 
-Status: pending.
+Status: complete.
+
+### Completed
+
+- [x] Created a hosted Discord OAuth session for `manual-test`; the smoke command retrieved `SFAE_INTERNAL_AUTH_SECRET` from the Fly runtime into a transient shell variable without printing it or writing it to the repo.
+- [x] Opened the returned Discord authorization URL in the local browser.
+- [x] Completed Discord consent and callback redirect.
+- [x] Verified the hosted session reached `success` with a non-empty `credential_id`.
 
 ### Steps
 
-Create a session:
+Session creation shape:
 
 ```bash
 curl -sS https://oauth.sfae.io/internal/oauth/sessions \
