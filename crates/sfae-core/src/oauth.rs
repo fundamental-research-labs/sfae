@@ -5,7 +5,11 @@
 //! token material once and stores it in the OS credential store; backend mode
 //! keeps the existing SFAE-server proxy path.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -15,9 +19,17 @@ use sha2::{Digest, Sha256};
 use crate::error::SfaeError;
 
 const DEFAULT_OAUTH_BROKER_URL: &str = "https://oauth.sfae.io";
+const PROVIDER_REGISTRY_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Typed hosted OAuth broker capability used by browser and CLI code.
 pub trait HostedOAuthBroker {
+    /// Fetch supported provider metadata from the broker.
+    fn provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        Err(SfaeError::Other(
+            "this OAuth broker adapter does not expose provider metadata".into(),
+        ))
+    }
+
     /// Start a hosted OAuth browser session.
     fn start_session(
         &self,
@@ -73,6 +85,24 @@ impl<'a> OAuthCredentialManager<'a> {
         input: HostedOAuthStart<'_>,
     ) -> Result<StartedHostedOAuthSession, SfaeError> {
         self.broker.start_session(input)
+    }
+
+    pub fn provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        self.broker.provider_registry()
+    }
+
+    // xtask: allow-multi-param - resolves using the request domain and optional provider name
+    pub fn resolve_provider(
+        &self,
+        domain: &str,
+        requested_provider: Option<&str>,
+    ) -> Result<String, SfaeError> {
+        let registry = self.provider_registry()?;
+        resolve_hosted_provider(HostedProviderResolve {
+            domain,
+            requested_provider,
+            registry: &registry,
+        })
     }
 
     pub fn session_status(&self, session_id: &str) -> Result<HostedOAuthStatus, SfaeError> {
@@ -132,6 +162,21 @@ pub struct HostedOAuthRevoke<'a> {
     pub broker_credential_secret: &'a str,
     pub access_token: Option<&'a str>,
     pub refresh_token: Option<&'a str>,
+}
+
+/// Broker-advertised hosted OAuth provider metadata.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HostedOAuthProvider {
+    pub provider: String,
+    #[serde(default)]
+    pub domains: Vec<String>,
+}
+
+/// Broker-advertised hosted OAuth provider registry.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+pub struct HostedOAuthProviderRegistry {
+    #[serde(default)]
+    pub providers: Vec<HostedOAuthProvider>,
 }
 
 /// Sanitized session-start response returned to browser/UI code.
@@ -202,6 +247,19 @@ pub struct HostedOAuthCredential {
 pub struct DirectHostedOAuthBroker {
     base_url: String,
     agent: ureq::Agent,
+    provider_cache: RefCell<Option<CachedProviderRegistry>>,
+}
+
+#[derive(Clone)]
+struct CachedProviderRegistry {
+    registry: HostedOAuthProviderRegistry,
+    expires_at: Instant,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ProviderRegistryCacheFile {
+    fetched_at_epoch_seconds: u64,
+    registry: HostedOAuthProviderRegistry,
 }
 
 impl DirectHostedOAuthBroker {
@@ -222,6 +280,7 @@ impl DirectHostedOAuthBroker {
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             agent: crate::http::make_agent_for_url(base_url),
+            provider_cache: RefCell::new(None),
         })
     }
 
@@ -233,9 +292,49 @@ impl DirectHostedOAuthBroker {
             service: "OAuth broker",
         })
     }
+
+    fn cached_provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        if let Some(cache) = self.provider_cache.borrow().as_ref()
+            && Instant::now() < cache.expires_at
+        {
+            return Ok(cache.registry.clone());
+        }
+        if let Some((registry, remaining_ttl)) = read_provider_registry_cache(&self.base_url) {
+            *self.provider_cache.borrow_mut() = Some(CachedProviderRegistry {
+                registry: registry.clone(),
+                expires_at: Instant::now() + remaining_ttl,
+            });
+            return Ok(registry);
+        }
+
+        let url = format!("{}/v1/oauth/providers", self.base_url);
+        let req = ureq::http::Request::builder()
+            .method("GET")
+            .uri(&url)
+            .body(())
+            .map_err(|e| {
+                SfaeError::StoreError(format!("failed to build OAuth providers request: {e}"))
+            })?;
+        let body = self.send(req)?;
+        let registry: HostedOAuthProviderRegistry = serde_json::from_str(&body).map_err(|e| {
+            SfaeError::StoreError(format!("failed to parse OAuth providers response: {e}"))
+        })?;
+        if provider_registry_disk_cache_enabled(&self.base_url) {
+            let _ = write_provider_registry_cache(&self.base_url, &registry);
+        }
+        *self.provider_cache.borrow_mut() = Some(CachedProviderRegistry {
+            registry: registry.clone(),
+            expires_at: Instant::now() + PROVIDER_REGISTRY_REFRESH_INTERVAL,
+        });
+        Ok(registry)
+    }
 }
 
 impl HostedOAuthBroker for DirectHostedOAuthBroker {
+    fn provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        self.cached_provider_registry()
+    }
+
     fn start_session(
         &self,
         input: HostedOAuthStart<'_>,
@@ -347,6 +446,7 @@ pub struct BackendProxyHostedOAuthBroker {
     base_url: String,
     token: String,
     agent: ureq::Agent,
+    provider_cache: RefCell<Option<CachedProviderRegistry>>,
 }
 
 /// Construction parameters for the SFAE-backend OAuth proxy adapter.
@@ -389,6 +489,7 @@ impl BackendProxyHostedOAuthBroker {
             base_url: config.base_url.trim_end_matches('/').to_string(),
             token: config.token.to_string(),
             agent: crate::http::make_agent_for_url(config.base_url),
+            provider_cache: RefCell::new(None),
         })
     }
 
@@ -403,6 +504,43 @@ impl BackendProxyHostedOAuthBroker {
             target: &self.base_url,
             service: "SFAE backend",
         })
+    }
+
+    fn cached_provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        if let Some(cache) = self.provider_cache.borrow().as_ref()
+            && Instant::now() < cache.expires_at
+        {
+            return Ok(cache.registry.clone());
+        }
+        if let Some((registry, remaining_ttl)) = read_provider_registry_cache(&self.base_url) {
+            *self.provider_cache.borrow_mut() = Some(CachedProviderRegistry {
+                registry: registry.clone(),
+                expires_at: Instant::now() + remaining_ttl,
+            });
+            return Ok(registry);
+        }
+
+        let url = format!("{}/oauth/providers", self.base_url);
+        let req = ureq::http::Request::builder()
+            .method("GET")
+            .uri(&url)
+            .header("Authorization", self.auth_header())
+            .body(())
+            .map_err(|e| {
+                SfaeError::StoreError(format!("failed to build OAuth providers request: {e}"))
+            })?;
+        let body = self.send(req)?;
+        let registry: HostedOAuthProviderRegistry = serde_json::from_str(&body).map_err(|e| {
+            SfaeError::StoreError(format!("failed to parse OAuth providers response: {e}"))
+        })?;
+        if provider_registry_disk_cache_enabled(&self.base_url) {
+            let _ = write_provider_registry_cache(&self.base_url, &registry);
+        }
+        *self.provider_cache.borrow_mut() = Some(CachedProviderRegistry {
+            registry: registry.clone(),
+            expires_at: Instant::now() + PROVIDER_REGISTRY_REFRESH_INTERVAL,
+        });
+        Ok(registry)
     }
 
     /// Ask the SFAE backend to start a hosted OAuth browser session.
@@ -429,6 +567,10 @@ impl BackendProxyHostedOAuthBroker {
 }
 
 impl HostedOAuthBroker for BackendProxyHostedOAuthBroker {
+    fn provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        self.cached_provider_registry()
+    }
+
     fn start_session(
         &self,
         input: HostedOAuthStart<'_>,
@@ -608,24 +750,36 @@ pub fn resolve_hosted_provider(input: HostedProviderResolve<'_>) -> Result<Strin
     let HostedProviderResolve {
         domain,
         requested_provider,
+        registry,
     } = input;
     if let Some(provider) = requested_provider {
-        if provider == "discord" {
+        if registry
+            .providers
+            .iter()
+            .any(|candidate| candidate.provider == provider)
+        {
             return Ok(provider.to_string());
         }
         return Err(SfaeError::ConfigError(format!(
-            "unsupported hosted OAuth provider \"{provider}\""
+            "unsupported hosted OAuth provider \"{provider}\"{}",
+            supported_provider_hint(registry)
         )));
     }
 
     for candidate in parent_domains(domain) {
-        if candidate == "discord.com" {
-            return Ok("discord".to_string());
+        if let Some(provider) = registry.providers.iter().find(|provider| {
+            provider
+                .domains
+                .iter()
+                .any(|supported_domain| supported_domain == &candidate)
+        }) {
+            return Ok(provider.provider.clone());
         }
     }
 
     Err(SfaeError::ConfigError(format!(
-        "hosted OAuth provider is required for \"{domain}\"; only provider \"discord\" is enabled"
+        "hosted OAuth provider is required for \"{domain}\"{}",
+        supported_provider_hint(registry)
     )))
 }
 
@@ -633,6 +787,21 @@ pub fn resolve_hosted_provider(input: HostedProviderResolve<'_>) -> Result<Strin
 pub struct HostedProviderResolve<'a> {
     pub domain: &'a str,
     pub requested_provider: Option<&'a str>,
+    pub registry: &'a HostedOAuthProviderRegistry,
+}
+
+fn supported_provider_hint(registry: &HostedOAuthProviderRegistry) -> String {
+    if registry.providers.is_empty() {
+        return "; the broker did not report any hosted OAuth providers".to_string();
+    }
+    let mut providers: Vec<&str> = registry
+        .providers
+        .iter()
+        .map(|provider| provider.provider.as_str())
+        .collect();
+    providers.sort();
+    providers.dedup();
+    format!("; supported providers: {}", providers.join(", "))
 }
 
 fn parent_domains(domain: &str) -> Vec<String> {
@@ -648,6 +817,70 @@ fn parent_domains(domain: &str) -> Vec<String> {
     domains
 }
 
+fn read_provider_registry_cache(base_url: &str) -> Option<(HostedOAuthProviderRegistry, Duration)> {
+    if !provider_registry_disk_cache_enabled(base_url) {
+        return None;
+    }
+    let raw = fs::read_to_string(provider_registry_cache_path(base_url)).ok()?;
+    let cache: ProviderRegistryCacheFile = serde_json::from_str(&raw).ok()?;
+    let now = current_epoch_seconds()?;
+    let max_age = PROVIDER_REGISTRY_REFRESH_INTERVAL.as_secs();
+    let age = now.checked_sub(cache.fetched_at_epoch_seconds)?;
+    if age >= max_age {
+        return None;
+    }
+    Some((
+        cache.registry,
+        Duration::from_secs(max_age.saturating_sub(age)),
+    ))
+}
+
+// xtask: allow-multi-param - cache key pairs broker URL with fetched registry
+fn write_provider_registry_cache(
+    base_url: &str,
+    registry: &HostedOAuthProviderRegistry,
+) -> Result<(), SfaeError> {
+    let path = provider_registry_cache_path(base_url);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let cache = ProviderRegistryCacheFile {
+        fetched_at_epoch_seconds: current_epoch_seconds()
+            .ok_or_else(|| SfaeError::Other("system clock is before unix epoch".into()))?,
+        registry: registry.clone(),
+    };
+    let raw = serde_json::to_string(&cache)?;
+    fs::write(path, raw)?;
+    Ok(())
+}
+
+fn provider_registry_cache_path(base_url: &str) -> PathBuf {
+    let digest = Sha256::digest(base_url.as_bytes());
+    let key = URL_SAFE_NO_PAD.encode(digest);
+    let cache_dir = dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("sfae");
+    cache_dir.join(format!("oauth-providers-{key}.json"))
+}
+
+fn provider_registry_disk_cache_enabled(base_url: &str) -> bool {
+    !broker_url_is_loopback(base_url)
+}
+
+fn current_epoch_seconds() -> Option<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+fn broker_url_is_loopback(raw: &str) -> bool {
+    let Ok(uri) = raw.parse::<ureq::http::Uri>() else {
+        return false;
+    };
+    matches!(uri.host(), Some("localhost" | "127.0.0.1" | "::1"))
+}
+
 fn validate_broker_url(raw: &str) -> Result<(), SfaeError> {
     let trimmed = raw.trim_end_matches('/');
     let uri: ureq::http::Uri = trimmed.parse().map_err(|e| {
@@ -655,7 +888,7 @@ fn validate_broker_url(raw: &str) -> Result<(), SfaeError> {
     })?;
     let scheme = uri.scheme_str().unwrap_or_default();
     let host = uri.host().unwrap_or_default();
-    let loopback = matches!(host, "localhost" | "127.0.0.1" | "::1");
+    let loopback = broker_url_is_loopback(trimmed);
     if loopback && matches!(scheme, "http" | "https") {
         return Ok(());
     }
@@ -665,274 +898,4 @@ fn validate_broker_url(raw: &str) -> Result<(), SfaeError> {
     Err(SfaeError::ConfigError(
         "SFAE_OAUTH_BROKER_URL must be https://oauth.sfae.io or a local loopback URL".into(),
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use std::cell::RefCell;
-
-    use super::*;
-
-    struct MockHostedOAuthBroker {
-        credential: HostedOAuthCredential,
-        redeemed: RefCell<Vec<String>>,
-        refreshed: RefCell<Vec<String>>,
-        revoked: RefCell<Vec<String>>,
-    }
-
-    impl HostedOAuthBroker for MockHostedOAuthBroker {
-        fn start_session(
-            &self,
-            _input: HostedOAuthStart<'_>,
-        ) -> Result<StartedHostedOAuthSession, SfaeError> {
-            Ok(StartedHostedOAuthSession {
-                session_id: "session-1".to_string(),
-                authorization_url: "https://oauth.example/authorize".to_string(),
-                expires_at: "2026-01-01T00:00:00Z".to_string(),
-                redeem_verifier: Some("verifier".to_string()),
-            })
-        }
-
-        fn session_status(&self, session_id: &str) -> Result<HostedOAuthStatus, SfaeError> {
-            Ok(HostedOAuthStatus {
-                session_id: session_id.to_string(),
-                provider: "discord".to_string(),
-                domain: "discord.com".to_string(),
-                label: None,
-                scopes: vec!["identify".to_string()],
-                status: "success".to_string(),
-                error_code: None,
-                provider_subject: Some("123".to_string()),
-                credential_id: None,
-                expires_at: "2026-01-01T00:00:00Z".to_string(),
-            })
-        }
-
-        // xtask: allow-multi-param - mock records session id and verifier
-        fn redeem_session(
-            &self,
-            session_id: &str,
-            redeem_verifier: &str,
-            completion_verifier: &str,
-        ) -> Result<HostedOAuthCredential, SfaeError> {
-            self.redeemed.borrow_mut().push(format!(
-                "{session_id}:{redeem_verifier}:{completion_verifier}"
-            ));
-            Ok(self.credential.clone())
-        }
-
-        fn refresh_credential(
-            &self,
-            input: HostedOAuthRefresh<'_>,
-        ) -> Result<HostedOAuthCredential, SfaeError> {
-            self.refreshed.borrow_mut().push(format!(
-                "{}:{}:{}:{}",
-                input.provider,
-                input.broker_credential_id,
-                input.broker_credential_secret,
-                input.refresh_token
-            ));
-            Ok(self.credential.clone())
-        }
-
-        fn revoke_credential(&self, input: HostedOAuthRevoke<'_>) -> Result<(), SfaeError> {
-            self.revoked.borrow_mut().push(format!(
-                "{}:{}:{}:{}:{}",
-                input.provider,
-                input.broker_credential_id,
-                input.broker_credential_secret,
-                input.access_token.unwrap_or("-"),
-                input.refresh_token.unwrap_or("-")
-            ));
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn manager_redeems_through_broker() {
-        let mut values = HashMap::new();
-        values.insert("OAUTH_ACCESS_TOKEN".to_string(), "access".to_string());
-        let broker = MockHostedOAuthBroker {
-            credential: HostedOAuthCredential {
-                values,
-                internal: HashMap::new(),
-                metadata: HashMap::new(),
-            },
-            redeemed: RefCell::new(vec![]),
-            refreshed: RefCell::new(vec![]),
-            revoked: RefCell::new(vec![]),
-        };
-        let manager = OAuthCredentialManager::new(&broker);
-        let credential = manager
-            .redeem_session("session-1", Some("verifier"), Some("completion"))
-            .unwrap()
-            .unwrap();
-        assert_eq!(credential.values["OAUTH_ACCESS_TOKEN"], "access");
-        assert_eq!(
-            broker.redeemed.borrow().as_slice(),
-            ["session-1:verifier:completion"]
-        );
-    }
-
-    #[test]
-    fn manager_skips_redeem_when_session_has_no_verifier() {
-        let broker = MockHostedOAuthBroker {
-            credential: HostedOAuthCredential {
-                values: HashMap::new(),
-                internal: HashMap::new(),
-                metadata: HashMap::new(),
-            },
-            redeemed: RefCell::new(vec![]),
-            refreshed: RefCell::new(vec![]),
-            revoked: RefCell::new(vec![]),
-        };
-        let manager = OAuthCredentialManager::new(&broker);
-        assert!(
-            manager
-                .redeem_session("session-1", None, Some("completion"))
-                .unwrap()
-                .is_none()
-        );
-        assert!(broker.redeemed.borrow().is_empty());
-    }
-
-    #[test]
-    fn manager_refreshes_and_revokes_through_broker() {
-        let mut values = HashMap::new();
-        values.insert("OAUTH_ACCESS_TOKEN".to_string(), "new-access".to_string());
-        let broker = MockHostedOAuthBroker {
-            credential: HostedOAuthCredential {
-                values,
-                internal: HashMap::new(),
-                metadata: HashMap::new(),
-            },
-            redeemed: RefCell::new(vec![]),
-            refreshed: RefCell::new(vec![]),
-            revoked: RefCell::new(vec![]),
-        };
-        let manager = OAuthCredentialManager::new(&broker);
-
-        let credential = manager
-            .refresh_credential(HostedOAuthRefresh {
-                provider: "discord",
-                broker_credential_id: "grant-id",
-                broker_credential_secret: "grant-secret",
-                refresh_token: "refresh",
-            })
-            .unwrap();
-        assert_eq!(credential.values["OAUTH_ACCESS_TOKEN"], "new-access");
-        manager
-            .revoke_credential(HostedOAuthRevoke {
-                provider: "discord",
-                broker_credential_id: "grant-id",
-                broker_credential_secret: "grant-secret",
-                access_token: Some("access"),
-                refresh_token: Some("refresh"),
-            })
-            .unwrap();
-
-        assert_eq!(
-            broker.refreshed.borrow().as_slice(),
-            ["discord:grant-id:grant-secret:refresh"]
-        );
-        assert_eq!(
-            broker.revoked.borrow().as_slice(),
-            ["discord:grant-id:grant-secret:access:refresh"]
-        );
-    }
-
-    #[test]
-    fn redeem_challenge_is_stable_and_not_plaintext() {
-        let challenge = redeem_challenge("verifier");
-        assert_eq!(challenge, redeem_challenge("verifier"));
-        assert_ne!(challenge, "verifier");
-        assert!(!challenge.contains('='));
-    }
-
-    #[test]
-    fn resolves_explicit_discord_provider() {
-        let provider = resolve_hosted_provider(HostedProviderResolve {
-            domain: "example.com",
-            requested_provider: Some("discord"),
-        })
-        .unwrap();
-        assert_eq!(provider, "discord");
-    }
-
-    #[test]
-    fn resolves_discord_from_domain() {
-        let provider = resolve_hosted_provider(HostedProviderResolve {
-            domain: "discord.com",
-            requested_provider: None,
-        })
-        .unwrap();
-        assert_eq!(provider, "discord");
-    }
-
-    #[test]
-    fn resolves_discord_from_subdomain() {
-        let provider = resolve_hosted_provider(HostedProviderResolve {
-            domain: "api.discord.com",
-            requested_provider: None,
-        })
-        .unwrap();
-        assert_eq!(provider, "discord");
-    }
-
-    #[test]
-    fn rejects_unknown_provider() {
-        let err = resolve_hosted_provider(HostedProviderResolve {
-            domain: "example.com",
-            requested_provider: Some("google"),
-        })
-        .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("unsupported hosted OAuth provider")
-        );
-    }
-
-    #[test]
-    fn rejects_unknown_domain_without_provider() {
-        let err = resolve_hosted_provider(HostedProviderResolve {
-            domain: "example.com",
-            requested_provider: None,
-        })
-        .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("only provider \"discord\" is enabled")
-        );
-    }
-
-    #[test]
-    fn direct_broker_allows_production_and_loopback_urls() {
-        assert!(DirectHostedOAuthBroker::new("https://oauth.sfae.io").is_ok());
-        assert!(DirectHostedOAuthBroker::new("http://127.0.0.1:3100").is_ok());
-        assert!(DirectHostedOAuthBroker::new("http://localhost:3100").is_ok());
-    }
-
-    #[test]
-    fn direct_broker_rejects_unknown_urls() {
-        assert!(DirectHostedOAuthBroker::new("http://oauth.sfae.io").is_err());
-        assert!(DirectHostedOAuthBroker::new("https://evil.example").is_err());
-    }
-
-    #[test]
-    fn backend_proxy_rejects_empty_explicit_config() {
-        assert!(
-            BackendProxyHostedOAuthBroker::new(BackendProxyConfig {
-                base_url: "",
-                token: "store-token",
-            })
-            .is_err()
-        );
-        assert!(
-            BackendProxyHostedOAuthBroker::new(BackendProxyConfig {
-                base_url: "http://127.0.0.1:3100",
-                token: " ",
-            })
-            .is_err()
-        );
-    }
 }

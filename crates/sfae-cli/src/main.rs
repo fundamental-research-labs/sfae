@@ -14,15 +14,12 @@ const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
   1. Read the target service's official online API and authentication docs to choose endpoints, auth method, scopes, and credential fields.
   2. Run `sfae credentials <domain>` to see stored credential sets for the service. If a suitable set exists, no human action is needed.
   3. If credentials are missing, run `sfae prompt <domain> --spec '<JSON>'` to ask the human to provide or authorize them. Treat `sfae prompt` as a blocking human-interaction step: credential collection can take as long as the human needs, so wait until the command exits. Do not impose an agent-side timeout, kill/retry it while waiting, or ask the human to paste secrets into chat. If multiple auth methods are acceptable, put several alternatives in the spec with preferred methods first. Use `sfae prompt --help` to learn the spec format.
-  4. Send HTTP requests with `sfae request ...` and `{KEY}` placeholders in headers, URLs, or bodies. HTTP is the only protocol currently supported. SFAE resolves placeholders without revealing secret values to the agent.
-
-SECRETS:
-  By default, credentials are stored in the local OS credential store: Passwords/login keychain on macOS. Hosted OAuth uses oauth.sfae.io for provider authorization and stores redeemed token material locally; it does not require `SFAE_STORE_URL`, `SFAE_STORE_TOKEN`, or a running sfae-server. If `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` are set, this CLI uses the authenticated SFAE backend instead. The agent sees credential set IDs and field names, not secret values."#;
+  4. Send HTTP requests with `sfae request ...` and `{KEY}` placeholders in headers, URLs, or bodies. HTTP is the only protocol currently supported. SFAE resolves placeholders without revealing secret values to the agent."#;
 
 #[cfg(not(feature = "native-keychain"))]
 const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
-  This client build uses a remote SFAE store. Set `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` before running commands.
-  `credentials` lists remote credential sets, and `request` sends HTTP API requests with `{KEY}` placeholders resolved by the remote store.
+  SFAE is a credential gateway for agents making HTTP requests to service APIs.
+  `credentials` lists credential sets, and `request` sends HTTP API requests with `{KEY}` placeholders resolved by SFAE.
   `prompt`, `delete`, and `flush` are not available in this build. Use the host integration's request_credential client tool when credentials are missing."#;
 
 /// Credential gateway for LLM agents making HTTP API requests
@@ -44,6 +41,50 @@ fn bin_name() -> Option<&'static str> {
             .map(|f| f.to_string_lossy().into_owned())
             .map(|s| &*Box::leak(s.into_boxed_str()))
     })
+}
+
+#[cfg(feature = "native-keychain")]
+fn wants_prompt_help(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "prompt") && args.iter().any(|arg| arg == "--help" || arg == "-h")
+}
+
+#[cfg(feature = "native-keychain")]
+fn prompt_after_help() -> String {
+    let mut help = PROMPT_AFTER_HELP_BASE.to_string();
+    if let Some(section) = oauth_provider_help_section() {
+        help.push_str("\n\n");
+        help.push_str(&section);
+    }
+    help
+}
+
+#[cfg(feature = "native-keychain")]
+fn oauth_provider_help_section() -> Option<String> {
+    use sfae_core::oauth::HostedOAuthBroker;
+
+    let broker = sfae_core::oauth::DirectHostedOAuthBroker::from_env().ok()?;
+    let mut providers = broker.provider_registry().ok()?.providers;
+    if providers.is_empty() {
+        return None;
+    }
+
+    providers.sort_by(|a, b| a.provider.cmp(&b.provider));
+    let mut lines = vec!["SUPPORTED OAUTH PROVIDERS:".to_string()];
+    for provider in providers {
+        let mut domains = provider.domains;
+        domains.sort();
+        domains.dedup();
+        if domains.is_empty() {
+            lines.push(format!("  {}", provider.provider));
+        } else {
+            lines.push(format!(
+                "  {} (domains: {})",
+                provider.provider,
+                domains.join(", ")
+            ));
+        }
+    }
+    Some(lines.join("\n"))
 }
 
 const CREDENTIALS_AFTER_HELP: &str = r#"OUTPUT:
@@ -110,7 +151,7 @@ EXAMPLES:
       --dry-run"#;
 
 #[cfg(feature = "native-keychain")]
-const PROMPT_EXAMPLES: &str = r#"AGENT RULES:
+const PROMPT_AFTER_HELP_BASE: &str = r#"AGENT RULES:
   Build this JSON from the target service's official authentication docs.
   Use `help_url` for the human-facing page where credentials can be created or managed.
   Use this command only to collect or authorize credentials; use `sfae request` to send HTTP API requests.
@@ -133,16 +174,16 @@ SPEC FORMAT:
 
   Group:
     {"label": "API Key", "fields": ["API_KEY"]}
-    {"label": "OAuth", "oauth": {"provider": "discord", "scopes": ["identify"]}}
+    {"label": "OAuth", "oauth": {"provider": "provider-name", "scopes": ["scope.read"]}}
 
   Field names must match [A-Z][A-Z0-9_]*. A field named API_KEY is used later as `{API_KEY}`.
   OAuth groups are hosted by SFAE's OAuth broker. Use `{OAUTH_ACCESS_TOKEN}` in `sfae request` after authorization. Do not put OAuth client IDs, client secrets, authorization URLs, token URLs, or provider secrets in the spec.
 
 OAUTH:
-  Hosted provider in this build: discord.
-  Local hosted OAuth uses oauth.sfae.io directly and stores the resulting credential in the local OS credential store.
-  Set `SFAE_OAUTH_BROKER_URL` only to override the hosted broker URL for testing.
-  If `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` are set, OAuth uses the authenticated SFAE backend proxy path instead.
+  Use OAuth groups when the target service's official docs require OAuth authorization.
+  Set `provider` to the OAuth provider name from the service docs. If omitted, SFAE can infer it when the prompt domain matches provider metadata.
+  SFAE forwards supported OAuth scopes to the provider. Ask for any scope required by the user's task, but choose the narrowest set that can satisfy the request.
+  SFAE or the provider may reject unknown, unavailable, or app-restricted scopes.
   --terminal supports field prompts only; OAuth requires browser mode.
 
 EXAMPLES:
@@ -195,11 +236,11 @@ EXAMPLES:
       ]
     }'
 
-  OAuth (Discord):
-    sfae prompt discord.com --spec '{
+  OAuth:
+    sfae prompt service.example --spec '{
       "groups": [{
         "label": "OAuth",
-        "oauth": {"provider": "discord", "scopes": ["identify"]}
+        "oauth": {"provider": "provider-name", "scopes": ["scope.read"]}
       }]
     }'"#;
 
@@ -221,7 +262,7 @@ EXAMPLES:
 
 #[cfg(feature = "native-keychain")]
 const FLUSH_AFTER_HELP: &str = r#"WARNING:
-  Deletes every locally indexed credential from Passwords/login keychain on macOS or the local OS credential store on this machine. Prefer `sfae delete <uuid>` when removing one credential set.
+  Deletes every credential indexed by SFAE on this machine. Prefer `sfae delete <uuid>` when removing one credential set.
   Use `sfae flush --dry-run` first.
 
 EXAMPLES:
@@ -273,7 +314,7 @@ enum Command {
     },
     /// Collect or authorize missing credentials via browser form
     #[cfg(feature = "native-keychain")]
-    #[command(after_help = PROMPT_EXAMPLES)]
+    #[command(after_help = PROMPT_AFTER_HELP_BASE)]
     Prompt {
         /// Target service domain where credentials will be stored (e.g. github.com)
         domain: String,
@@ -311,9 +352,14 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
     let mut cmd = Cli::command();
     if let Some(name) = bin_name() {
         cmd = cmd.name(name);
+    }
+    #[cfg(feature = "native-keychain")]
+    if wants_prompt_help(&args) {
+        cmd = cmd.mut_subcommand("prompt", |subcmd| subcmd.after_help(prompt_after_help()));
     }
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
     match cli.command {

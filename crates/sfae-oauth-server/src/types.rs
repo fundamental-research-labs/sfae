@@ -33,6 +33,19 @@ pub(crate) struct HealthResp {
     pub(crate) status: &'static str,
 }
 
+/// Public provider metadata exposed to clients for OAuth provider discovery.
+#[derive(Serialize)]
+pub(crate) struct ProviderListResp {
+    pub(crate) providers: Vec<ProviderResp>,
+}
+
+/// A hosted OAuth provider supported by this broker.
+#[derive(Serialize)]
+pub(crate) struct ProviderResp {
+    pub(crate) provider: &'static str,
+    pub(crate) domains: Vec<&'static str>,
+}
+
 /// Internal session status response for app polling and smoke tests.
 #[derive(Serialize)]
 pub(crate) struct SessionStatusResp {

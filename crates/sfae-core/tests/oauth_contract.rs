@@ -180,6 +180,12 @@ fn session_start_response() -> MockResponse {
     }))
 }
 
+fn provider_registry_response() -> MockResponse {
+    json_response(serde_json::json!({
+        "providers": [{"provider": "discord", "domains": ["discord.com"]}]
+    }))
+}
+
 fn session_status_response() -> MockResponse {
     json_response(serde_json::json!({
         "session_id": "session-1",
@@ -352,6 +358,23 @@ fn test_credential() -> HostedOAuthCredential {
 }
 
 #[test]
+fn direct_broker_fetches_provider_registry_from_broker() {
+    let server = MockHttpServer::start(vec![provider_registry_response()]);
+    let broker = DirectHostedOAuthBroker::new(&server.base_url).unwrap();
+
+    let registry = broker.provider_registry().unwrap();
+    let requests = server.finish();
+
+    assert_eq!(registry.providers[0].provider, "discord");
+    assert_eq!(
+        registry.providers[0].domains,
+        vec!["discord.com".to_string()]
+    );
+    assert_eq!(requests[0].method, "GET");
+    assert_eq!(requests[0].target, "/v1/oauth/providers");
+}
+
+#[test]
 fn direct_broker_uses_local_handoff_contract_without_sending_verifier() {
     let server = MockHttpServer::start(vec![session_start_response(), session_status_response()]);
     let broker = DirectHostedOAuthBroker::new(&server.base_url).unwrap();
@@ -371,6 +394,31 @@ fn direct_broker_uses_local_handoff_contract_without_sending_verifier() {
     assert!(!requests[0].body.contains("redeem_verifier"));
     assert_eq!(requests[1].method, "GET");
     assert_eq!(requests[1].target, "/v1/local/oauth/sessions/session-1");
+}
+
+#[test]
+fn backend_proxy_fetches_provider_registry_from_backend() {
+    let server = MockHttpServer::start(vec![provider_registry_response()]);
+    let broker = BackendProxyHostedOAuthBroker::new(BackendProxyConfig {
+        base_url: &server.base_url,
+        token: "store-token",
+    })
+    .unwrap();
+
+    let registry = broker.provider_registry().unwrap();
+    let requests = server.finish();
+
+    assert_eq!(registry.providers[0].provider, "discord");
+    assert_eq!(
+        registry.providers[0].domains,
+        vec!["discord.com".to_string()]
+    );
+    assert_eq!(requests[0].method, "GET");
+    assert_eq!(requests[0].target, "/oauth/providers");
+    assert_eq!(
+        requests[0].header("authorization"),
+        Some("Bearer store-token")
+    );
 }
 
 #[test]

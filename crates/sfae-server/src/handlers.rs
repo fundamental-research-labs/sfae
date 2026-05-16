@@ -18,8 +18,8 @@ use crate::state::{AppState, Claims};
 use crate::types::{
     BrokerCreateSessionReq, BrokerCreateSessionResp, BrokerSessionStatusResp, CredentialEntry,
     HealthResponse, HostedOAuthSessionReq, HostedOAuthSessionResp, HostedOAuthStatusResp,
-    ListResponse, MintTokenReq, OkResponse, StoreCredentialReq, StoreOkResponse, TokenResponse,
-    UpdateCredentialReq,
+    ListResponse, MintTokenReq, OAuthProviderListResp, OkResponse, StoreCredentialReq,
+    StoreOkResponse, TokenResponse, UpdateCredentialReq,
 };
 
 /// POST /credentials — create a new credential set for the authenticated user.
@@ -338,6 +338,61 @@ pub(crate) async fn mint_token(
     }
 }
 
+/// GET /oauth/providers — proxy hosted OAuth provider metadata for the current user.
+// xtask: allow-multi-param - axum handler extractors
+pub(crate) async fn list_hosted_oauth_providers(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(e) = state.extract_auth(&headers) {
+        return e.into_response();
+    }
+
+    let url = format!("{}/v1/oauth/providers", state.oauth_broker_url);
+    let response = match state.http.get(&url).send().await {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::error!("OAuth broker provider request failed: {e}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                "failed to contact OAuth broker".to_string(),
+            )
+                .into_response();
+        }
+    };
+    let status = response.status();
+    let text = match response.text().await {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::error!("OAuth broker provider response read failed: {e}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                "failed to read OAuth broker response".to_string(),
+            )
+                .into_response();
+        }
+    };
+    if !status.is_success() {
+        return (
+            StatusCode::BAD_GATEWAY,
+            format!("OAuth broker provider request failed: {status}"),
+        )
+            .into_response();
+    }
+    let providers: OAuthProviderListResp = match serde_json::from_str(&text) {
+        Ok(providers) => providers,
+        Err(e) => {
+            tracing::error!("OAuth broker provider response parse failed: {e}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                "failed to parse OAuth broker provider response".to_string(),
+            )
+                .into_response();
+        }
+    };
+    axum::Json(providers).into_response()
+}
+
 /// POST /oauth/sessions — start a hosted OAuth broker session for the current user.
 // xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn create_hosted_oauth_session(
@@ -350,14 +405,6 @@ pub(crate) async fn create_hosted_oauth_session(
         Err(e) => return e.into_response(),
     };
     let user_id = auth.user_id().to_string();
-
-    if body.provider != "discord" {
-        return (
-            StatusCode::BAD_REQUEST,
-            "only provider \"discord\" is enabled".to_string(),
-        )
-            .into_response();
-    }
 
     let url = format!("{}/internal/oauth/sessions", state.oauth_broker_url);
     let broker_body = BrokerCreateSessionReq {

@@ -295,11 +295,6 @@ pub fn browser_prompt_spec(
                     continue;
                 };
 
-                let provider =
-                    crate::oauth::resolve_hosted_provider(crate::oauth::HostedProviderResolve {
-                        domain,
-                        requested_provider: oauth.provider.as_deref(),
-                    })?;
                 let Some(manager) = oauth_manager.as_mut() else {
                     req.respond(Reply {
                         status: 400,
@@ -309,6 +304,7 @@ pub fn browser_prompt_spec(
                         "hosted OAuth is not configured".into(),
                     ));
                 };
+                let provider = manager.resolve_provider(domain, oauth.provider.as_deref())?;
                 let session = manager.start_session(crate::oauth::HostedOAuthStart {
                     provider: &provider,
                     domain,

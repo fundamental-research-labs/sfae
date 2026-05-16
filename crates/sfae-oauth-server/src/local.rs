@@ -29,7 +29,7 @@ pub(crate) async fn create_local_session(
     if body.provider != "discord" {
         return (
             StatusCode::BAD_REQUEST,
-            "only provider \"discord\" is enabled",
+            format!("unsupported OAuth provider \"{}\"", body.provider),
         )
             .into_response();
     }
@@ -253,7 +253,7 @@ pub(crate) async fn refresh_local_credential(
     if body.provider != "discord" {
         return (
             StatusCode::BAD_REQUEST,
-            "only provider \"discord\" is enabled",
+            format!("unsupported OAuth provider \"{}\"", body.provider),
         )
             .into_response();
     }
@@ -320,7 +320,7 @@ pub(crate) async fn revoke_local_credential(
     if body.provider != "discord" {
         return (
             StatusCode::BAD_REQUEST,
-            "only provider \"discord\" is enabled",
+            format!("unsupported OAuth provider \"{}\"", body.provider),
         )
             .into_response();
     }
@@ -621,6 +621,13 @@ mod tests {
             token_encryption_key: "token-key".to_string(),
             discord_client_id: "client-id".to_string(),
             discord_client_secret: "client-secret".to_string(),
+            discord_authorize_url: url::Url::parse("https://discord.com/oauth2/authorize").unwrap(),
+            discord_token_url: url::Url::parse("https://discord.com/api/oauth2/token").unwrap(),
+            discord_token_revoke_url: url::Url::parse(
+                "https://discord.com/api/oauth2/token/revoke",
+            )
+            .unwrap(),
+            discord_userinfo_url: url::Url::parse("https://discord.com/api/v10/users/@me").unwrap(),
             base_url: url::Url::parse("https://oauth.sfae.io").unwrap(),
             allowed_return_origins: std::collections::HashSet::new(),
             port: 3100,

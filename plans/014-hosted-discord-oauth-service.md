@@ -34,7 +34,7 @@ Any earlier non-server-side OAuth provider implementation must be removed rather
 - [x] Local CLI hosted Discord OAuth stores token material in OS credential store
 - [x] Local `sfae request` resolves hosted Discord OAuth credentials from OS credential store
 - [x] Refresh/revoke through broker for locally stored OAuth tokens implemented
-- [ ] Mock-provider integration tests added
+- [x] Mock-provider integration tests added
 
 ## Current Decisions
 
@@ -443,7 +443,7 @@ Status: partially complete in this branch.
 - [x] Add unit tests for provider scope validation.
 - [x] Add unit tests for state hashing.
 - [ ] Add database-backed tests for callback state replay prevention.
-- [ ] Add integration tests with a mock OAuth provider.
+- [x] Add integration tests with a mock OAuth provider.
 - [ ] Add integration tests for the local CLI hosted OAuth flow: broker callback, one-time token retrieval, local OS-store materialization, and `sfae request` resolution.
 - [ ] Add integration tests for broker-mediated refresh/revoke using locally stored refresh/access tokens.
 - [x] Add contract tests that run the same OAuth orchestration behavior over direct broker, backend-proxy, and mock/in-process broker adapters.
@@ -465,10 +465,11 @@ Status: partially complete in this branch.
 - Added explicit backend-proxy OAuth constructor validation for empty URL/token values.
 - Stabilized the CLI version smoke test by using a unique temp directory, after `cargo xtask ci` exposed a fixed-temp-dir flake.
 - Completed a manual live Discord local-CLI smoke against the redeployed `oauth.sfae.io` service: `sfae prompt discord.com --label live-discord-smoke` stored a local keychain credential set, `sfae credentials discord.com` listed only `OAUTH_ACCESS_TOKEN`, dry-run masked `{OAUTH_ACCESS_TOKEN}`, and a real `GET https://discord.com/api/v10/users/@me` returned `200` using only the local CLI credential store.
+- Added broker provider discovery through `GET /v1/oauth/providers`, proxied it through `sfae-server`, and updated CLI/provider resolution so OAuth prompts validate against broker-advertised providers instead of hardcoded client-side provider lists.
+- Added a secret-free mock OAuth provider integration test for the hosted broker callback flow. The test points Discord provider endpoints at a loopback provider double under an explicit test-only flag, creates a broker session, completes the callback/code-exchange path, verifies the session reaches success, and checks the broker called the mock token and userinfo endpoints. GitHub CI now provisions Postgres and sets `SFAE_OAUTH_TEST_DATABASE_URL` so this path runs automatically; local runs without that variable skip cleanly.
 
 ### Remaining
 
-- Full mock OAuth provider integration tests that exercise callback/code exchange without Discord.
 - Database-backed callback failure and replay tests for missing code, provider errors, expired state, and duplicate callback consumption.
 - Database-backed one-time local handoff tests for replayed redeem, wrong verifier, expired redeem, and session-id-only redemption failure.
 - Automated end-to-end local CLI/keychain hosted OAuth smoke coverage, including a secret-gated live Discord request with no `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.

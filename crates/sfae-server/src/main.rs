@@ -23,8 +23,8 @@ mod types;
 
 use crate::handlers::{
     create_hosted_oauth_session, delete_credential, get_blob, get_hosted_oauth_session, health,
-    list_all_credentials, list_credentials, mint_token, refresh_credential, store_credential,
-    update_credential,
+    list_all_credentials, list_credentials, list_hosted_oauth_providers, mint_token,
+    refresh_credential, store_credential, update_credential,
 };
 use crate::state::AppState;
 
@@ -77,6 +77,7 @@ async fn main() {
                 .put(update_credential)
                 .delete(delete_credential),
         )
+        .route("/oauth/providers", get(list_hosted_oauth_providers))
         .route("/oauth/sessions", post(create_hosted_oauth_session))
         .route("/oauth/sessions/{id}", get(get_hosted_oauth_session))
         .route("/auth/token", post(mint_token))

@@ -1,14 +1,80 @@
 //! Regression tests for agent-facing CLI help text.
 
 use assert_cmd::Command;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn help_output(args: &[&str]) -> String {
+    help_output_with_env(args, &[("SFAE_OAUTH_BROKER_URL", "http://127.0.0.1:9")])
+}
+
+// xtask: allow-multi-param - test helper pairs CLI args with environment overrides
+fn help_output_with_env(args: &[&str], envs: &[(&str, &str)]) -> String {
     let assert = Command::cargo_bin("sfae")
         .unwrap()
         .args(args)
+        .envs(envs.iter().copied())
         .assert()
         .success();
     String::from_utf8(assert.get_output().stdout.clone()).unwrap()
+}
+
+struct ProviderServer {
+    base_url: String,
+    handle: thread::JoinHandle<String>,
+}
+
+impl ProviderServer {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cache_key = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base_url = format!("http://{}/{}", listener.local_addr().unwrap(), cache_key);
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let target = read_request_target(&mut stream);
+            let body = r#"{"providers":[{"provider":"discord","domains":["discord.com"]}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            target
+        });
+        Self { base_url, handle }
+    }
+
+    fn finish(self) -> String {
+        self.handle.join().unwrap()
+    }
+}
+
+fn read_request_target(stream: &mut TcpStream) -> String {
+    let mut raw = Vec::new();
+    let mut buf = [0_u8; 512];
+    loop {
+        let read = stream.read(&mut buf).unwrap();
+        if read == 0 {
+            break;
+        }
+        raw.extend_from_slice(&buf[..read]);
+        if raw.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    let request = String::from_utf8_lossy(&raw);
+    request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or_default()
+        .to_string()
 }
 
 #[test]
@@ -26,12 +92,11 @@ fn root_help_explains_agent_workflow() {
         assert!(stdout.contains("If multiple auth methods are acceptable"));
         assert!(stdout.contains("preferred methods first"));
         assert!(stdout.contains("HTTP is the only protocol currently supported"));
-        assert!(stdout.contains("SECRETS:"));
-        assert!(stdout.contains("Passwords/login keychain on macOS"));
-        assert!(stdout.contains("oauth.sfae.io"));
-        assert!(stdout.contains("SFAE_STORE_URL"));
-        assert!(stdout.contains("does not require `SFAE_STORE_URL`"));
-        assert!(stdout.contains("not secret values"));
+        assert!(stdout.contains("without revealing secret values"));
+        assert!(!stdout.contains("SECRETS:"));
+        assert!(!stdout.contains("Passwords/login keychain on macOS"));
+        assert!(!stdout.contains("oauth.sfae.io"));
+        assert!(!stdout.contains("SFAE_STORE_URL"));
         assert!(!stdout.contains("STORE MODES:"));
         assert!(stdout.contains("sfae prompt --help"));
         assert!(stdout.contains("sfae request ..."));
@@ -56,16 +121,45 @@ fn prompt_help_explains_spec_and_secret_handling() {
         assert!(stdout.contains("{API_KEY}"));
         assert!(stdout.contains("{OAUTH_ACCESS_TOKEN}"));
         assert!(stdout.contains("authorization URLs, token URLs, or provider secrets"));
-        assert!(stdout.contains("Hosted provider in this build: discord"));
-        assert!(stdout.contains("SFAE_OAUTH_BROKER_URL"));
-        assert!(stdout.contains("SFAE_STORE_URL"));
+        assert!(stdout.contains("forwards supported OAuth scopes to the provider"));
+        assert!(stdout.contains("Ask for any scope required by the user's task"));
+        assert!(stdout.contains("choose the narrowest set"));
+        assert!(stdout.contains("SFAE or the provider may reject unknown"));
+        assert!(!stdout.contains("SFAE_OAUTH_BROKER_URL"));
+        assert!(!stdout.contains("SFAE_STORE_URL"));
         assert!(stdout.contains("OAuth requires browser mode"));
+        assert!(!stdout.contains("SUPPORTED OAUTH PROVIDERS:"));
+        assert!(!stdout.contains("Hosted provider in this build"));
+        assert!(!stdout.contains(r#""provider": "discord""#));
         assert!(stdout.contains("--label <LABEL>"));
         assert!(stdout.contains("not agents"));
         assert!(stdout.contains("EXAMPLES:"));
         assert!(!stdout.contains("--oauth"));
         assert!(!stdout.contains("--client-secret"));
     }
+}
+
+#[test]
+fn prompt_help_displays_provider_list_from_oauth_broker() {
+    let server = ProviderServer::start();
+    let base_url = server.base_url.clone();
+    let stdout = help_output_with_env(
+        &["prompt", "--help"],
+        &[("SFAE_OAUTH_BROKER_URL", &base_url)],
+    );
+    assert!(stdout.contains("SUPPORTED OAUTH PROVIDERS:"));
+    assert!(stdout.contains("discord (domains: discord.com)"));
+    assert!(server.finish().ends_with("/v1/oauth/providers"));
+
+    let server = ProviderServer::start();
+    let base_url = server.base_url.clone();
+    let cached_stdout = help_output_with_env(
+        &["prompt", "--help"],
+        &[("SFAE_OAUTH_BROKER_URL", &base_url)],
+    );
+    assert!(cached_stdout.contains("SUPPORTED OAUTH PROVIDERS:"));
+    assert!(cached_stdout.contains("discord (domains: discord.com)"));
+    assert!(server.finish().ends_with("/v1/oauth/providers"));
 }
 
 #[test]
@@ -102,7 +196,7 @@ fn destructive_command_help_explains_scope_and_dry_run() {
     assert!(delete_stdout.contains("ACCESS_TOKEN"));
 
     let flush_stdout = help_output(&["flush", "--help"]);
-    assert!(flush_stdout.contains("Deletes every locally indexed credential"));
+    assert!(flush_stdout.contains("Deletes every credential indexed by SFAE"));
     assert!(flush_stdout.contains("sfae flush --dry-run"));
     assert!(!flush_stdout.contains("remote store"));
 }

@@ -1,15 +1,9 @@
 //! Discord OAuth provider descriptor, token exchange, and identity lookup.
 
+use crate::config::Config;
 use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
-use url::Url;
 
-use crate::config::Config;
-
-const AUTH_URL: &str = "https://discord.com/oauth2/authorize";
-pub(crate) const TOKEN_URL: &str = "https://discord.com/api/oauth2/token";
-pub(crate) const TOKEN_REVOKE_URL: &str = "https://discord.com/api/oauth2/token/revoke";
-const USERINFO_URL: &str = "https://discord.com/api/v10/users/@me";
 const ALLOWED_SCOPES: &[&str] = &["identify", "email", "guilds"];
 
 /// Validated Discord OAuth session inputs.
@@ -80,7 +74,7 @@ pub(crate) fn build_authorization(args: DiscordAuthorize<'_>) -> Result<DiscordS
     } = args;
     let scopes = normalize_scopes(requested_scopes)?;
     let redirect_uri = config.discord_redirect_uri();
-    let mut url = Url::parse(AUTH_URL).expect("Discord auth URL is static and valid");
+    let mut url = config.discord_authorize_url.clone();
     url.query_pairs_mut()
         .append_pair("response_type", "code")
         .append_pair("client_id", &config.discord_client_id)
@@ -113,7 +107,7 @@ pub(crate) async fn exchange_code(args: DiscordTokenRequest<'_>) -> Result<Disco
         ("client_secret", &config.discord_client_secret),
     ];
     let response = http
-        .post(TOKEN_URL)
+        .post(config.discord_token_url.clone())
         .form(&params)
         .send()
         .await
@@ -148,7 +142,7 @@ pub(crate) async fn refresh_token(args: DiscordRefreshRequest<'_>) -> Result<Dis
         ("refresh_token", refresh_token),
     ];
     let response = http
-        .post(TOKEN_URL)
+        .post(config.discord_token_url.clone())
         .basic_auth(
             &config.discord_client_id,
             Some(&config.discord_client_secret),
@@ -185,7 +179,7 @@ pub(crate) async fn revoke_token(args: DiscordRevokeRequest<'_>) -> Result<(), S
     } = args;
     let params = [("token", token), ("token_type_hint", token_type_hint)];
     let response = http
-        .post(TOKEN_REVOKE_URL)
+        .post(config.discord_token_revoke_url.clone())
         .basic_auth(
             &config.discord_client_id,
             Some(&config.discord_client_secret),
@@ -212,9 +206,13 @@ pub(crate) struct DiscordRevokeRequest<'a> {
 
 /// Fetch the Discord account profile for a bearer access token.
 pub(crate) async fn fetch_user(args: DiscordUserRequest<'_>) -> Result<DiscordUser, String> {
-    let DiscordUserRequest { http, access_token } = args;
+    let DiscordUserRequest {
+        http,
+        config,
+        access_token,
+    } = args;
     let response = http
-        .get(USERINFO_URL)
+        .get(config.discord_userinfo_url.clone())
         .bearer_auth(access_token)
         .send()
         .await
@@ -232,25 +230,27 @@ pub(crate) async fn fetch_user(args: DiscordUserRequest<'_>) -> Result<DiscordUs
 /// Inputs for loading Discord user identity.
 pub(crate) struct DiscordUserRequest<'a> {
     pub(crate) http: &'a reqwest::Client,
+    pub(crate) config: &'a Config,
     pub(crate) access_token: &'a str,
 }
 
 fn normalize_scopes(requested: &[String]) -> Result<Vec<String>, String> {
-    let mut scopes = if requested.is_empty() {
-        vec!["identify".to_string()]
-    } else {
-        requested.to_vec()
-    };
-    for scope in &scopes {
-        if !ALLOWED_SCOPES.contains(&scope.as_str()) {
-            return Err(format!("unsupported Discord scope: {scope}"));
-        }
-    }
+    let mut scopes: Vec<String> = requested
+        .iter()
+        .flat_map(|scope| scope.split_whitespace())
+        .filter(|scope| !scope.is_empty())
+        .map(str::to_string)
+        .collect();
     if !scopes.iter().any(|s| s == "identify") {
         scopes.push("identify".to_string());
     }
     scopes.sort();
     scopes.dedup();
+    for scope in &scopes {
+        if !ALLOWED_SCOPES.contains(&scope.as_str()) {
+            return Err(format!("unsupported Discord scope: {scope}"));
+        }
+    }
     Ok(scopes)
 }
 
@@ -263,6 +263,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+    use url::Url;
 
     fn test_config() -> Config {
         Config {
@@ -271,6 +272,11 @@ mod tests {
             token_encryption_key: "token-key".to_string(),
             discord_client_id: "client-id".to_string(),
             discord_client_secret: "client-secret".to_string(),
+            discord_authorize_url: Url::parse("https://discord.com/oauth2/authorize").unwrap(),
+            discord_token_url: Url::parse("https://discord.com/api/oauth2/token").unwrap(),
+            discord_token_revoke_url: Url::parse("https://discord.com/api/oauth2/token/revoke")
+                .unwrap(),
+            discord_userinfo_url: Url::parse("https://discord.com/api/v10/users/@me").unwrap(),
             base_url: Url::parse("https://oauth.sfae.io").unwrap(),
             allowed_return_origins: HashSet::new(),
             port: 3100,
@@ -300,6 +306,12 @@ mod tests {
     }
 
     #[test]
+    fn scope_entries_are_split_and_empty_entries_ignored() {
+        let scopes = normalize_scopes(&["guilds email".to_string(), " ".to_string()]).unwrap();
+        assert_eq!(scopes, vec!["email", "guilds", "identify"]);
+    }
+
+    #[test]
     fn authorization_url_contains_only_valid_provider_parameters() {
         let session = build_authorization(DiscordAuthorize {
             config: &test_config(),
@@ -310,7 +322,10 @@ mod tests {
         let url = Url::parse(&session.authorization_url).unwrap();
         let pairs: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
 
-        assert_eq!(url.as_str().split('?').next().unwrap(), AUTH_URL);
+        assert_eq!(
+            url.as_str().split('?').next().unwrap(),
+            "https://discord.com/oauth2/authorize"
+        );
         assert_eq!(pairs["response_type"], "code");
         assert_eq!(pairs["client_id"], "client-id");
         assert_eq!(

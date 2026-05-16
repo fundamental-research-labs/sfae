@@ -16,12 +16,23 @@ use crate::crypto::generate_state;
 use crate::discord::{self, DiscordAuthorize, DiscordTokenRequest, DiscordUserRequest};
 use crate::state::AppState;
 use crate::types::{
-    CreateSessionReq, CreateSessionResp, HealthResp, RedeemedCredentialResp, SessionStatusResp,
+    CreateSessionReq, CreateSessionResp, HealthResp, ProviderListResp, ProviderResp,
+    RedeemedCredentialResp, SessionStatusResp,
 };
 
 /// GET /health — process and router health check.
 pub(crate) async fn health() -> impl IntoResponse {
     axum::Json(HealthResp { status: "ok" })
+}
+
+/// GET /v1/oauth/providers — public provider metadata for client discovery.
+pub(crate) async fn list_providers() -> impl IntoResponse {
+    axum::Json(ProviderListResp {
+        providers: vec![ProviderResp {
+            provider: "discord",
+            domains: vec!["discord.com"],
+        }],
+    })
 }
 
 /// GET /v1/done — minimal human-visible smoke-test completion page.
@@ -59,7 +70,7 @@ pub(crate) async fn create_session(
     if body.provider != "discord" {
         return (
             StatusCode::BAD_REQUEST,
-            "only provider \"discord\" is enabled",
+            format!("unsupported OAuth provider \"{}\"", body.provider),
         )
             .into_response();
     }
@@ -407,6 +418,7 @@ async fn complete_discord_callback(args: CompleteCallback<'_>) -> Result<(), Str
     .await?;
     let user = discord::fetch_user(DiscordUserRequest {
         http: &state.http,
+        config: &state.config,
         access_token: &token.access_token,
     })
     .await?;

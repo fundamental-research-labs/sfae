@@ -116,6 +116,7 @@ fn browser_prompt_with_optional_oauth(
     if crate::store_factory::uses_remote_store() {
         let broker = sfae_core::oauth::BackendProxyHostedOAuthBroker::from_env()?;
         let mut manager = sfae_core::oauth::OAuthCredentialManager::new(&broker);
+        validate_oauth_providers(spec, domain, &manager)?;
         return Ok(sfae_core::browser::browser_prompt_spec(
             form_ctx,
             Some(&mut manager),
@@ -125,6 +126,7 @@ fn browser_prompt_with_optional_oauth(
 
     let broker = sfae_core::oauth::DirectHostedOAuthBroker::from_env()?;
     let mut manager = sfae_core::oauth::OAuthCredentialManager::new(&broker);
+    validate_oauth_providers(spec, domain, &manager)?;
     let mut sink = |credential: sfae_core::oauth::HostedOAuthCredential| {
         let mut store = create_store();
         store.store_structured_credential_set(sfae_core::store::StructuredCredentialSetInput {
@@ -140,6 +142,29 @@ fn browser_prompt_with_optional_oauth(
         Some(&mut manager),
         Some(&mut sink),
     )?)
+}
+
+// xtask: allow-multi-param - validates a prompt spec against a resolved domain and broker
+fn validate_oauth_providers(
+    spec: &PromptSpec,
+    domain: &str,
+    manager: &sfae_core::oauth::OAuthCredentialManager<'_>,
+) -> anyhow::Result<()> {
+    let registry = manager.provider_registry()?;
+    for group in spec
+        .groups
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|group| group.oauth.as_ref())
+    {
+        sfae_core::oauth::resolve_hosted_provider(sfae_core::oauth::HostedProviderResolve {
+            domain,
+            requested_provider: group.provider.as_deref(),
+            registry: &registry,
+        })?;
+    }
+    Ok(())
 }
 
 fn spec_has_oauth(spec: &PromptSpec) -> bool {

@@ -59,6 +59,18 @@ pub(crate) struct HealthResponse {
     pub(crate) status: String,
 }
 
+#[derive(Deserialize, Serialize)]
+pub(crate) struct OAuthProviderListResp {
+    pub(crate) providers: Vec<OAuthProviderResp>,
+}
+
+#[derive(Deserialize, Serialize)]
+pub(crate) struct OAuthProviderResp {
+    pub(crate) provider: String,
+    #[serde(default)]
+    pub(crate) domains: Vec<String>,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct HostedOAuthSessionReq {
     pub(crate) provider: String,
