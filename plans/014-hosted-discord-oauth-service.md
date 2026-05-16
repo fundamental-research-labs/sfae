@@ -436,22 +436,42 @@ Status: complete in this branch for the local CLI hosted Discord OAuth path.
 
 ## Phase 8: Tests And Operational Hardening
 
-Status: pending.
+Status: partially complete in this branch.
 
 ### Steps
 
-- [ ] Add unit tests for provider scope validation.
-- [ ] Add unit tests for state hashing and replay prevention.
+- [x] Add unit tests for provider scope validation.
+- [x] Add unit tests for state hashing.
+- [ ] Add database-backed tests for callback state replay prevention.
 - [ ] Add integration tests with a mock OAuth provider.
 - [ ] Add integration tests for the local CLI hosted OAuth flow: broker callback, one-time token retrieval, local OS-store materialization, and `sfae request` resolution.
 - [ ] Add integration tests for broker-mediated refresh/revoke using locally stored refresh/access tokens.
-- [ ] Add contract tests that run the same OAuth orchestration behavior over direct hosted HTTPS, backend-proxy HTTPS, and mock/in-process broker adapters.
+- [x] Add contract tests that run the same OAuth orchestration behavior over direct broker, backend-proxy, and mock/in-process broker adapters.
 - [ ] Add callback failure tests: missing code, provider error, expired state, duplicate callback.
 - [ ] Add one-time handoff tests: replayed redeem fails, wrong verifier fails, expired redeem fails, and session id alone cannot retrieve tokens.
-- [ ] Add placeholder policy tests proving internal-only values such as refresh tokens cannot be resolved into URLs, headers, or bodies.
+- [x] Add placeholder policy tests proving internal-only values such as refresh tokens cannot be resolved into URLs, headers, or bodies.
 - [ ] Add redaction tests for logs/errors/browser responses: no provider secrets, codes, access tokens, refresh tokens, redeem secrets, or raw token responses.
 - [ ] Add a secret-gated live Discord smoke test that uses the local CLI and OS credential store, with no `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
 - [ ] Add metrics or structured audit event coverage for session start, callback success, callback failure, refresh, and revoke.
+
+### Completed
+
+- Added Discord provider unit tests for default scopes, scope sorting/deduplication, unsupported-scope rejection, authorization URL parameters, and provider-returned scope parsing.
+- Added OAuth service crypto tests for keyed state hashing, generated state shape/uniqueness, token encryption/decryption/tamper rejection, key-size validation, and redeem challenge binding.
+- Added OAuth service safety tests for local loopback return URL policy, redirect completion query construction, HTML escaping, backend credential materialization without refresh tokens, and refreshed local credential blobs keeping refresh material internal-only.
+- Added `sfae-core` OAuth contract tests over the direct broker adapter, backend-proxy adapter, and an in-process mock broker. The tests cover session start/status shape, local redeem/refresh/revoke request shape, backend bearer auth on create and status polling, local credential materialization, request placeholder resolution for URL/header/body, internal-only placeholder rejection, and sanitized client-side broker error messages.
+- Hardened Discord token exchange, refresh, and revoke failure logs so raw provider response bodies are not logged.
+- Added loopback-aware HTTP agent construction so local mock broker tests and local broker URLs bypass proxy environment variables while non-loopback traffic still honors configured proxies.
+- Added explicit backend-proxy OAuth constructor validation for empty URL/token values.
+- Stabilized the CLI version smoke test by using a unique temp directory, after `cargo xtask ci` exposed a fixed-temp-dir flake.
+
+### Remaining
+
+- Full mock OAuth provider integration tests that exercise callback/code exchange without Discord.
+- Database-backed callback failure and replay tests for missing code, provider errors, expired state, and duplicate callback consumption.
+- Database-backed one-time local handoff tests for replayed redeem, wrong verifier, expired redeem, and session-id-only redemption failure.
+- End-to-end local CLI/keychain hosted OAuth smoke coverage, including a secret-gated live Discord request with no `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
+- Metrics or structured audit event coverage for session start, callback success/failure, refresh, and revoke.
 
 ## Operational Notes
 

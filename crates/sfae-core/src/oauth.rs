@@ -221,7 +221,7 @@ impl DirectHostedOAuthBroker {
         validate_broker_url(base_url)?;
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
-            agent: crate::http::make_agent(),
+            agent: crate::http::make_agent_for_url(base_url),
         })
     }
 
@@ -349,6 +349,12 @@ pub struct BackendProxyHostedOAuthBroker {
     agent: ureq::Agent,
 }
 
+/// Construction parameters for the SFAE-backend OAuth proxy adapter.
+pub struct BackendProxyConfig<'a> {
+    pub base_url: &'a str,
+    pub token: &'a str,
+}
+
 /// Backward-compatible name for the backend-proxy OAuth client.
 pub type HostedOAuthClient = BackendProxyHostedOAuthBroker;
 
@@ -361,10 +367,28 @@ impl BackendProxyHostedOAuthBroker {
         let token = std::env::var("SFAE_STORE_TOKEN").map_err(|_| {
             SfaeError::ConfigError("hosted OAuth backend proxy requires SFAE_STORE_TOKEN".into())
         })?;
+        Self::new(BackendProxyConfig {
+            base_url: &base_url,
+            token: &token,
+        })
+    }
+
+    /// Create a backend-proxy client from explicit connection settings.
+    pub fn new(config: BackendProxyConfig<'_>) -> Result<Self, SfaeError> {
+        if config.base_url.trim().is_empty() {
+            return Err(SfaeError::ConfigError(
+                "SFAE backend OAuth proxy URL cannot be empty".into(),
+            ));
+        }
+        if config.token.trim().is_empty() {
+            return Err(SfaeError::ConfigError(
+                "SFAE backend OAuth proxy token cannot be empty".into(),
+            ));
+        }
         Ok(Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            token,
-            agent: crate::http::make_agent(),
+            base_url: config.base_url.trim_end_matches('/').to_string(),
+            token: config.token.to_string(),
+            agent: crate::http::make_agent_for_url(config.base_url),
         })
     }
 
@@ -892,5 +916,23 @@ mod tests {
     fn direct_broker_rejects_unknown_urls() {
         assert!(DirectHostedOAuthBroker::new("http://oauth.sfae.io").is_err());
         assert!(DirectHostedOAuthBroker::new("https://evil.example").is_err());
+    }
+
+    #[test]
+    fn backend_proxy_rejects_empty_explicit_config() {
+        assert!(
+            BackendProxyHostedOAuthBroker::new(BackendProxyConfig {
+                base_url: "",
+                token: "store-token",
+            })
+            .is_err()
+        );
+        assert!(
+            BackendProxyHostedOAuthBroker::new(BackendProxyConfig {
+                base_url: "http://127.0.0.1:3100",
+                token: " ",
+            })
+            .is_err()
+        );
     }
 }

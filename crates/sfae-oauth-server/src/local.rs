@@ -556,6 +556,8 @@ fn local_return_url_allowed(raw: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine;
+
     use super::*;
     use crate::crypto::StateHasher;
 
@@ -592,5 +594,69 @@ mod tests {
             grant: &grant,
             refresh_token: "refresh-token",
         }));
+    }
+
+    #[test]
+    fn local_return_url_allows_only_http_loopback() {
+        assert!(local_return_url_allowed(
+            "http://127.0.0.1:49152/oauth-complete"
+        ));
+        assert!(local_return_url_allowed(
+            "http://localhost:49152/oauth-complete"
+        ));
+        assert!(!local_return_url_allowed(
+            "https://127.0.0.1:49152/oauth-complete"
+        ));
+        assert!(!local_return_url_allowed(
+            "http://192.168.1.10:49152/oauth-complete"
+        ));
+        assert!(!local_return_url_allowed("https://oauth.sfae.io/v1/done"));
+    }
+
+    #[tokio::test]
+    async fn refreshed_blob_keeps_refresh_material_internal_only() {
+        let config = crate::config::Config {
+            database_url: "postgres://localhost/sfae_test".to_string(),
+            internal_auth_secret: "internal".to_string(),
+            token_encryption_key: "token-key".to_string(),
+            discord_client_id: "client-id".to_string(),
+            discord_client_secret: "client-secret".to_string(),
+            base_url: url::Url::parse("https://oauth.sfae.io").unwrap(),
+            allowed_return_origins: std::collections::HashSet::new(),
+            port: 3100,
+        };
+        let state = AppState {
+            http: reqwest::Client::new(),
+            pool: sqlx::PgPool::connect_lazy("postgres://localhost/sfae_test").unwrap(),
+            config,
+            cipher: crate::crypto::TokenCipher::from_base64_key(
+                &base64::engine::general_purpose::STANDARD.encode([3u8; 32]),
+            )
+            .unwrap(),
+            state_hasher: StateHasher::new("hash-secret"),
+        };
+        let token = discord::DiscordToken {
+            access_token: "new-access".to_string(),
+            refresh_token: Some("new-refresh".to_string()),
+            token_type: Some("Bearer".to_string()),
+            scope: Some("identify email".to_string()),
+            expires_in: Some(60),
+        };
+
+        let credential = refreshed_credential_blob(RefreshedCredentialBlob {
+            state: &state,
+            token: &token,
+        });
+
+        assert_eq!(credential.values["OAUTH_ACCESS_TOKEN"], "new-access");
+        assert!(!credential.values.contains_key("OAUTH_REFRESH_TOKEN"));
+        assert_eq!(credential.internal["OAUTH_REFRESH_TOKEN"], "new-refresh");
+        assert_eq!(credential.metadata["OAUTH_PROVIDER"], "discord");
+        assert_eq!(
+            credential.metadata["OAUTH_BROKER_URL"],
+            "https://oauth.sfae.io/"
+        );
+        assert_eq!(credential.metadata["OAUTH_SCOPES"], "email identify");
+        assert!(credential.metadata.contains_key("OAUTH_EXPIRES_AT"));
     }
 }

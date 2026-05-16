@@ -821,3 +821,60 @@ fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redirect_url_appends_completion_without_dropping_existing_query() {
+        let session_id = Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8").unwrap();
+        let redirected = redirect_url(RedirectTarget {
+            base: "http://127.0.0.1:49152/oauth-complete?source=browser",
+            session_id,
+            status: "success",
+            completion_verifier: Some("completion-secret"),
+        });
+        let url = url::Url::parse(&redirected).unwrap();
+        let pairs: HashMap<_, _> = url.query_pairs().into_owned().collect();
+
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.host_str(), Some("127.0.0.1"));
+        assert_eq!(pairs["source"], "browser");
+        assert_eq!(pairs["session_id"], session_id.to_string());
+        assert_eq!(pairs["status"], "success");
+        assert_eq!(pairs["completion_verifier"], "completion-secret");
+    }
+
+    #[test]
+    fn html_escape_prevents_completion_page_markup_injection() {
+        let escaped = html_escape(r#"<script>alert("x")</script>&"#);
+
+        assert_eq!(
+            escaped,
+            "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&amp;"
+        );
+    }
+
+    #[test]
+    fn backend_credential_blob_contains_only_injectable_access_token() {
+        let account_id = Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8").unwrap();
+        let token = discord::DiscordToken {
+            access_token: "access-token".to_string(),
+            refresh_token: Some("refresh-token".to_string()),
+            token_type: Some("Bearer".to_string()),
+            scope: Some("identify".to_string()),
+            expires_in: Some(60),
+        };
+
+        let blob = credential_blob(CredentialBlob {
+            account_id,
+            token: &token,
+        });
+
+        assert_eq!(blob["OAUTH_ACCESS_TOKEN"], "access-token");
+        assert_eq!(blob["OAUTH_PROVIDER"], "discord");
+        assert_eq!(blob["OAUTH_ACCOUNT_ID"], account_id.to_string());
+        assert!(!blob.contains_key("OAUTH_REFRESH_TOKEN"));
+    }
+}

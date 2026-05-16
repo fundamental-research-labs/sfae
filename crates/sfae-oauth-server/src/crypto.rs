@@ -115,3 +115,68 @@ pub(crate) fn redeem_challenge(verifier: &str) -> String {
     let digest = Sha256::digest(verifier.as_bytes());
     URL_SAFE_NO_PAD.encode(digest)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    fn test_key() -> String {
+        STANDARD.encode([7u8; 32])
+    }
+
+    #[test]
+    fn state_hash_is_stable_keyed_and_not_plaintext() {
+        let first = StateHasher::new("secret-one");
+        let second = StateHasher::new("secret-two");
+
+        assert_eq!(first.hash("state"), first.hash("state"));
+        assert_ne!(first.hash("state"), second.hash("state"));
+        assert_ne!(first.hash("state"), "state");
+        assert!(!first.hash("state").contains('='));
+    }
+
+    #[test]
+    fn generated_states_are_url_safe_and_unique_in_sample() {
+        let mut seen = HashSet::new();
+        for _ in 0..32 {
+            let state = generate_state();
+            assert!(
+                state
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            );
+            assert!(seen.insert(state));
+        }
+    }
+
+    #[test]
+    fn token_cipher_round_trips_and_rejects_tampering() {
+        let cipher = TokenCipher::from_base64_key(&test_key()).unwrap();
+        let ciphertext = cipher.encrypt("access-token").unwrap();
+
+        assert_eq!(cipher.decrypt(&ciphertext).unwrap(), "access-token");
+        assert_ne!(ciphertext, "access-token");
+        assert!(cipher.decrypt(&format!("{ciphertext}x")).is_err());
+    }
+
+    #[test]
+    fn token_cipher_rejects_wrong_key_size() {
+        let short = STANDARD.encode([1u8; 16]);
+        let Err(err) = TokenCipher::from_base64_key(&short) else {
+            panic!("short key should fail");
+        };
+        assert!(err.contains("expected 32"));
+    }
+
+    #[test]
+    fn redeem_challenge_is_stable_and_verifier_bound() {
+        let challenge = redeem_challenge("redeem-verifier");
+
+        assert_eq!(challenge, redeem_challenge("redeem-verifier"));
+        assert_ne!(challenge, redeem_challenge("wrong-verifier"));
+        assert_ne!(challenge, "redeem-verifier");
+        assert!(!challenge.contains('='));
+    }
+}

@@ -120,8 +120,7 @@ pub(crate) async fn exchange_code(args: DiscordTokenRequest<'_>) -> Result<Disco
         .map_err(|e| format!("discord token request failed: {e}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        tracing::warn!("Discord token exchange rejected: {status} {body}");
+        tracing::warn!("Discord token exchange rejected: {status}");
         return Err(format!("discord_token_status_{status}"));
     }
     response
@@ -160,8 +159,7 @@ pub(crate) async fn refresh_token(args: DiscordRefreshRequest<'_>) -> Result<Dis
         .map_err(|e| format!("discord refresh request failed: {e}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        tracing::warn!("Discord token refresh rejected: {status} {body}");
+        tracing::warn!("Discord token refresh rejected: {status}");
         return Err(format!("discord_refresh_status_{status}"));
     }
     response
@@ -198,8 +196,7 @@ pub(crate) async fn revoke_token(args: DiscordRevokeRequest<'_>) -> Result<(), S
         .map_err(|e| format!("discord revoke request failed: {e}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        tracing::warn!("Discord token revoke rejected: {status} {body}");
+        tracing::warn!("Discord token revoke rejected: {status}");
         return Err(format!("discord_revoke_status_{status}"));
     }
     Ok(())
@@ -259,4 +256,96 @@ fn normalize_scopes(requested: &[String]) -> Result<Vec<String>, String> {
 
 fn split_scopes(raw: &str) -> Vec<String> {
     raw.split_whitespace().map(str::to_string).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    fn test_config() -> Config {
+        Config {
+            database_url: "postgres://localhost/sfae_test".to_string(),
+            internal_auth_secret: "internal".to_string(),
+            token_encryption_key: "token-key".to_string(),
+            discord_client_id: "client-id".to_string(),
+            discord_client_secret: "client-secret".to_string(),
+            base_url: Url::parse("https://oauth.sfae.io").unwrap(),
+            allowed_return_origins: HashSet::new(),
+            port: 3100,
+        }
+    }
+
+    #[test]
+    fn default_scope_is_identify() {
+        assert_eq!(normalize_scopes(&[]).unwrap(), vec!["identify"]);
+    }
+
+    #[test]
+    fn scopes_are_sorted_deduped_and_include_identify() {
+        let scopes = normalize_scopes(&[
+            "guilds".to_string(),
+            "email".to_string(),
+            "guilds".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(scopes, vec!["email", "guilds", "identify"]);
+    }
+
+    #[test]
+    fn unsupported_scope_is_rejected() {
+        let err = normalize_scopes(&["messages.read".to_string()]).unwrap_err();
+        assert_eq!(err, "unsupported Discord scope: messages.read");
+    }
+
+    #[test]
+    fn authorization_url_contains_only_valid_provider_parameters() {
+        let session = build_authorization(DiscordAuthorize {
+            config: &test_config(),
+            state: "state-value",
+            requested_scopes: &["email".to_string()],
+        })
+        .unwrap();
+        let url = Url::parse(&session.authorization_url).unwrap();
+        let pairs: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+
+        assert_eq!(url.as_str().split('?').next().unwrap(), AUTH_URL);
+        assert_eq!(pairs["response_type"], "code");
+        assert_eq!(pairs["client_id"], "client-id");
+        assert_eq!(
+            pairs["redirect_uri"],
+            "https://oauth.sfae.io/v1/callback/discord"
+        );
+        assert_eq!(pairs["scope"], "email identify");
+        assert_eq!(pairs["state"], "state-value");
+        assert_eq!(pairs["prompt"], "consent");
+        let keys: std::collections::BTreeSet<_> = pairs.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            std::collections::BTreeSet::from([
+                "client_id",
+                "prompt",
+                "redirect_uri",
+                "response_type",
+                "scope",
+                "state"
+            ])
+        );
+    }
+
+    #[test]
+    fn token_scopes_prefer_provider_response() {
+        let token = DiscordToken {
+            access_token: "access".to_string(),
+            refresh_token: None,
+            token_type: Some("Bearer".to_string()),
+            scope: Some("guilds identify guilds".to_string()),
+            expires_in: None,
+        };
+        assert_eq!(
+            token.scopes(&["email".to_string()]),
+            vec!["guilds", "identify"]
+        );
+    }
 }
