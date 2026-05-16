@@ -15,7 +15,9 @@ use uuid::Uuid;
 use crate::crypto::generate_state;
 use crate::discord::{self, DiscordAuthorize, DiscordTokenRequest, DiscordUserRequest};
 use crate::state::AppState;
-use crate::types::{CreateSessionReq, CreateSessionResp, HealthResp, SessionStatusResp};
+use crate::types::{
+    CreateSessionReq, CreateSessionResp, HealthResp, RedeemedCredentialResp, SessionStatusResp,
+};
 
 /// GET /health — process and router health check.
 pub(crate) async fn health() -> impl IntoResponse {
@@ -214,6 +216,7 @@ pub(crate) async fn callback_discord(
             base: &session.return_url,
             session_id: session.id,
             status: "error",
+            completion_verifier: None,
         }))
         .into_response();
     }
@@ -229,8 +232,31 @@ pub(crate) async fn callback_discord(
             base: &session.return_url,
             session_id: session.id,
             status: "error",
+            completion_verifier: None,
         }))
         .into_response();
+    };
+
+    let completion_verifier = match local_completion_verifier(LocalCompletion {
+        state: &state,
+        session: &session,
+    }) {
+        Ok(value) => value,
+        Err(error_code) => {
+            mark_session_error(MarkSession {
+                state: &state,
+                session_id: session.id,
+                error_code: &error_code,
+            })
+            .await;
+            return Redirect::to(&redirect_url(RedirectTarget {
+                base: &session.return_url,
+                session_id: session.id,
+                status: "error",
+                completion_verifier: None,
+            }))
+            .into_response();
+        }
     };
 
     match complete_discord_callback(CompleteCallback {
@@ -244,6 +270,7 @@ pub(crate) async fn callback_discord(
             base: &session.return_url,
             session_id: session.id,
             status: "success",
+            completion_verifier: completion_verifier.as_deref(),
         }))
         .into_response(),
         Err(error_code) => {
@@ -257,6 +284,7 @@ pub(crate) async fn callback_discord(
                 base: &session.return_url,
                 session_id: session.id,
                 status: "error",
+                completion_verifier: None,
             }))
             .into_response()
         }
@@ -277,6 +305,8 @@ struct ConsumedSession {
     label: Option<String>,
     scopes: Vec<String>,
     return_url: String,
+    session_mode: String,
+    completion_verifier_ciphertext: Option<String>,
 }
 
 struct ConsumeSession<'a> {
@@ -286,23 +316,47 @@ struct ConsumeSession<'a> {
 
 async fn consume_session(args: ConsumeSession<'_>) -> Result<Option<ConsumedSession>, Response> {
     let ConsumeSession { state, state_hash } = args;
-    let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>, Vec<String>, String)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Option<String>,
+            Vec<String>,
+            String,
+            String,
+            Option<String>,
+        ),
+    >(
         "UPDATE oauth_sessions \
          SET consumed_at = now(), status = 'consuming', updated_at = now() \
          WHERE state_hash = $1 AND consumed_at IS NULL AND expires_at > now() \
-         RETURNING id, user_id, domain, label, scopes, return_url",
+         RETURNING id, user_id, domain, label, scopes, return_url, session_mode, \
+                   completion_verifier_ciphertext",
     )
     .bind(state_hash)
     .fetch_optional(&state.pool)
     .await;
     match row {
-        Ok(Some((id, user_id, domain, label, scopes, return_url))) => Ok(Some(ConsumedSession {
+        Ok(Some((
             id,
             user_id,
             domain,
             label,
             scopes,
             return_url,
+            session_mode,
+            completion_verifier_ciphertext,
+        ))) => Ok(Some(ConsumedSession {
+            id,
+            user_id,
+            domain,
+            label,
+            scopes,
+            return_url,
+            session_mode,
+            completion_verifier_ciphertext,
         })),
         Ok(None) => Ok(None),
         Err(e) => {
@@ -316,6 +370,27 @@ struct CompleteCallback<'a> {
     state: &'a AppState,
     session: &'a ConsumedSession,
     code: &'a str,
+}
+
+struct LocalCompletion<'a> {
+    state: &'a AppState,
+    session: &'a ConsumedSession,
+}
+
+fn local_completion_verifier(args: LocalCompletion<'_>) -> Result<Option<String>, String> {
+    let LocalCompletion { state, session } = args;
+    if session.session_mode != "local" {
+        return Ok(None);
+    }
+    let ciphertext = session
+        .completion_verifier_ciphertext
+        .as_deref()
+        .ok_or_else(|| "local_completion_missing".to_string())?;
+    state
+        .cipher
+        .decrypt(ciphertext)
+        .map(Some)
+        .map_err(|_| "local_completion_decrypt_failed".to_string())
 }
 
 async fn complete_discord_callback(args: CompleteCallback<'_>) -> Result<(), String> {
@@ -337,6 +412,18 @@ async fn complete_discord_callback(args: CompleteCallback<'_>) -> Result<(), Str
     .await?;
 
     let provider_scopes = token.scopes(&session.scopes);
+    if session.session_mode == "local" {
+        mark_local_session_success(MarkLocalSuccess {
+            state,
+            session,
+            token: &token,
+            user: &user,
+            scopes: &provider_scopes,
+        })
+        .await?;
+        return Ok(());
+    }
+
     let account_id = upsert_account(UpsertAccount {
         state,
         session,
@@ -362,10 +449,97 @@ async fn complete_discord_callback(args: CompleteCallback<'_>) -> Result<(), Str
         state,
         session_id: session.id,
         provider_subject: &user.id,
-        credential_id,
+        credential_id: Some(credential_id),
     })
     .await?;
     Ok(())
+}
+
+struct MarkLocalSuccess<'a> {
+    state: &'a AppState,
+    session: &'a ConsumedSession,
+    token: &'a discord::DiscordToken,
+    user: &'a discord::DiscordUser,
+    scopes: &'a [String],
+}
+
+async fn mark_local_session_success(args: MarkLocalSuccess<'_>) -> Result<(), String> {
+    let MarkLocalSuccess {
+        state,
+        session,
+        token,
+        user,
+        scopes,
+    } = args;
+    let credential = local_credential_blob(LocalCredentialBlob {
+        state,
+        token,
+        user,
+        scopes,
+    });
+    let value_json = serde_json::to_string(&credential)
+        .map_err(|e| format!("local_credential_serialize_failed: {e}"))?;
+    let ciphertext = state.cipher.encrypt(&value_json)?;
+    sqlx::query(
+        "UPDATE oauth_sessions \
+         SET status = 'success', provider_subject = $2, credential_id = NULL, \
+             local_credential_ciphertext = $3, updated_at = now() \
+         WHERE id = $1 AND session_mode = 'local'",
+    )
+    .bind(session.id)
+    .bind(&user.id)
+    .bind(ciphertext)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| format!("local_session_success_failed: {e}"))?;
+    Ok(())
+}
+
+struct LocalCredentialBlob<'a> {
+    state: &'a AppState,
+    token: &'a discord::DiscordToken,
+    user: &'a discord::DiscordUser,
+    scopes: &'a [String],
+}
+
+fn local_credential_blob(args: LocalCredentialBlob<'_>) -> RedeemedCredentialResp {
+    let LocalCredentialBlob {
+        state,
+        token,
+        user,
+        scopes,
+    } = args;
+    let mut values = HashMap::new();
+    values.insert("OAUTH_ACCESS_TOKEN".to_string(), token.access_token.clone());
+
+    let mut internal = HashMap::new();
+    if let Some(refresh_token) = token.refresh_token.as_deref() {
+        internal.insert("OAUTH_REFRESH_TOKEN".to_string(), refresh_token.to_string());
+    }
+
+    let mut metadata = HashMap::new();
+    metadata.insert("OAUTH_PROVIDER".to_string(), "discord".to_string());
+    metadata.insert(
+        "OAUTH_BROKER_URL".to_string(),
+        state.config.base_url.to_string(),
+    );
+    metadata.insert("OAUTH_SCOPES".to_string(), scopes.join(" "));
+    metadata.insert("OAUTH_PROVIDER_SUBJECT".to_string(), user.id.clone());
+    if let Some(display_name) = user.display_name() {
+        metadata.insert("OAUTH_DISPLAY_NAME".to_string(), display_name);
+    }
+    if let Some(token_type) = token.token_type.as_deref() {
+        metadata.insert("OAUTH_TOKEN_TYPE".to_string(), token_type.to_string());
+    }
+    if let Some(expires_at) = token.expires_at() {
+        metadata.insert("OAUTH_EXPIRES_AT".to_string(), expires_at.to_rfc3339());
+    }
+
+    RedeemedCredentialResp {
+        values,
+        internal,
+        metadata,
+    }
 }
 
 struct UpsertAccount<'a> {
@@ -523,7 +697,7 @@ struct MarkSuccess<'a> {
     state: &'a AppState,
     session_id: Uuid,
     provider_subject: &'a str,
-    credential_id: Uuid,
+    credential_id: Option<Uuid>,
 }
 
 async fn mark_session_success(args: MarkSuccess<'_>) -> Result<(), String> {
@@ -590,6 +764,7 @@ struct RedirectTarget<'a> {
     base: &'a str,
     session_id: Uuid,
     status: &'a str,
+    completion_verifier: Option<&'a str>,
 }
 
 fn redirect_url(target: RedirectTarget<'_>) -> String {
@@ -597,11 +772,17 @@ fn redirect_url(target: RedirectTarget<'_>) -> String {
         base,
         session_id,
         status,
+        completion_verifier,
     } = target;
     let mut url = url::Url::parse(base).expect("return_url was validated when session was created");
-    url.query_pairs_mut()
+    let mut pairs = url.query_pairs_mut();
+    pairs
         .append_pair("session_id", &session_id.to_string())
         .append_pair("status", status);
+    if let Some(verifier) = completion_verifier {
+        pairs.append_pair("completion_verifier", verifier);
+    }
+    drop(pairs);
     url.to_string()
 }
 

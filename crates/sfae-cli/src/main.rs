@@ -17,7 +17,7 @@ const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
   4. Send HTTP requests with `sfae request ...` and `{KEY}` placeholders in headers, URLs, or bodies. HTTP is the only protocol currently supported. SFAE resolves placeholders without revealing secret values to the agent.
 
 SECRETS:
-  By default, static credentials are stored in the local OS credential store: Passwords/login keychain on macOS. If `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` are set, this CLI uses the authenticated SFAE backend instead; hosted OAuth requires that backend path. The agent sees credential set IDs and field names, not secret values."#;
+  By default, credentials are stored in the local OS credential store: Passwords/login keychain on macOS. Hosted OAuth uses oauth.sfae.io for provider authorization and stores redeemed token material locally; it does not require `SFAE_STORE_URL`, `SFAE_STORE_TOKEN`, or a running sfae-server. If `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` are set, this CLI uses the authenticated SFAE backend instead. The agent sees credential set IDs and field names, not secret values."#;
 
 #[cfg(not(feature = "native-keychain"))]
 const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
@@ -140,7 +140,9 @@ SPEC FORMAT:
 
 OAUTH:
   Hosted provider in this build: discord.
-  Hosted OAuth requires `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` so the SFAE backend can derive the current user and call the broker.
+  Local hosted OAuth uses oauth.sfae.io directly and stores the resulting credential in the local OS credential store.
+  Set `SFAE_OAUTH_BROKER_URL` only to override the hosted broker URL for testing.
+  If `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` are set, OAuth uses the authenticated SFAE backend proxy path instead.
   --terminal supports field prompts only; OAuth requires browser mode.
 
 EXAMPLES:

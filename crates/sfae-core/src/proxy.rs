@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::credential::{CredentialKey, CredentialType, credential_key};
 use crate::error::SfaeError;
-use crate::store::{CredentialTypesQuery, SecretStore, list_credential_types};
+use crate::store::{
+    CredentialTypesQuery, SecretStore, list_credential_types, parse_injectable_credential_values,
+};
 
 /// An HTTP request with possible `{KEY}` placeholders.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,9 +164,7 @@ impl<'a> CredentialLookup<'a> {
     pub fn fetch(&self) -> Result<HashMap<String, String>, SfaeError> {
         if let Some(id) = self.cred_id {
             let blob = self.store.get(id)?;
-            let map: HashMap<String, String> = serde_json::from_str(&blob)
-                .map_err(|e| SfaeError::StoreError(format!("invalid credential blob JSON: {e}")))?;
-            return Ok(map);
+            return parse_injectable_credential_values(&blob);
         }
         self.get_credentials_map()
     }
@@ -341,8 +341,7 @@ impl<'a> CredentialLookup<'a> {
         }
 
         let blob = self.store.get(&filtered[0].id)?;
-        let map: HashMap<String, String> = serde_json::from_str(&blob)
-            .map_err(|e| SfaeError::StoreError(format!("invalid credential blob JSON: {e}")))?;
+        let map = parse_injectable_credential_values(&blob)?;
         Ok(Some(map))
     }
 
@@ -374,7 +373,7 @@ impl<'a> CredentialLookup<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{CredentialSetInput, InMemoryStore};
+    use crate::store::{CredentialSetInput, InMemoryStore, StructuredCredentialSetInput};
 
     fn test_store() -> InMemoryStore {
         let mut store = InMemoryStore::new();
@@ -390,8 +389,6 @@ mod tests {
             .unwrap();
         store
     }
-
-    // -- find_dynamic_placeholders tests --
 
     #[test]
     fn find_dynamic_no_placeholders() {
@@ -418,7 +415,6 @@ mod tests {
 
     #[test]
     fn find_dynamic_ignores_lowercase() {
-        // JSON-like braces with lowercase keys should not match
         assert!(find_dynamic_placeholders(r#"{"key": "val"}"#).is_empty());
     }
 
@@ -433,8 +429,6 @@ mod tests {
             find_dynamic_placeholders(r#"https://{HOST}:8443/?db={DATABASE}&q={"type":"x"}"#);
         assert_eq!(found, vec!["HOST", "DATABASE"]);
     }
-
-    // -- PlaceholderMap tests --
 
     #[test]
     fn placeholder_map_resolve_single() {
@@ -484,8 +478,6 @@ mod tests {
         assert!(matches!(err, SfaeError::CredentialNotFound(_)));
     }
 
-    // -- CredentialLookup::fetch / get_credentials_map tests --
-
     #[test]
     fn credentials_map_exact_domain() {
         let store = test_store();
@@ -530,7 +522,6 @@ mod tests {
             })
             .unwrap();
 
-        // Filter by label gets the labeled set
         let map = CredentialLookup {
             store: &store,
             domain: "github.com",
@@ -556,8 +547,6 @@ mod tests {
         .unwrap();
         assert!(map.is_empty());
     }
-
-    // -- CredentialLookup::resolve / mask / execute tests --
 
     #[test]
     fn resolve_single() {
@@ -639,7 +628,47 @@ mod tests {
         assert_eq!(result, "key=***");
     }
 
-    // -- extract_host tests --
+    #[test]
+    fn structured_oauth_set_hides_internal_values_from_placeholders() {
+        let mut store = InMemoryStore::new();
+        let mut values = HashMap::new();
+        values.insert("OAUTH_ACCESS_TOKEN".to_string(), "access-token".to_string());
+        let mut internal = HashMap::new();
+        internal.insert(
+            "OAUTH_REFRESH_TOKEN".to_string(),
+            "refresh-token".to_string(),
+        );
+        let mut metadata = HashMap::new();
+        metadata.insert("OAUTH_PROVIDER".to_string(), "discord".to_string());
+        store
+            .store_structured_credential_set(StructuredCredentialSetInput {
+                domain: "discord.com",
+                label: None,
+                values: &values,
+                internal: Some(&internal),
+                metadata: Some(&metadata),
+            })
+            .unwrap();
+
+        let lookup = CredentialLookup {
+            store: &store,
+            domain: "discord.com",
+            username: None,
+            cred_id: None,
+        };
+        assert_eq!(
+            lookup.resolve("Bearer {OAUTH_ACCESS_TOKEN}").unwrap(),
+            "Bearer access-token"
+        );
+        assert!(matches!(
+            lookup.resolve("{OAUTH_REFRESH_TOKEN}").unwrap_err(),
+            SfaeError::CredentialNotFound(_)
+        ));
+        assert!(matches!(
+            lookup.resolve("{OAUTH_PROVIDER}").unwrap_err(),
+            SfaeError::CredentialNotFound(_)
+        ));
+    }
 
     #[test]
     fn extract_host_https() {
@@ -670,8 +699,6 @@ mod tests {
         );
     }
 
-    // -- walk_parent_domains tests --
-
     #[test]
     fn walk_parent_domains_multi_level() {
         assert_eq!(
@@ -689,8 +716,6 @@ mod tests {
     fn walk_parent_domains_single_label() {
         assert_eq!(walk_parent_domains("localhost"), vec!["localhost"]);
     }
-
-    // -- Domain fallback tests (legacy + map-based) --
 
     #[test]
     fn fallback_exact_domain_match() {
@@ -868,8 +893,6 @@ mod tests {
         assert_eq!(val, "exact");
     }
 
-    // -- Credential ID lookup tests --
-
     #[test]
     fn fetch_by_cred_id_works() {
         let mut store = InMemoryStore::new();
@@ -923,7 +946,6 @@ mod tests {
             })
             .unwrap();
 
-        // With cred_id, domain is ignored — fetch by ID directly
         let result = CredentialLookup {
             store: &store,
             domain: "wrong.domain",
@@ -934,8 +956,6 @@ mod tests {
         .unwrap();
         assert_eq!(result, "Bearer key123");
     }
-
-    // -- Custom field types (the whole point of dynamic placeholders) --
 
     #[test]
     fn resolve_custom_fields() {

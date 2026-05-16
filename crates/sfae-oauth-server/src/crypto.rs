@@ -70,6 +70,35 @@ impl TokenCipher {
             URL_SAFE_NO_PAD.encode(in_out)
         ))
     }
+
+    /// Decrypt a `v1:<nonce>:<ciphertext>` token value from DB storage.
+    pub(crate) fn decrypt(&self, ciphertext: &str) -> Result<String, String> {
+        let mut parts = ciphertext.split(':');
+        let version = parts.next().unwrap_or_default();
+        let nonce = parts.next().unwrap_or_default();
+        let body = parts.next().unwrap_or_default();
+        if version != "v1" || parts.next().is_some() {
+            return Err("unsupported token ciphertext format".to_string());
+        }
+        let nonce_bytes = URL_SAFE_NO_PAD
+            .decode(nonce)
+            .map_err(|e| format!("invalid nonce: {e}"))?;
+        let nonce: [u8; 12] = nonce_bytes
+            .try_into()
+            .map_err(|_| "invalid nonce length".to_string())?;
+        let mut in_out = URL_SAFE_NO_PAD
+            .decode(body)
+            .map_err(|e| format!("invalid ciphertext: {e}"))?;
+        let plaintext = self
+            .key
+            .open_in_place(
+                Nonce::assume_unique_for_key(nonce),
+                Aad::empty(),
+                &mut in_out,
+            )
+            .map_err(|_| "token decryption failed".to_string())?;
+        String::from_utf8(plaintext.to_vec()).map_err(|e| format!("invalid UTF-8: {e}"))
+    }
 }
 
 /// Generate a high-entropy OAuth state value for a browser redirect flow.
@@ -77,4 +106,12 @@ pub(crate) fn generate_state() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// Compute the public S256 challenge for a local-CLI redeem verifier.
+pub(crate) fn redeem_challenge(verifier: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let digest = Sha256::digest(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
 }

@@ -31,7 +31,7 @@ Any earlier non-server-side OAuth provider implementation must be removed rather
 - [x] First manual Discord OAuth smoke test completed
 - [x] SFAE app/backend wired to start OAuth sessions as a backend proof path
 - [x] Existing SFAE remote credential proxy path wired as a backend proof path
-- [ ] Local CLI hosted Discord OAuth stores token material in OS credential store
+- [x] Local CLI hosted Discord OAuth stores token material in OS credential store
 - [ ] Local `sfae request` resolves hosted Discord OAuth credentials from OS credential store
 - [ ] Refresh/revoke through broker for locally stored OAuth tokens implemented
 - [ ] Mock-provider integration tests added
@@ -321,7 +321,7 @@ If there is leftover non-server-side OAuth code or documentation from the earlie
 
 ## Phase 6: Local CLI Hosted OAuth To Passwords
 
-Status: pending. This is the next required phase for the intended macOS CLI UX.
+Status: implemented in this branch. Live Discord/keychain smoke checks remain manual.
 
 ### Boundary
 
@@ -340,29 +340,40 @@ Normal local CLI hosted OAuth must look like local SFAE credential collection:
 
 ### Steps
 
-- [ ] Add typed `HostedOAuthBroker` and `OAuthCredentialManager` boundaries in `sfae-core`; implement direct hosted HTTPS, backend-proxy HTTPS, and mock/in-process adapters.
-- [ ] Add a local-CLI broker API on `oauth.sfae.io`, separate from `/internal/oauth/sessions`, with short TTL and one-time use.
-- [ ] Use a handoff protocol where the CLI generates a high-entropy redeem secret, sends only a challenge/hash to the broker, keeps the secret in memory, and redeems token material once after callback success.
-- [ ] Ensure the local broker session stores token material only transiently for handoff, encrypted at rest if persisted, and clears it after redemption or expiry.
-- [ ] Update the local CLI/browser OAuth flow to start a hosted broker session without `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
-- [ ] Change browser OAuth flow to receive/use an OAuth broker dependency instead of constructing the current env-backed `HostedOAuthClient::from_env()`.
-- [ ] Change local OAuth success to return broker-redeemed credential material for local storage, not only a remote "connected" marker.
-- [ ] Store broker-returned Discord credential material in the local OS credential store using the normal credential-set path.
-- [ ] Split credential-set storage/resolution so internal secrets such as refresh tokens are stored locally but never exposed to `{FIELD}` placeholder resolution.
-- [ ] Store enough non-secret OAuth metadata locally to know refresh/revoke must go back through `oauth.sfae.io`, without storing provider client secrets locally.
-- [ ] Update README, CLI help, and active docs so native local hosted OAuth no longer says it requires `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
+- [x] Add typed `HostedOAuthBroker` and `OAuthCredentialManager` boundaries in `sfae-core`; implement direct hosted HTTPS, backend-proxy HTTPS, and mock/in-process adapters.
+- [x] Add a local-CLI broker API on `oauth.sfae.io`, separate from `/internal/oauth/sessions`, with short TTL and one-time use.
+- [x] Use a handoff protocol where the CLI generates a high-entropy redeem secret, sends only a challenge/hash to the broker, keeps the secret in memory, and redeems token material once after callback success.
+- [x] Ensure the local broker session stores token material only transiently for handoff, encrypted at rest if persisted, and clears it after redemption or expiry.
+- [x] Update the local CLI/browser OAuth flow to start a hosted broker session without `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
+- [x] Change browser OAuth flow to receive/use an OAuth broker dependency instead of constructing the current env-backed `HostedOAuthClient::from_env()`.
+- [x] Change local OAuth success to return broker-redeemed credential material for local storage, not only a remote "connected" marker.
+- [x] Store broker-returned Discord credential material in the local OS credential store using the normal credential-set path.
+- [x] Split credential-set storage/resolution so internal secrets such as refresh tokens are stored locally but never exposed to `{FIELD}` placeholder resolution.
+- [x] Store enough non-secret OAuth metadata locally to know refresh/revoke must go back through `oauth.sfae.io`, without storing provider client secrets locally.
+- [x] Update README, CLI help, and active docs so native local hosted OAuth no longer says it requires `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
 - [ ] Verify `sfae credentials discord.com` lists the local credential set from Passwords/keychain.
 - [ ] Verify `sfae request` resolves `{OAUTH_ACCESS_TOKEN}` from Passwords/keychain.
-- [ ] Verify `{OAUTH_REFRESH_TOKEN}` and other internal-only values cannot be resolved into requests.
+- [x] Verify `{OAUTH_REFRESH_TOKEN}` and other internal-only values cannot be resolved into requests.
 - [ ] Run a real Discord API request with `{OAUTH_ACCESS_TOKEN}` using only the local CLI credential store.
+
+### Completed
+
+- Added public local broker endpoints: `POST /v1/local/oauth/sessions`, `GET /v1/local/oauth/sessions/{id}`, and `POST /v1/local/oauth/sessions/{id}/redeem`.
+- Local sessions use a CLI-held redeem verifier plus a browser-delivered loopback completion verifier, store only verifier challenges at the broker, encrypt transient handoff material, and clear it after successful redeem or expiry cleanup.
+- Local Discord callback completion returns access token material to the trusted CLI for local OS-store persistence instead of materializing a remote `sfae_credentials` row.
+- Added structured local credential-set blobs with injectable, internal, and metadata compartments; request placeholder resolution reads only injectable values.
+- Added direct hosted broker, backend-proxy broker, and mock/in-process broker adapters behind typed `HostedOAuthBroker` and `OAuthCredentialManager` boundaries.
+- Updated browser OAuth flow to receive the OAuth manager from the CLI rather than constructing an env-backed backend client internally.
+- Updated CLI help and README so local hosted OAuth no longer says it requires `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
+- Verified with `cargo xtask ci`, including a structured credential-set test proving `{OAUTH_REFRESH_TOKEN}` and metadata are not placeholder-resolvable.
 
 ### Local Broker API Shape
 
 Local CLI broker endpoints should use typed JSON over HTTPS, not provider-specific URLs in the CLI:
 
-- `POST /v1/local/oauth/sessions`: provider, domain, label, scopes, and redeem challenge/hash. Returns `session_id`, `authorization_url`, and expiry/status metadata. It does not return tokens.
+- `POST /v1/local/oauth/sessions`: provider, domain, label, scopes, local loopback `return_url`, and redeem challenge/hash. Returns `session_id`, `authorization_url`, and expiry/status metadata. It does not return tokens.
 - `GET /v1/local/oauth/sessions/{id}`: sanitized status only. It does not return tokens and must be safe for browser/UI polling.
-- `POST /v1/local/oauth/sessions/{id}/redeem`: redeem verifier/secret. Returns credential material once to the trusted CLI process.
+- `POST /v1/local/oauth/sessions/{id}/redeem`: redeem verifier/secret plus the loopback completion verifier received by the local CLI browser server. Returns credential material once to the trusted CLI process.
 
 The redeem endpoint must fail after successful redemption, after expiry, with the wrong verifier, or with only a session id.
 

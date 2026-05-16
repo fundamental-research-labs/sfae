@@ -33,8 +33,20 @@ CREATE TABLE IF NOT EXISTS oauth_sessions (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE oauth_sessions
+  ADD COLUMN IF NOT EXISTS session_mode text NOT NULL DEFAULT 'backend',
+  ADD COLUMN IF NOT EXISTS redeem_challenge_hash text,
+  ADD COLUMN IF NOT EXISTS redeem_challenge_method text,
+  ADD COLUMN IF NOT EXISTS completion_challenge_hash text,
+  ADD COLUMN IF NOT EXISTS completion_verifier_ciphertext text,
+  ADD COLUMN IF NOT EXISTS local_credential_ciphertext text,
+  ADD COLUMN IF NOT EXISTS redeemed_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS oauth_sessions_user_provider_idx
   ON oauth_sessions (user_id, provider, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS oauth_sessions_mode_created_idx
+  ON oauth_sessions (session_mode, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS oauth_accounts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

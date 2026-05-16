@@ -20,7 +20,7 @@ cargo build --bin sfae --release
 
 The binary is produced at `./target/release/sfae`.
 
-On macOS, local credentials are stored in Passwords/login keychain. When `SFAE_STORE_URL` and `SFAE_STORE_TOKEN` are set, the CLI uses the authenticated SFAE backend instead; hosted OAuth requires that backend path. Agents can list credential set IDs and field names, but secret values stay out of chat.
+On macOS, local credentials are stored in Passwords/login keychain. Hosted OAuth uses `oauth.sfae.io` for provider authorization and stores redeemed token material locally; it does not require `SFAE_STORE_URL`, `SFAE_STORE_TOKEN`, or a running `sfae-server`. When those remote-store variables are set, the CLI uses the authenticated SFAE backend instead. Agents can list credential set IDs and field names, but secret values stay out of chat.
 
 ## Quick start
 
@@ -46,7 +46,7 @@ Agents should treat `sfae prompt` as a blocking step. Wait indefinitely until th
 For hosted OAuth:
 
 ```bash
-# Requires SFAE_STORE_URL and SFAE_STORE_TOKEN.
+# No SFAE_STORE_URL or SFAE_STORE_TOKEN required for local CLI OAuth.
 sfae prompt discord.com --spec '{
   "groups": [{
     "label": "OAuth",

@@ -2109,6 +2109,7 @@ dependencies = [
 name = "sfae-core"
 version = "0.0.3"
 dependencies = [
+ "base64",
  "dirs",
  "keyring",
  "libc",
@@ -2116,6 +2117,7 @@ dependencies = [
  "security-framework",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "ureq",

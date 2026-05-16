@@ -52,3 +52,59 @@ pub(crate) struct SessionStatusResp {
     pub(crate) credential_id: Option<Uuid>,
     pub(crate) expires_at: DateTime<Utc>,
 }
+
+/// Public local-CLI request to start an OAuth handoff session.
+#[derive(Deserialize)]
+pub(crate) struct CreateLocalSessionReq {
+    pub(crate) provider: String,
+    pub(crate) domain: String,
+    #[serde(default)]
+    pub(crate) label: Option<String>,
+    #[serde(default)]
+    pub(crate) scopes: Vec<String>,
+    pub(crate) redeem_challenge: String,
+    pub(crate) redeem_challenge_method: String,
+    pub(crate) return_url: String,
+}
+
+/// Public local-CLI session start response.
+#[derive(Serialize)]
+pub(crate) struct CreateLocalSessionResp {
+    pub(crate) session_id: Uuid,
+    pub(crate) authorization_url: String,
+    pub(crate) expires_at: DateTime<Utc>,
+}
+
+/// Public local-CLI status response. It intentionally omits user id and token material.
+#[derive(Serialize)]
+pub(crate) struct LocalSessionStatusResp {
+    pub(crate) session_id: Uuid,
+    pub(crate) provider: String,
+    pub(crate) domain: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) label: Option<String>,
+    pub(crate) scopes: Vec<String>,
+    pub(crate) status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) provider_subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) credential_id: Option<Uuid>,
+    pub(crate) expires_at: DateTime<Utc>,
+}
+
+/// Public local-CLI one-time redeem request.
+#[derive(Deserialize)]
+pub(crate) struct RedeemLocalSessionReq {
+    pub(crate) redeem_verifier: String,
+    pub(crate) completion_verifier: String,
+}
+
+/// Credential material returned once to the trusted local CLI.
+#[derive(Deserialize, Serialize)]
+pub(crate) struct RedeemedCredentialResp {
+    pub(crate) values: std::collections::HashMap<String, String>,
+    pub(crate) internal: std::collections::HashMap<String, String>,
+    pub(crate) metadata: std::collections::HashMap<String, String>,
+}

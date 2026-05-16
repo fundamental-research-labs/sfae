@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use axum::{
     Router,
+    http::Request,
     routing::{get, post},
 };
 use sqlx::PgPool;
@@ -19,12 +20,14 @@ mod crypto;
 mod db;
 mod discord;
 mod handlers;
+mod local;
 mod state;
 mod types;
 
 use crate::config::Config;
 use crate::crypto::{StateHasher, TokenCipher};
 use crate::handlers::{callback_discord, create_session, done, get_session, health};
+use crate::local::{create_local_session, get_local_session, redeem_local_session};
 use crate::state::AppState;
 
 #[tokio::main]
@@ -43,6 +46,10 @@ async fn main() {
     db::run_migrations(&pool)
         .await
         .expect("failed to initialize database schema");
+    db::clear_expired_local_handoffs(&pool)
+        .await
+        .expect("failed to clear expired local OAuth handoffs");
+    db::spawn_local_handoff_cleanup(pool.clone());
 
     let cipher = TokenCipher::from_base64_key(&config.token_encryption_key)
         .expect("SFAE_OAUTH_TOKEN_ENCRYPTION_KEY must be base64-encoded 32 bytes");
@@ -61,9 +68,23 @@ async fn main() {
         .route("/health", get(health))
         .route("/v1/done", get(done))
         .route("/v1/callback/discord", get(callback_discord))
+        .route("/v1/local/oauth/sessions", post(create_local_session))
+        .route("/v1/local/oauth/sessions/{id}", get(get_local_session))
+        .route(
+            "/v1/local/oauth/sessions/{id}/redeem",
+            post(redeem_local_session),
+        )
         .route("/internal/oauth/sessions", post(create_session))
         .route("/internal/oauth/sessions/{id}", get(get_session))
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                tracing::info_span!(
+                    "request",
+                    method = %request.method(),
+                    path = %request.uri().path()
+                )
+            }),
+        )
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

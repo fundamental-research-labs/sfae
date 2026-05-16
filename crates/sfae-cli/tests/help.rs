@@ -28,8 +28,9 @@ fn root_help_explains_agent_workflow() {
         assert!(stdout.contains("HTTP is the only protocol currently supported"));
         assert!(stdout.contains("SECRETS:"));
         assert!(stdout.contains("Passwords/login keychain on macOS"));
+        assert!(stdout.contains("oauth.sfae.io"));
         assert!(stdout.contains("SFAE_STORE_URL"));
-        assert!(stdout.contains("hosted OAuth requires that backend path"));
+        assert!(stdout.contains("does not require `SFAE_STORE_URL`"));
         assert!(stdout.contains("not secret values"));
         assert!(!stdout.contains("STORE MODES:"));
         assert!(stdout.contains("sfae prompt --help"));
@@ -56,6 +57,7 @@ fn prompt_help_explains_spec_and_secret_handling() {
         assert!(stdout.contains("{OAUTH_ACCESS_TOKEN}"));
         assert!(stdout.contains("authorization URLs, token URLs, or provider secrets"));
         assert!(stdout.contains("Hosted provider in this build: discord"));
+        assert!(stdout.contains("SFAE_OAUTH_BROKER_URL"));
         assert!(stdout.contains("SFAE_STORE_URL"));
         assert!(stdout.contains("OAuth requires browser mode"));
         assert!(stdout.contains("--label <LABEL>"));
