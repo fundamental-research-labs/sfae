@@ -192,7 +192,7 @@ fn session_status_response() -> MockResponse {
         "provider": "discord",
         "domain": "discord.com",
         "label": "primary",
-        "scopes": ["identify"],
+        "scopes": ["scope.read"],
         "status": "success",
         "provider_subject": "discord-user",
         "credential_id": null,
@@ -232,7 +232,7 @@ fn assert_start_status_contract(broker: &dyn HostedOAuthBroker) {
             provider: "discord",
             domain: "discord.com",
             label: Some("primary"),
-            scopes: vec!["identify".to_string()],
+            scopes: vec!["scope.read".to_string()],
             return_url: Some("http://127.0.0.1:49152/oauth-complete"),
         })
         .unwrap();
@@ -285,7 +285,7 @@ impl HostedOAuthBroker for InProcessBroker {
             provider: "discord".to_string(),
             domain: "discord.com".to_string(),
             label: Some("primary".to_string()),
-            scopes: vec!["identify".to_string()],
+            scopes: vec!["scope.read".to_string()],
             status: "success".to_string(),
             error_code: None,
             provider_subject: Some("discord-user".to_string()),

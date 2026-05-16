@@ -124,7 +124,7 @@ async fn create_session(args: CreateSession<'_>) -> CreatedSession {
             "user_id": "mock-provider-integration",
             "domain": "discord.com",
             "label": "mock-provider",
-            "scopes": ["identify", "email"]
+            "scopes": ["scope.read", "scope.write"]
         }))
         .send()
         .await
@@ -366,7 +366,7 @@ fn respond_to_provider_request(args: ProviderResponse<'_>) {
     match args.target {
         "/token" => write_json_response(ResponseBody {
             stream: args.stream,
-            body: r#"{"access_token":"mock-access-token","refresh_token":"mock-refresh-token","token_type":"Bearer","scope":"identify email","expires_in":3600}"#,
+            body: r#"{"access_token":"mock-access-token","refresh_token":"mock-refresh-token","token_type":"Bearer","scope":"identify scope.read scope.write","expires_in":3600}"#,
         }),
         "/userinfo" => write_json_response(ResponseBody {
             stream: args.stream,

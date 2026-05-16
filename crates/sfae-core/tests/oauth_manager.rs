@@ -41,7 +41,7 @@ impl HostedOAuthBroker for MockHostedOAuthBroker {
             provider: "discord".to_string(),
             domain: "discord.com".to_string(),
             label: None,
-            scopes: vec!["identify".to_string()],
+            scopes: vec!["scope.read".to_string()],
             status: "success".to_string(),
             error_code: None,
             provider_subject: Some("123".to_string()),

@@ -277,7 +277,9 @@ pub struct OAuthSpec {
     #[serde(default)]
     pub scope: Option<String>,
 
-    /// Requested OAuth scopes. Empty lets the hosted broker apply provider defaults.
+    /// Requested OAuth scopes. SFAE forwards arbitrary scope keys and lets the provider reject
+    /// unknown, unavailable, or app-restricted scopes. Empty lets the hosted broker apply provider
+    /// defaults.
     #[serde(default)]
     pub scopes: Vec<String>,
 }
@@ -625,7 +627,7 @@ mod tests {
             r#"{
             "groups": [
                 {"label": "API Key", "fields": [{"name": "API_KEY", "label": "Discord API Key"}]},
-                {"label": "OAuth", "oauth": {"provider": "discord", "scopes": ["identify"]}}
+                {"label": "OAuth", "oauth": {"provider": "discord", "scopes": ["scope.read"]}}
             ]
         }"#,
         )
@@ -641,7 +643,7 @@ mod tests {
         );
         assert_eq!(
             groups[1].oauth.as_ref().unwrap().requested_scopes(),
-            vec!["identify"]
+            vec!["scope.read"]
         );
     }
 
@@ -671,7 +673,7 @@ mod tests {
         let spec: PromptSpec = serde_json::from_str(
             r#"{
             "groups": [
-                {"label": "OAuth", "oauth": {"scope": "identify email"}}
+                {"label": "OAuth", "oauth": {"scope": "scope.write scope.read"}}
             ]
         }"#,
         )
@@ -680,7 +682,7 @@ mod tests {
         let groups = spec.groups.unwrap();
         let oauth = groups[0].oauth.as_ref().unwrap();
         assert!(oauth.provider.is_none());
-        assert_eq!(oauth.requested_scopes(), vec!["email", "identify"]);
+        assert_eq!(oauth.requested_scopes(), vec!["scope.read", "scope.write"]);
     }
 
     // --- FieldSpec serialization roundtrip ---

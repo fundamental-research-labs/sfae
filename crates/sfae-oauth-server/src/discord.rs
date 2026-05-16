@@ -4,9 +4,7 @@ use crate::config::Config;
 use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 
-const ALLOWED_SCOPES: &[&str] = &["identify", "email", "guilds"];
-
-/// Validated Discord OAuth session inputs.
+/// Discord OAuth session inputs.
 pub(crate) struct DiscordSession {
     pub(crate) scopes: Vec<String>,
     pub(crate) authorization_url: String,
@@ -65,14 +63,14 @@ impl DiscordUser {
     }
 }
 
-/// Build a validated Discord authorization URL for the browser.
+/// Build a Discord authorization URL for the browser.
 pub(crate) fn build_authorization(args: DiscordAuthorize<'_>) -> Result<DiscordSession, String> {
     let DiscordAuthorize {
         config,
         state,
         requested_scopes,
     } = args;
-    let scopes = normalize_scopes(requested_scopes)?;
+    let scopes = normalize_scopes(requested_scopes);
     let redirect_uri = config.discord_redirect_uri();
     let mut url = config.discord_authorize_url.clone();
     url.query_pairs_mut()
@@ -234,24 +232,21 @@ pub(crate) struct DiscordUserRequest<'a> {
     pub(crate) access_token: &'a str,
 }
 
-fn normalize_scopes(requested: &[String]) -> Result<Vec<String>, String> {
+fn normalize_scopes(requested: &[String]) -> Vec<String> {
     let mut scopes: Vec<String> = requested
         .iter()
         .flat_map(|scope| scope.split_whitespace())
         .filter(|scope| !scope.is_empty())
         .map(str::to_string)
         .collect();
+    // Discord's identity endpoint is required for SFAE account linking. This is a provider
+    // minimum, not an allowlist; requested arbitrary scopes are forwarded below.
     if !scopes.iter().any(|s| s == "identify") {
         scopes.push("identify".to_string());
     }
     scopes.sort();
     scopes.dedup();
-    for scope in &scopes {
-        if !ALLOWED_SCOPES.contains(&scope.as_str()) {
-            return Err(format!("unsupported Discord scope: {scope}"));
-        }
-    }
-    Ok(scopes)
+    scopes
 }
 
 fn split_scopes(raw: &str) -> Vec<String> {
@@ -285,30 +280,29 @@ mod tests {
 
     #[test]
     fn default_scope_is_identify() {
-        assert_eq!(normalize_scopes(&[]).unwrap(), vec!["identify"]);
+        assert_eq!(normalize_scopes(&[]), vec!["identify"]);
     }
 
     #[test]
     fn scopes_are_sorted_deduped_and_include_identify() {
         let scopes = normalize_scopes(&[
-            "guilds".to_string(),
-            "email".to_string(),
-            "guilds".to_string(),
-        ])
-        .unwrap();
-        assert_eq!(scopes, vec!["email", "guilds", "identify"]);
+            "scope.write".to_string(),
+            "scope.read".to_string(),
+            "scope.write".to_string(),
+        ]);
+        assert_eq!(scopes, vec!["identify", "scope.read", "scope.write"]);
     }
 
     #[test]
-    fn unsupported_scope_is_rejected() {
-        let err = normalize_scopes(&["messages.read".to_string()]).unwrap_err();
-        assert_eq!(err, "unsupported Discord scope: messages.read");
+    fn arbitrary_scope_is_forwarded() {
+        let scopes = normalize_scopes(&["messages.read".to_string()]);
+        assert_eq!(scopes, vec!["identify", "messages.read"]);
     }
 
     #[test]
     fn scope_entries_are_split_and_empty_entries_ignored() {
-        let scopes = normalize_scopes(&["guilds email".to_string(), " ".to_string()]).unwrap();
-        assert_eq!(scopes, vec!["email", "guilds", "identify"]);
+        let scopes = normalize_scopes(&["scope.write scope.read".to_string(), " ".to_string()]);
+        assert_eq!(scopes, vec!["identify", "scope.read", "scope.write"]);
     }
 
     #[test]
@@ -316,7 +310,7 @@ mod tests {
         let session = build_authorization(DiscordAuthorize {
             config: &test_config(),
             state: "state-value",
-            requested_scopes: &["email".to_string()],
+            requested_scopes: &["scope.read".to_string()],
         })
         .unwrap();
         let url = Url::parse(&session.authorization_url).unwrap();
@@ -332,7 +326,7 @@ mod tests {
             pairs["redirect_uri"],
             "https://oauth.sfae.io/v1/callback/discord"
         );
-        assert_eq!(pairs["scope"], "email identify");
+        assert_eq!(pairs["scope"], "identify scope.read");
         assert_eq!(pairs["state"], "state-value");
         assert_eq!(pairs["prompt"], "consent");
         let keys: std::collections::BTreeSet<_> = pairs.keys().map(String::as_str).collect();
@@ -355,12 +349,12 @@ mod tests {
             access_token: "access".to_string(),
             refresh_token: None,
             token_type: Some("Bearer".to_string()),
-            scope: Some("guilds identify guilds".to_string()),
+            scope: Some("scope.write identify scope.write".to_string()),
             expires_in: None,
         };
         assert_eq!(
-            token.scopes(&["email".to_string()]),
-            vec!["guilds", "identify"]
+            token.scopes(&["scope.read".to_string()]),
+            vec!["identify", "scope.write"]
         );
     }
 }

@@ -646,7 +646,7 @@ mod tests {
             access_token: "new-access".to_string(),
             refresh_token: Some("new-refresh".to_string()),
             token_type: Some("Bearer".to_string()),
-            scope: Some("identify email".to_string()),
+            scope: Some("identify scope.read".to_string()),
             expires_in: Some(60),
         };
 
@@ -663,7 +663,7 @@ mod tests {
             credential.metadata["OAUTH_BROKER_URL"],
             "https://oauth.sfae.io/"
         );
-        assert_eq!(credential.metadata["OAUTH_SCOPES"], "email identify");
+        assert_eq!(credential.metadata["OAUTH_SCOPES"], "identify scope.read");
         assert!(credential.metadata.contains_key("OAUTH_EXPIRES_AT"));
     }
 }
