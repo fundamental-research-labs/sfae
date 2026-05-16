@@ -8,6 +8,7 @@ use crate::config::Config;
 
 const AUTH_URL: &str = "https://discord.com/oauth2/authorize";
 pub(crate) const TOKEN_URL: &str = "https://discord.com/api/oauth2/token";
+pub(crate) const TOKEN_REVOKE_URL: &str = "https://discord.com/api/oauth2/token/revoke";
 const USERINFO_URL: &str = "https://discord.com/api/v10/users/@me";
 const ALLOWED_SCOPES: &[&str] = &["identify", "email", "guilds"];
 
@@ -134,6 +135,82 @@ pub(crate) struct DiscordTokenRequest<'a> {
     pub(crate) http: &'a reqwest::Client,
     pub(crate) config: &'a Config,
     pub(crate) code: &'a str,
+}
+
+/// Refresh a Discord access token with a refresh token.
+pub(crate) async fn refresh_token(args: DiscordRefreshRequest<'_>) -> Result<DiscordToken, String> {
+    let DiscordRefreshRequest {
+        http,
+        config,
+        refresh_token,
+    } = args;
+    let params = [
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+    ];
+    let response = http
+        .post(TOKEN_URL)
+        .basic_auth(
+            &config.discord_client_id,
+            Some(&config.discord_client_secret),
+        )
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| format!("discord refresh request failed: {e}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        tracing::warn!("Discord token refresh rejected: {status} {body}");
+        return Err(format!("discord_refresh_status_{status}"));
+    }
+    response
+        .json::<DiscordToken>()
+        .await
+        .map_err(|e| format!("discord refresh response parse failed: {e}"))
+}
+
+/// Inputs for a Discord token refresh.
+pub(crate) struct DiscordRefreshRequest<'a> {
+    pub(crate) http: &'a reqwest::Client,
+    pub(crate) config: &'a Config,
+    pub(crate) refresh_token: &'a str,
+}
+
+/// Revoke a Discord access or refresh token.
+pub(crate) async fn revoke_token(args: DiscordRevokeRequest<'_>) -> Result<(), String> {
+    let DiscordRevokeRequest {
+        http,
+        config,
+        token,
+        token_type_hint,
+    } = args;
+    let params = [("token", token), ("token_type_hint", token_type_hint)];
+    let response = http
+        .post(TOKEN_REVOKE_URL)
+        .basic_auth(
+            &config.discord_client_id,
+            Some(&config.discord_client_secret),
+        )
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| format!("discord revoke request failed: {e}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        tracing::warn!("Discord token revoke rejected: {status} {body}");
+        return Err(format!("discord_revoke_status_{status}"));
+    }
+    Ok(())
+}
+
+/// Inputs for a Discord token revocation.
+pub(crate) struct DiscordRevokeRequest<'a> {
+    pub(crate) http: &'a reqwest::Client,
+    pub(crate) config: &'a Config,
+    pub(crate) token: &'a str,
+    pub(crate) token_type_hint: &'a str,
 }
 
 /// Fetch the Discord account profile for a bearer access token.

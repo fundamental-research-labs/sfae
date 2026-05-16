@@ -77,6 +77,24 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS local_oauth_grants (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider text NOT NULL,
+  provider_subject text NOT NULL,
+  secret_hash text NOT NULL,
+  refresh_token_hash text,
+  status text NOT NULL DEFAULT 'active',
+  revoked_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE local_oauth_grants
+  ADD COLUMN IF NOT EXISTS refresh_token_hash text;
+
+CREATE INDEX IF NOT EXISTS local_oauth_grants_provider_subject_idx
+  ON local_oauth_grants (provider, provider_subject);
+
 CREATE TABLE IF NOT EXISTS oauth_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id uuid,

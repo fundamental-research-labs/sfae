@@ -8,7 +8,10 @@ use sfae_core::proxy::{
     CredentialLookup, PlaceholderMap, ProxyRequest, ProxyResponse, extract_host,
     find_dynamic_placeholders,
 };
-use sfae_core::store::SecretStore;
+use sfae_core::store::{
+    CredentialSetData, CredentialSetInfo, SecretStore, StructuredCredentialSetUpdate,
+    parse_structured_credential_set,
+};
 
 use crate::store_factory::{create_store, uses_remote_store};
 
@@ -168,13 +171,135 @@ impl<'a> RetryCtx<'a> {
         if uses_remote_store() {
             self.try_refresh_and_retry_remote()
         } else {
-            if self.verbose {
-                eprintln!(
-                    "< 401 (hosted OAuth refresh requires the remote SFAE backend; returning original response)"
-                );
-            }
-            Ok(self.original_response)
+            self.try_refresh_and_retry_local()
         }
+    }
+
+    /// Local-store refresh: read internal refresh material, call oauth.sfae.io, update, retry.
+    fn try_refresh_and_retry_local(self) -> anyhow::Result<ProxyResponse> {
+        let RetryCtx {
+            request,
+            store,
+            domain,
+            username,
+            cred_id,
+            verbose,
+            original_response,
+        } = self;
+
+        let resolved = match fetch_credential_set(FetchCredentialSetCtx {
+            store: &*store,
+            domain,
+            username,
+            cred_id,
+        }) {
+            Ok(Some(resolved)) => resolved,
+            Ok(None) => {
+                if verbose {
+                    eprintln!("< 401 (no local credential set found for OAuth refresh)");
+                }
+                return Ok(original_response);
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!("< 401 (could not inspect local credential set: {e})");
+                }
+                return Ok(original_response);
+            }
+        };
+
+        let Some(provider) = resolved.data.metadata.get("OAUTH_PROVIDER") else {
+            if verbose {
+                eprintln!("< 401 (credential set is not hosted OAuth)");
+            }
+            return Ok(original_response);
+        };
+        if provider != "discord" {
+            if verbose {
+                eprintln!("< 401 (hosted OAuth provider '{provider}' cannot be refreshed)");
+            }
+            return Ok(original_response);
+        }
+        let Some(refresh_token) = resolved.data.internal.get("OAUTH_REFRESH_TOKEN") else {
+            if verbose {
+                eprintln!("< 401 (local OAuth credential has no internal refresh token)");
+            }
+            return Ok(original_response);
+        };
+        let Some(broker_credential_id) = resolved.data.metadata.get("OAUTH_BROKER_CREDENTIAL_ID")
+        else {
+            if verbose {
+                eprintln!("< 401 (local OAuth credential has no broker credential id)");
+            }
+            return Ok(original_response);
+        };
+        let Some(broker_credential_secret) =
+            resolved.data.internal.get("OAUTH_BROKER_CREDENTIAL_SECRET")
+        else {
+            if verbose {
+                eprintln!("< 401 (local OAuth credential has no broker credential secret)");
+            }
+            return Ok(original_response);
+        };
+
+        if verbose {
+            eprintln!("< 401 (refreshing hosted OAuth credential through broker...)");
+        }
+        let broker = match sfae_core::oauth::DirectHostedOAuthBroker::from_env() {
+            Ok(broker) => broker,
+            Err(e) => {
+                if verbose {
+                    eprintln!("< OAuth broker configuration failed: {e}");
+                }
+                return Ok(original_response);
+            }
+        };
+        let manager = sfae_core::oauth::OAuthCredentialManager::new(&broker);
+        let refreshed = match manager.refresh_credential(sfae_core::oauth::HostedOAuthRefresh {
+            provider,
+            broker_credential_id,
+            broker_credential_secret,
+            refresh_token,
+        }) {
+            Ok(credential) => credential,
+            Err(e) => {
+                if verbose {
+                    eprintln!("< OAuth refresh failed: {e}");
+                }
+                return Ok(original_response);
+            }
+        };
+
+        if let Err(e) = store.update_structured_credential_set(StructuredCredentialSetUpdate {
+            id: &resolved.info.id,
+            values: Some(&refreshed.values),
+            internal: Some(&refreshed.internal),
+            metadata: Some(&refreshed.metadata),
+        }) {
+            if verbose {
+                eprintln!("< Failed to update refreshed credential: {e}");
+            }
+            return Ok(original_response);
+        }
+
+        if verbose {
+            eprintln!("< Token refreshed locally, retrying request...");
+        }
+        let start = Instant::now();
+        let retry_response = CredentialLookup {
+            store: &*store,
+            domain,
+            username,
+            cred_id,
+        }
+        .execute(request)?;
+        let elapsed = start.elapsed();
+
+        if verbose {
+            eprintln!("< {} ({:.1?})", retry_response.status, elapsed);
+        }
+
+        Ok(retry_response)
     }
 
     /// Remote-store refresh: call sfae-server's /credentials/refresh endpoint, then retry.
@@ -254,6 +379,120 @@ impl<'a> RetryCtx<'a> {
 
         Ok(retry_response)
     }
+}
+
+struct SelectedCredentialSet {
+    info: CredentialSetInfo,
+    data: CredentialSetData,
+}
+
+struct FetchCredentialSetCtx<'a> {
+    store: &'a dyn SecretStore,
+    domain: &'a str,
+    username: Option<&'a str>,
+    cred_id: Option<&'a str>,
+}
+
+fn fetch_credential_set(
+    ctx: FetchCredentialSetCtx<'_>,
+) -> anyhow::Result<Option<SelectedCredentialSet>> {
+    let FetchCredentialSetCtx {
+        store,
+        domain,
+        username,
+        cred_id,
+    } = ctx;
+    if !store.supports_credential_sets() {
+        return Ok(None);
+    }
+    if let Some(id) = cred_id {
+        let blob = store.get(id)?;
+        let info = store
+            .list_credential_sets(None)?
+            .into_iter()
+            .find(|set| set.id == id)
+            .unwrap_or_else(|| CredentialSetInfo {
+                id: id.to_string(),
+                domain: domain.to_string(),
+                label: username.map(str::to_string),
+                keys: vec![],
+            });
+        return Ok(Some(SelectedCredentialSet {
+            info,
+            data: parse_structured_credential_set(&blob)?,
+        }));
+    }
+
+    for d in walk_parent_domains(domain) {
+        if let Some(resolved) = find_credential_set_for_domain(FindCredentialSetCtx {
+            store,
+            domain: &d,
+            username,
+        })? {
+            return Ok(Some(resolved));
+        }
+    }
+    Ok(None)
+}
+
+struct FindCredentialSetCtx<'a> {
+    store: &'a dyn SecretStore,
+    domain: &'a str,
+    username: Option<&'a str>,
+}
+
+fn find_credential_set_for_domain(
+    ctx: FindCredentialSetCtx<'_>,
+) -> anyhow::Result<Option<SelectedCredentialSet>> {
+    let FindCredentialSetCtx {
+        store,
+        domain,
+        username,
+    } = ctx;
+    let sets = store.list_credential_sets(Some(domain))?;
+    if sets.is_empty() {
+        return Ok(None);
+    }
+    let filtered: Vec<_> = if let Some(user) = username {
+        sets.into_iter()
+            .filter(|s| s.label.as_deref() == Some(user))
+            .collect()
+    } else {
+        sets
+    };
+    if filtered.is_empty() {
+        return Ok(None);
+    }
+    if filtered.len() > 1 {
+        let set_list: Vec<String> = filtered
+            .iter()
+            .map(|s| format!("  {} ({})", s.id, s.label.as_deref().unwrap_or("no label")))
+            .collect();
+        anyhow::bail!(
+            "multiple credential sets for domain '{}'. Use --cred <id> to select:\n{}",
+            domain,
+            set_list.join("\n")
+        );
+    }
+
+    let blob = store.get(&filtered[0].id)?;
+    Ok(Some(SelectedCredentialSet {
+        info: filtered[0].clone(),
+        data: parse_structured_credential_set(&blob)?,
+    }))
+}
+
+fn walk_parent_domains(domain: &str) -> Vec<String> {
+    let mut result = vec![domain.to_string()];
+    let parts: Vec<&str> = domain.split('.').collect();
+    for i in 1..parts.len() {
+        let parent: Vec<&str> = parts[i..].to_vec();
+        if parent.len() < 2 {
+            break;
+        }
+        result.push(parent.join("."));
+    }
+    result
 }
 
 fn mask_placeholders(text: &str) -> String {

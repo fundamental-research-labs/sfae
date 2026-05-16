@@ -43,6 +43,14 @@ pub struct StructuredCredentialSetInput<'a> {
     pub metadata: Option<&'a HashMap<String, String>>,
 }
 
+/// Input for merging refreshed material into an existing structured credential set.
+pub struct StructuredCredentialSetUpdate<'a> {
+    pub id: &'a str,
+    pub values: Option<&'a HashMap<String, String>>,
+    pub internal: Option<&'a HashMap<String, String>>,
+    pub metadata: Option<&'a HashMap<String, String>>,
+}
+
 /// Parameters for `list_credential_types`.
 pub struct CredentialTypesQuery<'a> {
     pub store: &'a dyn SecretStore,
@@ -104,6 +112,16 @@ pub trait SecretStore {
         })
     }
 
+    /// Merge structured credential material into an existing credential set.
+    fn update_structured_credential_set(
+        &mut self,
+        _input: StructuredCredentialSetUpdate<'_>,
+    ) -> Result<(), SfaeError> {
+        Err(SfaeError::Other(
+            "credential set update operations not supported by this store".into(),
+        ))
+    }
+
     /// List credential sets, optionally filtered by domain.
     fn list_credential_sets(
         &self,
@@ -123,6 +141,19 @@ pub trait SecretStore {
 }
 
 const STRUCTURED_CREDENTIAL_SCHEMA: &str = "sfae.credential-set.v1";
+const INTERNAL_ONLY_KEYS: &[&str] = &[
+    "OAUTH_REFRESH_TOKEN",
+    "OAUTH_BROKER_CREDENTIAL_ID",
+    "OAUTH_BROKER_CREDENTIAL_SECRET",
+];
+
+/// Parsed credential-set compartments.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CredentialSetData {
+    pub values: HashMap<String, String>,
+    pub internal: HashMap<String, String>,
+    pub metadata: HashMap<String, String>,
+}
 
 #[derive(Serialize)]
 struct StoredCredentialSetBlob<'a> {
@@ -137,19 +168,61 @@ struct StoredCredentialSetBlob<'a> {
 #[derive(Deserialize)]
 struct ParsedCredentialSetBlob {
     values: HashMap<String, String>,
+    #[serde(default)]
+    internal: HashMap<String, String>,
+    #[serde(default)]
+    metadata: HashMap<String, String>,
 }
 
 /// Serialize a structured credential blob for durable secret storage.
 pub fn serialize_structured_credential_set(
     input: &StructuredCredentialSetInput<'_>,
 ) -> Result<String, SfaeError> {
+    validate_injectable_values(input.values)?;
+    serialize_credential_set_data(&CredentialSetData {
+        values: input.values.clone(),
+        internal: input.internal.cloned().unwrap_or_default(),
+        metadata: input.metadata.cloned().unwrap_or_default(),
+    })
+}
+
+/// Serialize credential-set compartments for durable secret storage.
+pub fn serialize_credential_set_data(data: &CredentialSetData) -> Result<String, SfaeError> {
+    validate_injectable_values(&data.values)?;
+    let internal = (!data.internal.is_empty()).then_some(&data.internal);
+    let metadata = (!data.metadata.is_empty()).then_some(&data.metadata);
     serde_json::to_string(&StoredCredentialSetBlob {
         schema: STRUCTURED_CREDENTIAL_SCHEMA,
-        values: input.values,
-        internal: input.internal,
-        metadata: input.metadata,
+        values: &data.values,
+        internal,
+        metadata,
     })
     .map_err(|e| SfaeError::StoreError(format!("failed to serialize: {e}")))
+}
+
+/// Parse all compartments from a credential blob.
+///
+/// Older credential sets are plain `{FIELD: value}` maps; they parse as
+/// injectable values with empty internal and metadata compartments.
+pub fn parse_structured_credential_set(blob: &str) -> Result<CredentialSetData, SfaeError> {
+    let raw: serde_json::Value = serde_json::from_str(blob)
+        .map_err(|e| SfaeError::StoreError(format!("invalid credential blob JSON: {e}")))?;
+    if raw.get("values").is_some() {
+        let parsed: ParsedCredentialSetBlob = serde_json::from_value(raw)
+            .map_err(|e| SfaeError::StoreError(format!("invalid credential blob JSON: {e}")))?;
+        return Ok(CredentialSetData {
+            values: parsed.values,
+            internal: parsed.internal,
+            metadata: parsed.metadata,
+        });
+    }
+    let values = serde_json::from_value(raw)
+        .map_err(|e| SfaeError::StoreError(format!("invalid credential blob JSON: {e}")))?;
+    Ok(CredentialSetData {
+        values,
+        internal: HashMap::new(),
+        metadata: HashMap::new(),
+    })
 }
 
 /// Parse only the injectable `values` compartment from a credential blob.
@@ -160,15 +233,38 @@ pub fn serialize_structured_credential_set(
 pub fn parse_injectable_credential_values(
     blob: &str,
 ) -> Result<HashMap<String, String>, SfaeError> {
-    let raw: serde_json::Value = serde_json::from_str(blob)
-        .map_err(|e| SfaeError::StoreError(format!("invalid credential blob JSON: {e}")))?;
-    if raw.get("values").is_some() {
-        let parsed: ParsedCredentialSetBlob = serde_json::from_value(raw)
-            .map_err(|e| SfaeError::StoreError(format!("invalid credential blob JSON: {e}")))?;
-        return Ok(parsed.values);
+    let mut values = parse_structured_credential_set(blob)?.values;
+    values.retain(|key, _| !internal_only_key(key));
+    Ok(values)
+}
+
+// xtask: allow-multi-param - merge helper pairs current data with update input
+fn merge_structured_credential_data(
+    current: &mut CredentialSetData,
+    update: &StructuredCredentialSetUpdate<'_>,
+) {
+    if let Some(values) = update.values {
+        current.values.extend(values.clone());
     }
-    serde_json::from_value(raw)
-        .map_err(|e| SfaeError::StoreError(format!("invalid credential blob JSON: {e}")))
+    if let Some(internal) = update.internal {
+        current.internal.extend(internal.clone());
+    }
+    if let Some(metadata) = update.metadata {
+        current.metadata.extend(metadata.clone());
+    }
+}
+
+fn validate_injectable_values(values: &HashMap<String, String>) -> Result<(), SfaeError> {
+    if let Some(key) = values.keys().find(|key| internal_only_key(key)) {
+        return Err(SfaeError::StoreError(format!(
+            "{key} is reserved for internal credential storage"
+        )));
+    }
+    Ok(())
+}
+
+fn internal_only_key(key: &str) -> bool {
+    INTERNAL_ONLY_KEYS.contains(&key)
 }
 
 /// List credential types stored for a domain (and optional username/label).
@@ -449,6 +545,36 @@ mod keyring_store {
             Ok(id)
         }
 
+        fn update_structured_credential_set(
+            &mut self,
+            input: StructuredCredentialSetUpdate<'_>,
+        ) -> Result<(), SfaeError> {
+            let bytes = match get_generic_password(KEYRING_SERVICE, input.id) {
+                Ok(bytes) => bytes,
+                Err(e) if is_not_found(&e) => {
+                    return Err(SfaeError::CredentialNotFound(input.id.to_string()));
+                }
+                Err(e) => return Err(SfaeError::StoreError(e.to_string())),
+            };
+            let blob = String::from_utf8(bytes)
+                .map_err(|e| SfaeError::StoreError(format!("invalid UTF-8: {e}")))?;
+            let mut data = parse_structured_credential_set(&blob)?;
+            merge_structured_credential_data(&mut data, &input);
+            let json = serialize_credential_set_data(&data)?;
+            let mut index = read_credential_index()?;
+            let Some(set_index) = index.sets.iter().position(|s| s.id == input.id) else {
+                return Err(SfaeError::CredentialNotFound(input.id.to_string()));
+            };
+            set_generic_password(KEYRING_SERVICE, input.id, json.as_bytes())
+                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+
+            index.sets[set_index].keys = data.values.keys().cloned().collect();
+            index.sets[set_index].keys.sort();
+            index.version = 2;
+            write_credential_index(&index)?;
+            Ok(())
+        }
+
         fn list_credential_sets(
             &self,
             domain: Option<&str>,
@@ -617,6 +743,30 @@ mod keyring_store {
             Ok(id)
         }
 
+        fn update_structured_credential_set(
+            &mut self,
+            input: StructuredCredentialSetUpdate<'_>,
+        ) -> Result<(), SfaeError> {
+            let blob = self.get(input.id)?;
+            let mut data = parse_structured_credential_set(&blob)?;
+            merge_structured_credential_data(&mut data, &input);
+            let json = serialize_credential_set_data(&data)?;
+            let mut index = read_credential_index()?;
+            let Some(set_index) = index.sets.iter().position(|s| s.id == input.id) else {
+                return Err(SfaeError::CredentialNotFound(input.id.to_string()));
+            };
+            let entry = Self::entry(input.id)?;
+            entry
+                .set_password(&json)
+                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+
+            index.sets[set_index].keys = data.values.keys().cloned().collect();
+            index.sets[set_index].keys.sort();
+            index.version = 2;
+            write_credential_index(&index)?;
+            Ok(())
+        }
+
         fn list_credential_sets(
             &self,
             domain: Option<&str>,
@@ -737,6 +887,24 @@ impl SecretStore for InMemoryStore {
         });
 
         Ok(id)
+    }
+
+    fn update_structured_credential_set(
+        &mut self,
+        input: StructuredCredentialSetUpdate<'_>,
+    ) -> Result<(), SfaeError> {
+        let blob = self.get(input.id)?;
+        let mut data = parse_structured_credential_set(&blob)?;
+        merge_structured_credential_data(&mut data, &input);
+        let json = serialize_credential_set_data(&data)?;
+        let Some(set_index) = self.credential_sets.iter().position(|s| s.id == input.id) else {
+            return Err(SfaeError::CredentialNotFound(input.id.to_string()));
+        };
+        self.entries.insert(input.id.to_string(), json);
+
+        self.credential_sets[set_index].keys = data.values.keys().cloned().collect();
+        self.credential_sets[set_index].keys.sort();
+        Ok(())
     }
 
     fn list_credential_sets(

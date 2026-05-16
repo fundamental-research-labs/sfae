@@ -27,7 +27,10 @@ mod types;
 use crate::config::Config;
 use crate::crypto::{StateHasher, TokenCipher};
 use crate::handlers::{callback_discord, create_session, done, get_session, health};
-use crate::local::{create_local_session, get_local_session, redeem_local_session};
+use crate::local::{
+    create_local_session, get_local_session, redeem_local_session, refresh_local_credential,
+    revoke_local_credential,
+};
 use crate::state::AppState;
 
 #[tokio::main]
@@ -74,6 +77,8 @@ async fn main() {
             "/v1/local/oauth/sessions/{id}/redeem",
             post(redeem_local_session),
         )
+        .route("/v1/local/oauth/refresh", post(refresh_local_credential))
+        .route("/v1/local/oauth/revoke", post(revoke_local_credential))
         .route("/internal/oauth/sessions", post(create_session))
         .route("/internal/oauth/sessions/{id}", get(get_session))
         .layer(

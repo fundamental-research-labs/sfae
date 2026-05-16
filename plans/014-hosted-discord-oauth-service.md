@@ -33,7 +33,7 @@ Any earlier non-server-side OAuth provider implementation must be removed rather
 - [x] Existing SFAE remote credential proxy path wired as a backend proof path
 - [x] Local CLI hosted Discord OAuth stores token material in OS credential store
 - [ ] Local `sfae request` resolves hosted Discord OAuth credentials from OS credential store
-- [ ] Refresh/revoke through broker for locally stored OAuth tokens implemented
+- [x] Refresh/revoke through broker for locally stored OAuth tokens implemented
 - [ ] Mock-provider integration tests added
 
 ## Current Decisions
@@ -404,19 +404,35 @@ sfae request GET "https://discord.com/api/v10/users/@me" \
 
 ## Phase 7: Refresh, Revoke, And Token Vault Hardening
 
-Status: pending.
+Status: complete in this branch for the local CLI hosted Discord OAuth path.
 
 ### Steps
 
-- [ ] Add refresh endpoint to `sfae-oauth-server` that lets the trusted CLI send a locally stored refresh token over HTTPS and receive replacement token material, while keeping provider client secrets hosted.
-- [ ] Add revoke endpoint to `sfae-oauth-server` that lets the trusted CLI revoke locally stored access/refresh tokens without learning provider app credentials.
-- [ ] Add an update/merge operation to the credential-set storage boundary so refreshed local OAuth credentials update the existing keychain credential set instead of creating duplicates.
-- [ ] Teach local `sfae request` retry-on-401 to inspect hosted OAuth metadata, read internal refresh material from the local store, call the broker refresh endpoint, atomically update the credential set, and retry once.
-- [ ] Teach local `sfae delete <uuid>` to read the credential blob first; if it is hosted OAuth, best-effort broker revoke using internal token material, then remove local Passwords/keychain entries.
-- [ ] Keep refresh tokens durably in the local OS credential store for local CLI OAuth. Do not make Fly Postgres the durable token vault for local CLI users.
-- [ ] Keep refresh tokens and revoke handles internal-only; they must not be returned by `CredentialResolver` or usable as `{FIELD}` placeholders.
-- [ ] Decide whether the backend proof path should be removed, hidden behind a feature flag, or explicitly retained only for hosted/non-local deployments.
-- [ ] Decide hosted/remote vault ownership separately. Avoid two durable hosted token stores for the same credential.
+- [x] Add refresh endpoint to `sfae-oauth-server` that lets the trusted CLI send a locally stored refresh token over HTTPS and receive replacement token material, while keeping provider client secrets hosted.
+- [x] Add revoke endpoint to `sfae-oauth-server` that lets the trusted CLI revoke locally stored access/refresh tokens without learning provider app credentials.
+- [x] Add an update/merge operation to the credential-set storage boundary so refreshed local OAuth credentials update the existing keychain credential set instead of creating duplicates.
+- [x] Teach local `sfae request` retry-on-401 to inspect hosted OAuth metadata, read internal refresh material from the local store, call the broker refresh endpoint, atomically update the credential set, and retry once.
+- [x] Teach local `sfae delete <uuid>` to read the credential blob first; if it is hosted OAuth, best-effort broker revoke using internal token material, then remove local Passwords/keychain entries.
+- [x] Keep refresh tokens durably in the local OS credential store for local CLI OAuth. Do not make Fly Postgres the durable token vault for local CLI users.
+- [x] Keep refresh tokens and revoke handles internal-only; they must not be returned by `CredentialResolver` or usable as `{FIELD}` placeholders.
+- [x] Decide whether the backend proof path should be removed, hidden behind a feature flag, or explicitly retained only for hosted/non-local deployments.
+- [x] Decide hosted/remote vault ownership separately. Avoid two durable hosted token stores for the same credential.
+
+### Completed
+
+- Added public local broker endpoints:
+  - `POST /v1/local/oauth/refresh`
+  - `POST /v1/local/oauth/revoke`
+- Added Discord refresh and revoke provider calls in `sfae-oauth-server`. Provider client secrets remain hosted; the local CLI sends only locally stored token material over HTTPS to the broker.
+- Added broker-issued local credential capabilities for refresh/revoke. The broker stores only hashes of the local broker credential secret and bound refresh token in `local_oauth_grants`; the trusted CLI stores the broker secret as internal-only local credential material and must present it with refresh/revoke requests.
+- Extended `HostedOAuthBroker` and `OAuthCredentialManager` with refresh/revoke methods, implemented for the direct `oauth.sfae.io` local CLI adapter.
+- Added full structured credential parsing plus in-place structured credential-set update/merge for keychain and in-memory stores. Refresh updates the existing credential set ID and preserves existing internal/metadata fields when the provider omits replacements.
+- Restricted direct broker URLs to `https://oauth.sfae.io` or local loopback test URLs, and rejected/filtered internal-only OAuth fields if a broker response misplaces them in injectable `values`.
+- Updated local `sfae request` 401 retry so `{OAUTH_ACCESS_TOKEN}` requests inspect the selected credential set, require hosted Discord OAuth metadata, read internal `OAUTH_REFRESH_TOKEN`, call the broker refresh endpoint, merge returned credential material into the same local credential set, and retry once.
+- Updated local `sfae delete <uuid>` to best-effort revoke hosted Discord OAuth access/refresh material through the broker before deleting the local OS-store credential set.
+- Kept `OAUTH_REFRESH_TOKEN` internal-only. Placeholder resolution still parses only injectable `values`, so `{OAUTH_REFRESH_TOKEN}` remains unavailable to request templates.
+- Retained the backend proof path explicitly as hosted/non-local proof infrastructure. Normal local CLI refresh/revoke does not require `SFAE_STORE_URL`, `SFAE_STORE_TOKEN`, or `sfae-server`; `sfae-server /credentials/refresh` remains outside this local path.
+- Hosted/remote vault ownership remains separate from local CLI OAuth. Fly Postgres is not a durable token vault for local CLI users.
 
 ## Phase 8: Tests And Operational Hardening
 

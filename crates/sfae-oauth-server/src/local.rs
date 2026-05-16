@@ -1,5 +1,6 @@
 //! Public local-CLI OAuth handoff endpoints for the hosted broker.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -10,12 +11,13 @@ use axum::{
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
+use crate::crypto::StateHasher;
 use crate::crypto::{generate_state, redeem_challenge};
-use crate::discord::{self, DiscordAuthorize};
+use crate::discord::{self, DiscordAuthorize, DiscordRefreshRequest, DiscordRevokeRequest};
 use crate::state::AppState;
 use crate::types::{
     CreateLocalSessionReq, CreateLocalSessionResp, LocalSessionStatusResp, RedeemLocalSessionReq,
-    RedeemedCredentialResp,
+    RedeemedCredentialResp, RefreshLocalCredentialReq, RevokeLocalCredentialReq,
 };
 
 /// POST /v1/local/oauth/sessions — create a local-CLI one-time handoff session.
@@ -242,6 +244,306 @@ pub(crate) async fn redeem_local_session(
     }
 }
 
+/// POST /v1/local/oauth/refresh — refresh local CLI token material through the broker.
+// xtask: allow-multi-param - axum handler extractors
+pub(crate) async fn refresh_local_credential(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<RefreshLocalCredentialReq>,
+) -> Response {
+    if body.provider != "discord" {
+        return (
+            StatusCode::BAD_REQUEST,
+            "only provider \"discord\" is enabled",
+        )
+            .into_response();
+    }
+    if body.refresh_token.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "refresh_token is required").into_response();
+    }
+    let Some(grant) = authorize_local_grant(LocalGrantAuth {
+        state: &state,
+        provider: &body.provider,
+        grant_id: body.broker_credential_id,
+        secret: &body.broker_credential_secret,
+    })
+    .await
+    else {
+        return (StatusCode::FORBIDDEN, "broker credential rejected").into_response();
+    };
+    if !refresh_token_matches_grant(RefreshTokenGrantMatch {
+        state_hasher: &state.state_hasher,
+        grant: &grant,
+        refresh_token: &body.refresh_token,
+    }) {
+        return (StatusCode::FORBIDDEN, "refresh token rejected").into_response();
+    }
+
+    let token = match discord::refresh_token(DiscordRefreshRequest {
+        http: &state.http,
+        config: &state.config,
+        refresh_token: &body.refresh_token,
+    })
+    .await
+    {
+        Ok(token) => token,
+        Err(error_code) => return (StatusCode::BAD_GATEWAY, error_code).into_response(),
+    };
+    if let Some(refresh_token) = token.refresh_token.as_deref()
+        && update_local_grant_refresh_hash(UpdateLocalGrantRefreshHash {
+            state: &state,
+            grant_id: grant.id,
+            refresh_token,
+        })
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to update broker credential",
+        )
+            .into_response();
+    }
+
+    axum::Json(refreshed_credential_blob(RefreshedCredentialBlob {
+        state: &state,
+        token: &token,
+    }))
+    .into_response()
+}
+
+/// POST /v1/local/oauth/revoke — revoke local CLI token material through the broker.
+// xtask: allow-multi-param - axum handler extractors
+pub(crate) async fn revoke_local_credential(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<RevokeLocalCredentialReq>,
+) -> Response {
+    if body.provider != "discord" {
+        return (
+            StatusCode::BAD_REQUEST,
+            "only provider \"discord\" is enabled",
+        )
+            .into_response();
+    }
+    let has_access = body.access_token.as_deref().is_some_and(|t| !t.is_empty());
+    let has_refresh = body.refresh_token.as_deref().is_some_and(|t| !t.is_empty());
+    if !has_access && !has_refresh {
+        return (
+            StatusCode::BAD_REQUEST,
+            "access_token or refresh_token is required",
+        )
+            .into_response();
+    }
+    let Some(grant) = authorize_local_grant(LocalGrantAuth {
+        state: &state,
+        provider: &body.provider,
+        grant_id: body.broker_credential_id,
+        secret: &body.broker_credential_secret,
+    })
+    .await
+    else {
+        return (StatusCode::FORBIDDEN, "broker credential rejected").into_response();
+    };
+    if let Some(refresh_token) = body.refresh_token.as_deref().filter(|t| !t.is_empty())
+        && !refresh_token_matches_grant(RefreshTokenGrantMatch {
+            state_hasher: &state.state_hasher,
+            grant: &grant,
+            refresh_token,
+        })
+    {
+        return (StatusCode::FORBIDDEN, "refresh token rejected").into_response();
+    }
+
+    let token_to_revoke = body
+        .refresh_token
+        .as_deref()
+        .filter(|t| !t.is_empty())
+        .map(|token| (token, "refresh_token"))
+        .or_else(|| {
+            body.access_token
+                .as_deref()
+                .filter(|t| !t.is_empty())
+                .map(|token| (token, "access_token"))
+        });
+
+    let Some((token, token_type_hint)) = token_to_revoke else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "access_token or refresh_token is required",
+        )
+            .into_response();
+    };
+
+    if discord::revoke_token(DiscordRevokeRequest {
+        http: &state.http,
+        config: &state.config,
+        token,
+        token_type_hint,
+    })
+    .await
+    .is_err()
+    {
+        return (StatusCode::BAD_GATEWAY, "failed to revoke OAuth token").into_response();
+    }
+    mark_local_grant_revoked(MarkLocalGrantRevoked {
+        state: &state,
+        grant_id: body.broker_credential_id,
+    })
+    .await;
+    StatusCode::NO_CONTENT.into_response()
+}
+
+struct LocalGrantAuth<'a> {
+    state: &'a AppState,
+    provider: &'a str,
+    grant_id: Uuid,
+    secret: &'a str,
+}
+
+struct LocalGrant {
+    id: Uuid,
+    refresh_token_hash: Option<String>,
+}
+
+async fn authorize_local_grant(args: LocalGrantAuth<'_>) -> Option<LocalGrant> {
+    let LocalGrantAuth {
+        state,
+        provider,
+        grant_id,
+        secret,
+    } = args;
+    if secret.trim().is_empty() {
+        return None;
+    }
+    let secret_hash = state.state_hasher.hash(secret);
+    let row = sqlx::query_as::<_, (Uuid, Option<String>)>(
+        "SELECT id, refresh_token_hash FROM local_oauth_grants \
+         WHERE id = $1 AND provider = $2 AND secret_hash = $3 AND status = 'active'",
+    )
+    .bind(grant_id)
+    .bind(provider)
+    .bind(secret_hash)
+    .fetch_optional(&state.pool)
+    .await;
+    match row {
+        Ok(Some((id, refresh_token_hash))) => Some(LocalGrant {
+            id,
+            refresh_token_hash,
+        }),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!("failed to authorize local OAuth grant: {e}");
+            None
+        }
+    }
+}
+
+struct RefreshTokenGrantMatch<'a> {
+    state_hasher: &'a StateHasher,
+    grant: &'a LocalGrant,
+    refresh_token: &'a str,
+}
+
+fn refresh_token_matches_grant(args: RefreshTokenGrantMatch<'_>) -> bool {
+    let RefreshTokenGrantMatch {
+        state_hasher,
+        grant,
+        refresh_token,
+    } = args;
+    let Some(stored_hash) = grant.refresh_token_hash.as_deref() else {
+        return false;
+    };
+    state_hasher.hash(refresh_token) == stored_hash
+}
+
+struct UpdateLocalGrantRefreshHash<'a> {
+    state: &'a AppState,
+    grant_id: Uuid,
+    refresh_token: &'a str,
+}
+
+async fn update_local_grant_refresh_hash(args: UpdateLocalGrantRefreshHash<'_>) -> Result<(), ()> {
+    let UpdateLocalGrantRefreshHash {
+        state,
+        grant_id,
+        refresh_token,
+    } = args;
+    let refresh_token_hash = state.state_hasher.hash(refresh_token);
+    let result = sqlx::query(
+        "UPDATE local_oauth_grants \
+         SET refresh_token_hash = $2, updated_at = now() WHERE id = $1",
+    )
+    .bind(grant_id)
+    .bind(refresh_token_hash)
+    .execute(&state.pool)
+    .await;
+    match result {
+        Ok(result) if result.rows_affected() == 1 => Ok(()),
+        Ok(_) => {
+            tracing::warn!("failed to update local OAuth grant refresh hash: no row updated");
+            Err(())
+        }
+        Err(e) => {
+            tracing::warn!("failed to update local OAuth grant refresh hash: {e}");
+            Err(())
+        }
+    }
+}
+
+struct MarkLocalGrantRevoked<'a> {
+    state: &'a AppState,
+    grant_id: Uuid,
+}
+
+async fn mark_local_grant_revoked(args: MarkLocalGrantRevoked<'_>) {
+    let MarkLocalGrantRevoked { state, grant_id } = args;
+    let _ = sqlx::query(
+        "UPDATE local_oauth_grants \
+         SET status = 'revoked', revoked_at = now(), updated_at = now() WHERE id = $1",
+    )
+    .bind(grant_id)
+    .execute(&state.pool)
+    .await;
+}
+
+struct RefreshedCredentialBlob<'a> {
+    state: &'a AppState,
+    token: &'a discord::DiscordToken,
+}
+
+fn refreshed_credential_blob(args: RefreshedCredentialBlob<'_>) -> RedeemedCredentialResp {
+    let RefreshedCredentialBlob { state, token } = args;
+    let mut values = HashMap::new();
+    values.insert("OAUTH_ACCESS_TOKEN".to_string(), token.access_token.clone());
+
+    let mut internal = HashMap::new();
+    if let Some(refresh_token) = token.refresh_token.as_deref() {
+        internal.insert("OAUTH_REFRESH_TOKEN".to_string(), refresh_token.to_string());
+    }
+
+    let mut metadata = HashMap::new();
+    metadata.insert("OAUTH_PROVIDER".to_string(), "discord".to_string());
+    metadata.insert(
+        "OAUTH_BROKER_URL".to_string(),
+        state.config.base_url.to_string(),
+    );
+    let scopes = token.scopes(&[]);
+    if !scopes.is_empty() {
+        metadata.insert("OAUTH_SCOPES".to_string(), scopes.join(" "));
+    }
+    if let Some(token_type) = token.token_type.as_deref() {
+        metadata.insert("OAUTH_TOKEN_TYPE".to_string(), token_type.to_string());
+    }
+    if let Some(expires_at) = token.expires_at() {
+        metadata.insert("OAUTH_EXPIRES_AT".to_string(), expires_at.to_rfc3339());
+    }
+
+    RedeemedCredentialResp {
+        values,
+        internal,
+        metadata,
+    }
+}
+
 fn local_return_url_allowed(raw: &str) -> bool {
     let Ok(url) = url::Url::parse(raw) else {
         return false;
@@ -250,4 +552,45 @@ fn local_return_url_allowed(raw: &str) -> bool {
         return false;
     }
     matches!(url.host_str(), Some("127.0.0.1") | Some("localhost"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::StateHasher;
+
+    #[test]
+    fn refresh_token_match_requires_stored_hash() {
+        let hasher = StateHasher::new("test-secret");
+        let grant = LocalGrant {
+            id: Uuid::new_v4(),
+            refresh_token_hash: Some(hasher.hash("refresh-token")),
+        };
+
+        assert!(refresh_token_matches_grant(RefreshTokenGrantMatch {
+            state_hasher: &hasher,
+            grant: &grant,
+            refresh_token: "refresh-token",
+        }));
+        assert!(!refresh_token_matches_grant(RefreshTokenGrantMatch {
+            state_hasher: &hasher,
+            grant: &grant,
+            refresh_token: "different-token",
+        }));
+    }
+
+    #[test]
+    fn refresh_token_match_rejects_missing_hash() {
+        let hasher = StateHasher::new("test-secret");
+        let grant = LocalGrant {
+            id: Uuid::new_v4(),
+            refresh_token_hash: None,
+        };
+
+        assert!(!refresh_token_matches_grant(RefreshTokenGrantMatch {
+            state_hasher: &hasher,
+            grant: &grant,
+            refresh_token: "refresh-token",
+        }));
+    }
 }

@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use crate::error::SfaeError;
 use crate::store::{
     CredentialSetInput, CredentialTypesQuery, InMemoryStore, SecretStore, StoreEntry,
-    list_credential_types,
+    StructuredCredentialSetInput, StructuredCredentialSetUpdate, list_credential_types,
+    parse_injectable_credential_values, parse_structured_credential_set,
 };
 
 #[test]
@@ -231,6 +232,91 @@ fn store_credential_set_basic() {
     assert_eq!(sets[0].domain, "example.com");
     assert!(sets[0].label.is_none());
     assert_eq!(sets[0].keys, vec!["HOST", "PASSWORD"]);
+}
+
+#[test]
+fn update_structured_credential_set_merges_compartments() {
+    let mut store = InMemoryStore::new();
+    let mut values = HashMap::new();
+    values.insert("OAUTH_ACCESS_TOKEN".to_string(), "old-access".to_string());
+    let mut internal = HashMap::new();
+    internal.insert("OAUTH_REFRESH_TOKEN".to_string(), "old-refresh".to_string());
+    let mut metadata = HashMap::new();
+    metadata.insert("OAUTH_PROVIDER".to_string(), "discord".to_string());
+    metadata.insert("OAUTH_DISPLAY_NAME".to_string(), "Original".to_string());
+
+    let id = store
+        .store_structured_credential_set(StructuredCredentialSetInput {
+            domain: "discord.com",
+            label: None,
+            values: &values,
+            internal: Some(&internal),
+            metadata: Some(&metadata),
+        })
+        .unwrap();
+
+    let mut refreshed_values = HashMap::new();
+    refreshed_values.insert("OAUTH_ACCESS_TOKEN".to_string(), "new-access".to_string());
+    let mut refreshed_metadata = HashMap::new();
+    refreshed_metadata.insert(
+        "OAUTH_EXPIRES_AT".to_string(),
+        "2026-01-01T00:00:00Z".to_string(),
+    );
+
+    store
+        .update_structured_credential_set(StructuredCredentialSetUpdate {
+            id: &id,
+            values: Some(&refreshed_values),
+            internal: Some(&HashMap::new()),
+            metadata: Some(&refreshed_metadata),
+        })
+        .unwrap();
+
+    let data = parse_structured_credential_set(&store.get(&id).unwrap()).unwrap();
+    assert_eq!(data.values["OAUTH_ACCESS_TOKEN"], "new-access");
+    assert_eq!(data.internal["OAUTH_REFRESH_TOKEN"], "old-refresh");
+    assert_eq!(data.metadata["OAUTH_PROVIDER"], "discord");
+    assert_eq!(data.metadata["OAUTH_DISPLAY_NAME"], "Original");
+    assert_eq!(data.metadata["OAUTH_EXPIRES_AT"], "2026-01-01T00:00:00Z");
+
+    let injectable = parse_injectable_credential_values(&store.get(&id).unwrap()).unwrap();
+    assert_eq!(injectable.len(), 1);
+    assert_eq!(injectable["OAUTH_ACCESS_TOKEN"], "new-access");
+}
+
+#[test]
+fn injectable_parser_removes_internal_only_oauth_keys() {
+    let blob = serde_json::json!({
+        "values": {
+            "OAUTH_ACCESS_TOKEN": "access",
+            "OAUTH_REFRESH_TOKEN": "refresh",
+            "OAUTH_BROKER_CREDENTIAL_ID": "grant-id",
+            "OAUTH_BROKER_CREDENTIAL_SECRET": "grant-secret"
+        }
+    })
+    .to_string();
+
+    let injectable = parse_injectable_credential_values(&blob).unwrap();
+    assert_eq!(injectable.len(), 1);
+    assert_eq!(injectable["OAUTH_ACCESS_TOKEN"], "access");
+}
+
+#[test]
+fn structured_store_rejects_internal_only_keys_in_values() {
+    let mut store = InMemoryStore::new();
+    let mut values = HashMap::new();
+    values.insert("OAUTH_REFRESH_TOKEN".to_string(), "refresh".to_string());
+
+    let err = store
+        .store_structured_credential_set(StructuredCredentialSetInput {
+            domain: "discord.com",
+            label: None,
+            values: &values,
+            internal: None,
+            metadata: None,
+        })
+        .unwrap_err();
+    assert!(err.to_string().contains("reserved for internal"));
 }
 
 #[test]

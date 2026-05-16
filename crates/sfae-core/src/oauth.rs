@@ -39,6 +39,23 @@ pub trait HostedOAuthBroker {
             "this OAuth broker adapter does not support local redemption".into(),
         ))
     }
+
+    /// Refresh a locally stored OAuth credential through the hosted broker.
+    fn refresh_credential(
+        &self,
+        _input: HostedOAuthRefresh<'_>,
+    ) -> Result<HostedOAuthCredential, SfaeError> {
+        Err(SfaeError::Other(
+            "this OAuth broker adapter does not support local refresh".into(),
+        ))
+    }
+
+    /// Revoke locally stored OAuth token material through the hosted broker.
+    fn revoke_credential(&self, _input: HostedOAuthRevoke<'_>) -> Result<(), SfaeError> {
+        Err(SfaeError::Other(
+            "this OAuth broker adapter does not support local revoke".into(),
+        ))
+    }
 }
 
 /// High-level OAuth credential orchestration over a broker implementation.
@@ -78,6 +95,17 @@ impl<'a> OAuthCredentialManager<'a> {
             .redeem_session(session_id, redeem_verifier, completion_verifier)
             .map(Some)
     }
+
+    pub fn refresh_credential(
+        &self,
+        input: HostedOAuthRefresh<'_>,
+    ) -> Result<HostedOAuthCredential, SfaeError> {
+        self.broker.refresh_credential(input)
+    }
+
+    pub fn revoke_credential(&self, input: HostedOAuthRevoke<'_>) -> Result<(), SfaeError> {
+        self.broker.revoke_credential(input)
+    }
 }
 
 /// Inputs for starting a hosted OAuth session.
@@ -87,6 +115,23 @@ pub struct HostedOAuthStart<'a> {
     pub label: Option<&'a str>,
     pub scopes: Vec<String>,
     pub return_url: Option<&'a str>,
+}
+
+/// Inputs for broker-mediated local OAuth refresh.
+pub struct HostedOAuthRefresh<'a> {
+    pub provider: &'a str,
+    pub broker_credential_id: &'a str,
+    pub broker_credential_secret: &'a str,
+    pub refresh_token: &'a str,
+}
+
+/// Inputs for broker-mediated local OAuth revoke.
+pub struct HostedOAuthRevoke<'a> {
+    pub provider: &'a str,
+    pub broker_credential_id: &'a str,
+    pub broker_credential_secret: &'a str,
+    pub access_token: Option<&'a str>,
+    pub refresh_token: Option<&'a str>,
 }
 
 /// Sanitized session-start response returned to browser/UI code.
@@ -173,6 +218,7 @@ impl DirectHostedOAuthBroker {
                 "SFAE_OAUTH_BROKER_URL cannot be empty".into(),
             ));
         }
+        validate_broker_url(base_url)?;
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             agent: crate::http::make_agent(),
@@ -255,6 +301,44 @@ impl HostedOAuthBroker for DirectHostedOAuthBroker {
         serde_json::from_str(&body).map_err(|e| {
             SfaeError::StoreError(format!("failed to parse OAuth credential response: {e}"))
         })
+    }
+
+    fn refresh_credential(
+        &self,
+        input: HostedOAuthRefresh<'_>,
+    ) -> Result<HostedOAuthCredential, SfaeError> {
+        let url = format!("{}/v1/local/oauth/refresh", self.base_url);
+        let body = serde_json::to_string(&RefreshReq {
+            provider: input.provider,
+            broker_credential_id: input.broker_credential_id,
+            broker_credential_secret: input.broker_credential_secret,
+            refresh_token: input.refresh_token,
+        })
+        .map_err(|e| SfaeError::StoreError(format!("failed to serialize refresh request: {e}")))?;
+        let req = json_request("POST", &url, body)?;
+        let body = self.send(req)?;
+        serde_json::from_str(&body).map_err(|e| {
+            SfaeError::StoreError(format!("failed to parse OAuth refresh response: {e}"))
+        })
+    }
+
+    fn revoke_credential(&self, input: HostedOAuthRevoke<'_>) -> Result<(), SfaeError> {
+        let url = format!("{}/v1/local/oauth/revoke", self.base_url);
+        let (access_token, refresh_token) = match input.refresh_token {
+            Some(refresh_token) => (None, Some(refresh_token)),
+            None => (input.access_token, None),
+        };
+        let body = serde_json::to_string(&RevokeReq {
+            provider: input.provider,
+            broker_credential_id: input.broker_credential_id,
+            broker_credential_secret: input.broker_credential_secret,
+            access_token,
+            refresh_token,
+        })
+        .map_err(|e| SfaeError::StoreError(format!("failed to serialize revoke request: {e}")))?;
+        let req = json_request("POST", &url, body)?;
+        self.send(req)?;
+        Ok(())
     }
 }
 
@@ -396,6 +480,25 @@ struct RedeemReq<'a> {
 }
 
 #[derive(Serialize)]
+struct RefreshReq<'a> {
+    provider: &'a str,
+    broker_credential_id: &'a str,
+    broker_credential_secret: &'a str,
+    refresh_token: &'a str,
+}
+
+#[derive(Serialize)]
+struct RevokeReq<'a> {
+    provider: &'a str,
+    broker_credential_id: &'a str,
+    broker_credential_secret: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access_token: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refresh_token: Option<&'a str>,
+}
+
+#[derive(Serialize)]
 struct BackendSessionReq<'a> {
     provider: &'a str,
     domain: &'a str,
@@ -441,8 +544,7 @@ fn send_request<B: ureq::AsSendBody>(args: SendRequest<'_, B>) -> Result<String,
     }
     if status >= 400 {
         return Err(SfaeError::StoreError(format!(
-            "{service} returned {status}: {}",
-            trim_for_error(&body)
+            "{service} returned {status}"
         )));
     }
     Ok(body)
@@ -522,14 +624,23 @@ fn parent_domains(domain: &str) -> Vec<String> {
     domains
 }
 
-fn trim_for_error(body: &str) -> String {
-    const MAX_LEN: usize = 180;
-    let one_line = body.replace(['\n', '\r'], " ");
-    if one_line.len() > MAX_LEN {
-        format!("{}...", &one_line[..MAX_LEN])
-    } else {
-        one_line
+fn validate_broker_url(raw: &str) -> Result<(), SfaeError> {
+    let trimmed = raw.trim_end_matches('/');
+    let uri: ureq::http::Uri = trimmed.parse().map_err(|e| {
+        SfaeError::ConfigError(format!("SFAE_OAUTH_BROKER_URL must be a valid URL: {e}"))
+    })?;
+    let scheme = uri.scheme_str().unwrap_or_default();
+    let host = uri.host().unwrap_or_default();
+    let loopback = matches!(host, "localhost" | "127.0.0.1" | "::1");
+    if loopback && matches!(scheme, "http" | "https") {
+        return Ok(());
     }
+    if scheme == "https" && host == "oauth.sfae.io" {
+        return Ok(());
+    }
+    Err(SfaeError::ConfigError(
+        "SFAE_OAUTH_BROKER_URL must be https://oauth.sfae.io or a local loopback URL".into(),
+    ))
 }
 
 #[cfg(test)]
@@ -541,6 +652,8 @@ mod tests {
     struct MockHostedOAuthBroker {
         credential: HostedOAuthCredential,
         redeemed: RefCell<Vec<String>>,
+        refreshed: RefCell<Vec<String>>,
+        revoked: RefCell<Vec<String>>,
     }
 
     impl HostedOAuthBroker for MockHostedOAuthBroker {
@@ -583,6 +696,32 @@ mod tests {
             ));
             Ok(self.credential.clone())
         }
+
+        fn refresh_credential(
+            &self,
+            input: HostedOAuthRefresh<'_>,
+        ) -> Result<HostedOAuthCredential, SfaeError> {
+            self.refreshed.borrow_mut().push(format!(
+                "{}:{}:{}:{}",
+                input.provider,
+                input.broker_credential_id,
+                input.broker_credential_secret,
+                input.refresh_token
+            ));
+            Ok(self.credential.clone())
+        }
+
+        fn revoke_credential(&self, input: HostedOAuthRevoke<'_>) -> Result<(), SfaeError> {
+            self.revoked.borrow_mut().push(format!(
+                "{}:{}:{}:{}:{}",
+                input.provider,
+                input.broker_credential_id,
+                input.broker_credential_secret,
+                input.access_token.unwrap_or("-"),
+                input.refresh_token.unwrap_or("-")
+            ));
+            Ok(())
+        }
     }
 
     #[test]
@@ -596,6 +735,8 @@ mod tests {
                 metadata: HashMap::new(),
             },
             redeemed: RefCell::new(vec![]),
+            refreshed: RefCell::new(vec![]),
+            revoked: RefCell::new(vec![]),
         };
         let manager = OAuthCredentialManager::new(&broker);
         let credential = manager
@@ -618,6 +759,8 @@ mod tests {
                 metadata: HashMap::new(),
             },
             redeemed: RefCell::new(vec![]),
+            refreshed: RefCell::new(vec![]),
+            revoked: RefCell::new(vec![]),
         };
         let manager = OAuthCredentialManager::new(&broker);
         assert!(
@@ -627,6 +770,51 @@ mod tests {
                 .is_none()
         );
         assert!(broker.redeemed.borrow().is_empty());
+    }
+
+    #[test]
+    fn manager_refreshes_and_revokes_through_broker() {
+        let mut values = HashMap::new();
+        values.insert("OAUTH_ACCESS_TOKEN".to_string(), "new-access".to_string());
+        let broker = MockHostedOAuthBroker {
+            credential: HostedOAuthCredential {
+                values,
+                internal: HashMap::new(),
+                metadata: HashMap::new(),
+            },
+            redeemed: RefCell::new(vec![]),
+            refreshed: RefCell::new(vec![]),
+            revoked: RefCell::new(vec![]),
+        };
+        let manager = OAuthCredentialManager::new(&broker);
+
+        let credential = manager
+            .refresh_credential(HostedOAuthRefresh {
+                provider: "discord",
+                broker_credential_id: "grant-id",
+                broker_credential_secret: "grant-secret",
+                refresh_token: "refresh",
+            })
+            .unwrap();
+        assert_eq!(credential.values["OAUTH_ACCESS_TOKEN"], "new-access");
+        manager
+            .revoke_credential(HostedOAuthRevoke {
+                provider: "discord",
+                broker_credential_id: "grant-id",
+                broker_credential_secret: "grant-secret",
+                access_token: Some("access"),
+                refresh_token: Some("refresh"),
+            })
+            .unwrap();
+
+        assert_eq!(
+            broker.refreshed.borrow().as_slice(),
+            ["discord:grant-id:grant-secret:refresh"]
+        );
+        assert_eq!(
+            broker.revoked.borrow().as_slice(),
+            ["discord:grant-id:grant-secret:access:refresh"]
+        );
     }
 
     #[test]
@@ -691,5 +879,18 @@ mod tests {
             err.to_string()
                 .contains("only provider \"discord\" is enabled")
         );
+    }
+
+    #[test]
+    fn direct_broker_allows_production_and_loopback_urls() {
+        assert!(DirectHostedOAuthBroker::new("https://oauth.sfae.io").is_ok());
+        assert!(DirectHostedOAuthBroker::new("http://127.0.0.1:3100").is_ok());
+        assert!(DirectHostedOAuthBroker::new("http://localhost:3100").is_ok());
+    }
+
+    #[test]
+    fn direct_broker_rejects_unknown_urls() {
+        assert!(DirectHostedOAuthBroker::new("http://oauth.sfae.io").is_err());
+        assert!(DirectHostedOAuthBroker::new("https://evil.example").is_err());
     }
 }

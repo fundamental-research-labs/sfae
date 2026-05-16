@@ -476,7 +476,8 @@ async fn mark_local_session_success(args: MarkLocalSuccess<'_>) -> Result<(), St
         token,
         user,
         scopes,
-    });
+    })
+    .await?;
     let value_json = serde_json::to_string(&credential)
         .map_err(|e| format!("local_credential_serialize_failed: {e}"))?;
     let ciphertext = state.cipher.encrypt(&value_json)?;
@@ -502,13 +503,33 @@ struct LocalCredentialBlob<'a> {
     scopes: &'a [String],
 }
 
-fn local_credential_blob(args: LocalCredentialBlob<'_>) -> RedeemedCredentialResp {
+async fn local_credential_blob(
+    args: LocalCredentialBlob<'_>,
+) -> Result<RedeemedCredentialResp, String> {
     let LocalCredentialBlob {
         state,
         token,
         user,
         scopes,
     } = args;
+    let broker_credential_secret = generate_state();
+    let broker_credential_secret_hash = state.state_hasher.hash(&broker_credential_secret);
+    let refresh_token_hash = token
+        .refresh_token
+        .as_deref()
+        .map(|refresh_token| state.state_hasher.hash(refresh_token));
+    let (broker_credential_id,) = sqlx::query_as::<_, (Uuid,)>(
+        "INSERT INTO local_oauth_grants \
+         (provider, provider_subject, secret_hash, refresh_token_hash) \
+         VALUES ('discord', $1, $2, $3) RETURNING id",
+    )
+    .bind(&user.id)
+    .bind(&broker_credential_secret_hash)
+    .bind(&refresh_token_hash)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| format!("local_grant_insert_failed: {e}"))?;
+
     let mut values = HashMap::new();
     values.insert("OAUTH_ACCESS_TOKEN".to_string(), token.access_token.clone());
 
@@ -516,12 +537,20 @@ fn local_credential_blob(args: LocalCredentialBlob<'_>) -> RedeemedCredentialRes
     if let Some(refresh_token) = token.refresh_token.as_deref() {
         internal.insert("OAUTH_REFRESH_TOKEN".to_string(), refresh_token.to_string());
     }
+    internal.insert(
+        "OAUTH_BROKER_CREDENTIAL_SECRET".to_string(),
+        broker_credential_secret,
+    );
 
     let mut metadata = HashMap::new();
     metadata.insert("OAUTH_PROVIDER".to_string(), "discord".to_string());
     metadata.insert(
         "OAUTH_BROKER_URL".to_string(),
         state.config.base_url.to_string(),
+    );
+    metadata.insert(
+        "OAUTH_BROKER_CREDENTIAL_ID".to_string(),
+        broker_credential_id.to_string(),
     );
     metadata.insert("OAUTH_SCOPES".to_string(), scopes.join(" "));
     metadata.insert("OAUTH_PROVIDER_SUBJECT".to_string(), user.id.clone());
@@ -535,11 +564,11 @@ fn local_credential_blob(args: LocalCredentialBlob<'_>) -> RedeemedCredentialRes
         metadata.insert("OAUTH_EXPIRES_AT".to_string(), expires_at.to_rfc3339());
     }
 
-    RedeemedCredentialResp {
+    Ok(RedeemedCredentialResp {
         values,
         internal,
         metadata,
-    }
+    })
 }
 
 struct UpsertAccount<'a> {

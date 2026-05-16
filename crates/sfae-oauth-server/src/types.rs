@@ -108,3 +108,24 @@ pub(crate) struct RedeemedCredentialResp {
     pub(crate) internal: std::collections::HashMap<String, String>,
     pub(crate) metadata: std::collections::HashMap<String, String>,
 }
+
+/// Public local-CLI request to refresh a locally stored OAuth token.
+#[derive(Deserialize)]
+pub(crate) struct RefreshLocalCredentialReq {
+    pub(crate) provider: String,
+    pub(crate) broker_credential_id: Uuid,
+    pub(crate) broker_credential_secret: String,
+    pub(crate) refresh_token: String,
+}
+
+/// Public local-CLI request to revoke locally stored OAuth token material.
+#[derive(Deserialize)]
+pub(crate) struct RevokeLocalCredentialReq {
+    pub(crate) provider: String,
+    pub(crate) broker_credential_id: Uuid,
+    pub(crate) broker_credential_secret: String,
+    #[serde(default)]
+    pub(crate) access_token: Option<String>,
+    #[serde(default)]
+    pub(crate) refresh_token: Option<String>,
+}
