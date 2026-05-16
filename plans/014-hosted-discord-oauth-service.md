@@ -32,7 +32,7 @@ Any earlier non-server-side OAuth provider implementation must be removed rather
 - [x] SFAE app/backend wired to start OAuth sessions as a backend proof path
 - [x] Existing SFAE remote credential proxy path wired as a backend proof path
 - [x] Local CLI hosted Discord OAuth stores token material in OS credential store
-- [ ] Local `sfae request` resolves hosted Discord OAuth credentials from OS credential store
+- [x] Local `sfae request` resolves hosted Discord OAuth credentials from OS credential store
 - [x] Refresh/revoke through broker for locally stored OAuth tokens implemented
 - [ ] Mock-provider integration tests added
 
@@ -351,10 +351,10 @@ Normal local CLI hosted OAuth must look like local SFAE credential collection:
 - [x] Split credential-set storage/resolution so internal secrets such as refresh tokens are stored locally but never exposed to `{FIELD}` placeholder resolution.
 - [x] Store enough non-secret OAuth metadata locally to know refresh/revoke must go back through `oauth.sfae.io`, without storing provider client secrets locally.
 - [x] Update README, CLI help, and active docs so native local hosted OAuth no longer says it requires `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
-- [ ] Verify `sfae credentials discord.com` lists the local credential set from Passwords/keychain.
-- [ ] Verify `sfae request` resolves `{OAUTH_ACCESS_TOKEN}` from Passwords/keychain.
+- [x] Verify `sfae credentials discord.com` lists the local credential set from Passwords/keychain.
+- [x] Verify `sfae request` resolves `{OAUTH_ACCESS_TOKEN}` from Passwords/keychain.
 - [x] Verify `{OAUTH_REFRESH_TOKEN}` and other internal-only values cannot be resolved into requests.
-- [ ] Run a real Discord API request with `{OAUTH_ACCESS_TOKEN}` using only the local CLI credential store.
+- [x] Run a real Discord API request with `{OAUTH_ACCESS_TOKEN}` using only the local CLI credential store.
 
 ### Completed
 
@@ -464,13 +464,14 @@ Status: partially complete in this branch.
 - Added loopback-aware HTTP agent construction so local mock broker tests and local broker URLs bypass proxy environment variables while non-loopback traffic still honors configured proxies.
 - Added explicit backend-proxy OAuth constructor validation for empty URL/token values.
 - Stabilized the CLI version smoke test by using a unique temp directory, after `cargo xtask ci` exposed a fixed-temp-dir flake.
+- Completed a manual live Discord local-CLI smoke against the redeployed `oauth.sfae.io` service: `sfae prompt discord.com --label live-discord-smoke` stored a local keychain credential set, `sfae credentials discord.com` listed only `OAUTH_ACCESS_TOKEN`, dry-run masked `{OAUTH_ACCESS_TOKEN}`, and a real `GET https://discord.com/api/v10/users/@me` returned `200` using only the local CLI credential store.
 
 ### Remaining
 
 - Full mock OAuth provider integration tests that exercise callback/code exchange without Discord.
 - Database-backed callback failure and replay tests for missing code, provider errors, expired state, and duplicate callback consumption.
 - Database-backed one-time local handoff tests for replayed redeem, wrong verifier, expired redeem, and session-id-only redemption failure.
-- End-to-end local CLI/keychain hosted OAuth smoke coverage, including a secret-gated live Discord request with no `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
+- Automated end-to-end local CLI/keychain hosted OAuth smoke coverage, including a secret-gated live Discord request with no `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
 - Metrics or structured audit event coverage for session start, callback success/failure, refresh, and revoke.
 
 ## Operational Notes
