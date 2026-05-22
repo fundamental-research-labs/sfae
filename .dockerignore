@@ -1,0 +1,22 @@
+*
+
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!Dockerfile.oauth
+!Dockerfile.server
+
+!crates/
+!crates/*/
+!crates/*/Cargo.toml
+!crates/*/build.rs
+!crates/*/src/
+!crates/*/src/**
+!crates/*/tests/
+!crates/*/tests/**
+!crates/*/migrations/
+!crates/*/migrations/**
+
+# sfae-core embeds these HTML/CSS assets at compile time.
+!crates/sfae-core/src/*.html
+!crates/sfae-core/src/*.css

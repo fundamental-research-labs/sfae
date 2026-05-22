@@ -28,20 +28,35 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         None => format!("Credentials for {domain}"),
     };
 
-    let values = if terminal {
+    let prompt_result = if terminal {
         if let Some(u) = &spec.help_url {
             eprintln!("Obtain your credential here: {u}");
         }
-        terminal_prompt_fields(spec)?
+        sfae_core::browser::BrowserPromptResult::Values(terminal_prompt_fields(spec)?)
     } else {
         eprintln!(
             "Opening browser for credential collection. This is human-paced and may take an undefined amount of time; keep waiting until this command exits."
         );
-        sfae_core::browser::browser_prompt_spec(sfae_core::browser::FormContext {
+        browser_prompt_with_optional_oauth(BrowserPromptCtx {
             domain,
             label: &display_label,
+            credential_label: username,
             spec,
         })?
+    };
+
+    let values = match prompt_result {
+        sfae_core::browser::BrowserPromptResult::Values(values) => values,
+        sfae_core::browser::BrowserPromptResult::HostedOAuth {
+            session_id,
+            credential_id,
+        } => {
+            match credential_id {
+                Some(id) => eprintln!("Credential stored: {id}"),
+                None => eprintln!("OAuth session completed: {session_id}"),
+            }
+            return Ok(());
+        }
     };
 
     let mut store = create_store();
@@ -68,6 +83,94 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+struct BrowserPromptCtx<'a> {
+    domain: &'a str,
+    label: &'a str,
+    credential_label: Option<&'a str>,
+    spec: &'a PromptSpec,
+}
+
+fn browser_prompt_with_optional_oauth(
+    ctx: BrowserPromptCtx<'_>,
+) -> anyhow::Result<sfae_core::browser::BrowserPromptResult> {
+    let BrowserPromptCtx {
+        domain,
+        label,
+        credential_label,
+        spec,
+    } = ctx;
+    let form_ctx = sfae_core::browser::FormContext {
+        domain,
+        label,
+        credential_label,
+        spec,
+    };
+    if !spec_has_oauth(spec) {
+        return Ok(sfae_core::browser::browser_prompt_spec(
+            form_ctx, None, None,
+        )?);
+    }
+
+    if crate::store_factory::uses_remote_store() {
+        let broker = sfae_core::oauth::BackendProxyHostedOAuthBroker::from_env()?;
+        let mut manager = sfae_core::oauth::OAuthCredentialManager::new(&broker);
+        validate_oauth_providers(spec, domain, &manager)?;
+        return Ok(sfae_core::browser::browser_prompt_spec(
+            form_ctx,
+            Some(&mut manager),
+            None,
+        )?);
+    }
+
+    let broker = sfae_core::oauth::DirectHostedOAuthBroker::from_env()?;
+    let mut manager = sfae_core::oauth::OAuthCredentialManager::new(&broker);
+    validate_oauth_providers(spec, domain, &manager)?;
+    let mut sink = |credential: sfae_core::oauth::HostedOAuthCredential| {
+        let mut store = create_store();
+        store.store_structured_credential_set(sfae_core::store::StructuredCredentialSetInput {
+            domain,
+            label: credential_label,
+            values: &credential.values,
+            internal: Some(&credential.internal),
+            metadata: Some(&credential.metadata),
+        })
+    };
+    Ok(sfae_core::browser::browser_prompt_spec(
+        form_ctx,
+        Some(&mut manager),
+        Some(&mut sink),
+    )?)
+}
+
+// xtask: allow-multi-param - validates a prompt spec against a resolved domain and broker
+fn validate_oauth_providers(
+    spec: &PromptSpec,
+    domain: &str,
+    manager: &sfae_core::oauth::OAuthCredentialManager<'_>,
+) -> anyhow::Result<()> {
+    let registry = manager.provider_registry()?;
+    for group in spec
+        .groups
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|group| group.oauth.as_ref())
+    {
+        sfae_core::oauth::resolve_hosted_provider(sfae_core::oauth::HostedProviderResolve {
+            domain,
+            requested_provider: group.provider.as_deref(),
+            registry: &registry,
+        })?;
+    }
+    Ok(())
+}
+
+fn spec_has_oauth(spec: &PromptSpec) -> bool {
+    spec.groups
+        .as_ref()
+        .is_some_and(|groups| groups.iter().any(|group| group.oauth.is_some()))
 }
 
 fn terminal_prompt_fields(spec: &PromptSpec) -> anyhow::Result<HashMap<String, String>> {

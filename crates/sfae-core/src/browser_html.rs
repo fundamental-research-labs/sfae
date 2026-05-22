@@ -21,6 +21,7 @@ pub struct QueryLookup<'a> {
 pub struct FormContext<'a> {
     pub domain: &'a str,
     pub label: &'a str,
+    pub credential_label: Option<&'a str>,
     pub spec: &'a PromptSpec,
 }
 
@@ -253,6 +254,10 @@ impl<'a> GroupsRender<'a> {
             "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex'});",
             "var inputs=document.querySelectorAll('input[type=\"text\"]:not(:disabled)');",
             "if(!inputs.length){sfaeSubmit()}",
+            "}else if(d.error){",
+            "clearInterval(t);",
+            "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex';s.textContent='Authorization failed'});",
+            "sfaeSubmit();",
             "}",
             "}).catch(function(){})",
             "},1500)}",
@@ -274,7 +279,13 @@ struct OAuthPanel<'a> {
 impl<'a> OAuthPanel<'a> {
     /// Generate HTML for an OAuth group panel: scope display + "Authorize" button.
     fn render(&self) -> String {
-        let scope = html_escape(&self.oauth.scope);
+        let scopes = self.oauth.requested_scopes();
+        let scope = if scopes.is_empty() {
+            "default".to_string()
+        } else {
+            scopes.join(" ")
+        };
+        let scope = html_escape(&scope);
         let group_idx = self.group_idx;
         let mut html = String::new();
         html.push_str(r#"<div class="oauth-content">"#);
@@ -305,18 +316,6 @@ fn apply_template(tpl: Template<'_>) -> String {
         out = out.replace(key, value);
     }
     out
-}
-
-/// Build the page shown in the OAuth popup after authorization completes.
-pub(crate) fn build_oauth_done_page() -> String {
-    apply_template(Template {
-        source: include_str!("done.html"),
-        vars: &[
-            ("{{BASE_STYLES}}", BASE_STYLES),
-            ("{{TITLE}}", "sfae \u{2014} authorized"),
-            ("{{HEADING}}", "Authorized"),
-        ],
-    })
 }
 
 /// Build the confirmation page shown after the secret is submitted or OAuth completes.

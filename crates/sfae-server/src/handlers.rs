@@ -13,25 +13,27 @@ use axum::{
 };
 use jsonwebtoken::{EncodingKey, Header, encode};
 
-use crate::helpers::{db_error, find_oauth_set_for_domain, resolve_oauth_client_from_state};
+use crate::helpers::db_error;
 use crate::state::{AppState, Claims};
 use crate::types::{
-    CreatePendingOAuthReq, CredentialEntry, HealthResponse, ListResponse, MintTokenReq, OkResponse,
-    PendingOAuthRow, RefreshReq, StoreCredentialReq, StoreOkResponse, TokenResponse,
-    UpdateCredentialReq,
+    BrokerCreateSessionReq, BrokerCreateSessionResp, BrokerSessionStatusResp, CredentialEntry,
+    HealthResponse, HostedOAuthSessionReq, HostedOAuthSessionResp, HostedOAuthStatusResp,
+    ListResponse, MintTokenReq, OAuthProviderListResp, OkResponse, StoreCredentialReq,
+    StoreOkResponse, TokenResponse, UpdateCredentialReq,
 };
 
-/// POST /credentials — create a new credential set (internal auth only).
+/// POST /credentials — create a new credential set for the authenticated user.
 // xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn store_credential(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     axum::Json(body): axum::Json<StoreCredentialReq>,
 ) -> impl IntoResponse {
-    let user_id = match state.require_internal(&headers) {
-        Ok(uid) => uid,
-        Err(resp) => return resp,
+    let auth = match state.extract_auth(&headers) {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
     };
+    let user_id = auth.user_id().to_string();
 
     let mut keys: Vec<String> = body.values.keys().cloned().collect();
     keys.sort();
@@ -68,10 +70,11 @@ pub(crate) async fn update_credential(
     Path(id): Path<String>,
     axum::Json(body): axum::Json<UpdateCredentialReq>,
 ) -> impl IntoResponse {
-    let user_id = match state.require_internal(&headers) {
-        Ok(uid) => uid,
-        Err(resp) => return resp,
+    let auth = match state.extract_auth(&headers) {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
     };
+    let user_id = auth.user_id().to_string();
 
     let current = sqlx::query_as::<_, (String,)>(
         "SELECT value FROM sfae_credentials WHERE id = $1::uuid AND user_id = $2",
@@ -265,10 +268,11 @@ pub(crate) async fn delete_credential(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let user_id = match state.require_internal(&headers) {
-        Ok(uid) => uid,
-        Err(resp) => return resp,
+    let auth = match state.extract_auth(&headers) {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
     };
+    let user_id = auth.user_id().to_string();
 
     let result = sqlx::query("DELETE FROM sfae_credentials WHERE id = $1::uuid AND user_id = $2")
         .bind(&id)
@@ -334,290 +338,241 @@ pub(crate) async fn mint_token(
     }
 }
 
-/// POST /oauth/pending — store a pending OAuth row (internal auth only).
+/// GET /oauth/providers — proxy hosted OAuth provider metadata for the current user.
 // xtask: allow-multi-param - axum handler extractors
-pub(crate) async fn create_pending_oauth(
+pub(crate) async fn list_hosted_oauth_providers(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    axum::Json(body): axum::Json<CreatePendingOAuthReq>,
 ) -> impl IntoResponse {
-    if let Err(resp) = state.require_internal(&headers) {
-        return resp;
+    if let Err(e) = state.extract_auth(&headers) {
+        return e.into_response();
     }
 
-    let result = sqlx::query(
-        "INSERT INTO sfae_pending_oauth \
-         (state, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope, redirect_origin) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-    )
-    .bind(&body.state)
-    .bind(&body.user_id)
-    .bind(&body.verifier)
-    .bind(&body.domain)
-    .bind(&body.token_url)
-    .bind(&body.client_id)
-    .bind(&body.client_secret)
-    .bind(&body.redirect_uri)
-    .bind(&body.scope)
-    .bind(&body.redirect_origin)
-    .execute(&state.pool)
-    .await;
-
-    match result {
-        Ok(_) => axum::Json(OkResponse { ok: true }).into_response(),
-        Err(e) => db_error(e).into_response(),
-    }
-}
-
-/// GET /oauth/pending/:state — atomically consume a pending OAuth row.
-// xtask: allow-multi-param - axum handler extractors
-pub(crate) async fn consume_pending_oauth(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(oauth_state): Path<String>,
-) -> impl IntoResponse {
-    if let Err(resp) = state.require_internal(&headers) {
-        return resp;
-    }
-
-    let result = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, String, Option<String>, Option<String>)>(
-        "DELETE FROM sfae_pending_oauth \
-         WHERE state = $1 AND expires_at > now() \
-         RETURNING state, user_id, verifier, domain, token_url, client_id, client_secret, redirect_uri, scope, redirect_origin",
-    )
-    .bind(&oauth_state)
-    .fetch_optional(&state.pool)
-    .await;
-
-    match result {
-        Ok(Some((
-            state_val,
-            user_id,
-            verifier,
-            domain,
-            token_url,
-            client_id,
-            client_secret,
-            redirect_uri,
-            scope,
-            redirect_origin,
-        ))) => axum::Json(PendingOAuthRow {
-            state: state_val,
-            user_id,
-            verifier,
-            domain,
-            token_url,
-            client_id,
-            client_secret,
-            redirect_uri,
-            scope,
-            redirect_origin,
-        })
-        .into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            "Pending OAuth session not found or expired".to_string(),
+    let url = format!("{}/v1/oauth/providers", state.oauth_broker_url);
+    let response = match state.http.get(&url).send().await {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::error!("OAuth broker provider request failed: {e}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                "failed to contact OAuth broker".to_string(),
+            )
+                .into_response();
+        }
+    };
+    let status = response.status();
+    let text = match response.text().await {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::error!("OAuth broker provider response read failed: {e}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                "failed to read OAuth broker response".to_string(),
+            )
+                .into_response();
+        }
+    };
+    if !status.is_success() {
+        return (
+            StatusCode::BAD_GATEWAY,
+            format!("OAuth broker provider request failed: {status}"),
         )
-            .into_response(),
-        Err(e) => db_error(e).into_response(),
+            .into_response();
     }
+    let providers: OAuthProviderListResp = match serde_json::from_str(&text) {
+        Ok(providers) => providers,
+        Err(e) => {
+            tracing::error!("OAuth broker provider response parse failed: {e}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                "failed to parse OAuth broker provider response".to_string(),
+            )
+                .into_response();
+        }
+    };
+    axum::Json(providers).into_response()
 }
 
-/// POST /credentials/refresh — server-side OAuth token refresh.
+/// POST /oauth/sessions — start a hosted OAuth broker session for the current user.
 // xtask: allow-multi-param - axum handler extractors
-pub(crate) async fn refresh_credential(
+pub(crate) async fn create_hosted_oauth_session(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    axum::Json(body): axum::Json<RefreshReq>,
+    axum::Json(body): axum::Json<HostedOAuthSessionReq>,
 ) -> impl IntoResponse {
     let auth = match state.extract_auth(&headers) {
-        Ok(a) => a,
+        Ok(auth) => auth,
         Err(e) => return e.into_response(),
     };
     let user_id = auth.user_id().to_string();
 
-    let (cred_id, domain, blob_str) = if let Some(ref id) = body.id {
-        match sqlx::query_as::<_, (String, String)>(
-            "SELECT domain, value FROM sfae_credentials WHERE id = $1::uuid AND user_id = $2",
-        )
-        .bind(id)
-        .bind(&user_id)
-        .fetch_optional(&state.pool)
+    let url = format!("{}/internal/oauth/sessions", state.oauth_broker_url);
+    let broker_body = BrokerCreateSessionReq {
+        provider: &body.provider,
+        user_id: &user_id,
+        domain: body.domain.as_deref(),
+        label: body.label.as_deref(),
+        scopes: body.scopes,
+    };
+
+    let response = match state
+        .http
+        .post(&url)
+        .header("x-internal-auth", &state.internal_auth_secret)
+        .json(&broker_body)
+        .send()
         .await
-        {
-            Ok(Some((d, v))) => (id.clone(), d, v),
-            Ok(None) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Credential set not found".to_string(),
-                )
-                    .into_response();
-            }
-            Err(e) => return db_error(e).into_response(),
-        }
-    } else if let Some(ref domain) = body.domain {
-        match find_oauth_set_for_domain(crate::helpers::OAuthSetQuery {
-            pool: &state.pool,
-            user_id: &user_id,
-            domain,
-        })
-        .await
-        {
-            Ok(Some((id, d, v))) => (id, d, v),
-            Ok(None) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "No OAuth credentials found for this domain".to_string(),
-                )
-                    .into_response();
-            }
-            Err(e) => return db_error(e).into_response(),
-        }
-    } else {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Either id or domain is required".to_string(),
-        )
-            .into_response();
-    };
-
-    let mut blob: HashMap<String, String> = match serde_json::from_str(&blob_str) {
-        Ok(v) => v,
+    {
+        Ok(response) => response,
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Invalid credential blob: {e}"),
-            )
-                .into_response();
-        }
-    };
-
-    let token_url = match blob.get("OAUTH_TOKEN_URL") {
-        Some(u) => u.clone(),
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                "Credential blob missing OAUTH_TOKEN_URL".to_string(),
-            )
-                .into_response();
-        }
-    };
-    let refresh_token = match blob.get("OAUTH_REFRESH_TOKEN") {
-        Some(t) => t.clone(),
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                "Credential blob missing OAUTH_REFRESH_TOKEN".to_string(),
-            )
-                .into_response();
-        }
-    };
-
-    let (client_id, client_secret) =
-        match resolve_oauth_client_from_state(crate::helpers::StateDomain {
-            state: &state,
-            domain: &domain,
-        }) {
-            Some(pair) => pair,
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    format!("No OAuth client config for domain {domain}"),
-                )
-                    .into_response();
-            }
-        };
-
-    let http = reqwest::Client::new();
-    let mut params = vec![
-        ("grant_type", "refresh_token".to_string()),
-        ("refresh_token", refresh_token),
-        ("client_id", client_id),
-    ];
-    if let Some(ref secret) = client_secret {
-        params.push(("client_secret", secret.clone()));
-    }
-
-    let provider_resp = match http.post(&token_url).form(&params).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("Provider token endpoint error: {e}");
+            tracing::error!("failed to contact hosted OAuth broker: {e}");
             return (
                 StatusCode::BAD_GATEWAY,
-                "Failed to contact token endpoint".to_string(),
+                "failed to contact hosted OAuth broker".to_string(),
             )
                 .into_response();
         }
     };
 
-    if !provider_resp.status().is_success() {
-        let status = provider_resp.status();
-        let body_text = provider_resp.text().await.unwrap_or_default();
-        tracing::error!("Provider rejected refresh: {status} {body_text}");
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        tracing::warn!("hosted OAuth broker rejected session create: {status} {body}");
+        let client_status = if status.is_client_error() {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::BAD_GATEWAY
+        };
+        return (
+            client_status,
+            format!("hosted OAuth broker rejected session create: {status}"),
+        )
+            .into_response();
+    }
+
+    let broker: BrokerCreateSessionResp = match response.json().await {
+        Ok(body) => body,
+        Err(e) => {
+            tracing::error!("failed to parse hosted OAuth broker response: {e}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                "invalid hosted OAuth broker response".to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    axum::Json(HostedOAuthSessionResp {
+        session_id: broker.session_id,
+        authorization_url: broker.authorization_url,
+        expires_at: broker.expires_at,
+    })
+    .into_response()
+}
+
+/// GET /oauth/sessions/:id — poll sanitized hosted OAuth broker status.
+// xtask: allow-multi-param - axum handler extractors
+pub(crate) async fn get_hosted_oauth_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let auth = match state.extract_auth(&headers) {
+        Ok(auth) => auth,
+        Err(e) => return e.into_response(),
+    };
+    let user_id = auth.user_id().to_string();
+
+    let url = format!("{}/internal/oauth/sessions/{id}", state.oauth_broker_url);
+    let response = match state
+        .http
+        .get(&url)
+        .header("x-internal-auth", &state.internal_auth_secret)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::error!("failed to contact hosted OAuth broker: {e}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                "failed to contact hosted OAuth broker".to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return (StatusCode::NOT_FOUND, "session not found".to_string()).into_response();
+    }
+    if !response.status().is_success() {
+        let status = response.status();
+        tracing::warn!("hosted OAuth broker rejected status poll: {status}");
         return (
             StatusCode::BAD_GATEWAY,
-            format!("Provider rejected refresh: {status}"),
+            format!("hosted OAuth broker rejected status poll: {status}"),
         )
             .into_response();
     }
 
-    let token_data: serde_json::Value = match provider_resp.json().await {
-        Ok(v) => v,
+    let broker: BrokerSessionStatusResp = match response.json().await {
+        Ok(body) => body,
         Err(e) => {
-            tracing::error!("Failed to parse token response: {e}");
+            tracing::error!("failed to parse hosted OAuth broker status: {e}");
             return (
                 StatusCode::BAD_GATEWAY,
-                "Invalid token response from provider".to_string(),
+                "invalid hosted OAuth broker response".to_string(),
             )
                 .into_response();
         }
     };
 
-    let new_access_token = match token_data.get("access_token").and_then(|v| v.as_str()) {
-        Some(t) => t.to_string(),
-        None => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                "Provider response missing access_token".to_string(),
-            )
-                .into_response();
-        }
-    };
-
-    blob.insert("OAUTH_ACCESS_TOKEN".to_string(), new_access_token);
-    if let Some(new_refresh) = token_data.get("refresh_token").and_then(|v| v.as_str()) {
-        blob.insert("OAUTH_REFRESH_TOKEN".to_string(), new_refresh.to_string());
+    if broker.user_id != user_id {
+        return (StatusCode::NOT_FOUND, "session not found".to_string()).into_response();
     }
 
-    let mut keys: Vec<String> = blob.keys().cloned().collect();
-    keys.sort();
-    let value_json = match serde_json::to_string(&blob) {
-        Ok(j) => j,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Serialize error: {e}"),
-            )
-                .into_response();
-        }
-    };
+    axum::Json(HostedOAuthStatusResp {
+        session_id: broker.id,
+        provider: broker.provider,
+        domain: broker.domain,
+        label: broker.label,
+        scopes: broker.scopes,
+        status: broker.status,
+        error_code: public_oauth_error_code(broker.error_code.as_deref()),
+        provider_subject: broker.provider_subject,
+        credential_id: broker.credential_id,
+        expires_at: broker.expires_at,
+    })
+    .into_response()
+}
 
-    let update_result = sqlx::query(
-        "UPDATE sfae_credentials SET value = $1, keys = $2, updated_at = now() \
-         WHERE id = $3::uuid AND user_id = $4",
+fn public_oauth_error_code(error_code: Option<&str>) -> Option<String> {
+    let code = match error_code? {
+        "access_denied" => "access_denied",
+        "missing_code" => "missing_code",
+        code if code.starts_with("discord_token_status_") => "provider_token_exchange_failed",
+        code if code.starts_with("discord_user_status_") => "provider_identity_failed",
+        code if code.contains("_failed") => "oauth_completion_failed",
+        _ => "oauth_failed",
+    };
+    Some(code.to_string())
+}
+
+/// POST /credentials/refresh — OAuth refresh will delegate to the hosted broker in a later phase.
+// xtask: allow-multi-param - axum handler extractors
+pub(crate) async fn refresh_credential(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::Json(_body): axum::Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if let Err(e) = state.extract_auth(&headers) {
+        return e.into_response();
+    }
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        "OAuth refresh delegation is not implemented in this phase".to_string(),
     )
-    .bind(&value_json)
-    .bind(&keys)
-    .bind(&cred_id)
-    .bind(&user_id)
-    .execute(&state.pool)
-    .await;
-
-    if let Err(e) = update_result {
-        return db_error(e).into_response();
-    }
-
-    axum::Json(OkResponse { ok: true }).into_response()
+        .into_response()
 }
 
 /// GET /health — health check (no auth).

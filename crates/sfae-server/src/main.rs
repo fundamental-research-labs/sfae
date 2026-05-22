@@ -15,15 +15,16 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
+mod db;
 mod handlers;
 mod helpers;
 mod state;
 mod types;
 
 use crate::handlers::{
-    consume_pending_oauth, create_pending_oauth, delete_credential, get_blob, health,
-    list_all_credentials, list_credentials, mint_token, refresh_credential, store_credential,
-    update_credential,
+    create_hosted_oauth_session, delete_credential, get_blob, get_hosted_oauth_session, health,
+    list_all_credentials, list_credentials, list_hosted_oauth_providers, mint_token,
+    refresh_credential, store_credential, update_credential,
 };
 use crate::state::AppState;
 
@@ -45,19 +46,22 @@ async fn main() {
         .parse()
         .expect("SFAE_SERVER_PORT must be a valid port number");
 
-    let google_client_id = std::env::var("SFAE_GOOGLE_CLIENT_ID").ok();
-    let google_client_secret = std::env::var("SFAE_GOOGLE_CLIENT_SECRET").ok();
+    let oauth_broker_url =
+        std::env::var("SFAE_OAUTH_BROKER_URL").unwrap_or_else(|_| "https://oauth.sfae.io".into());
 
     let pool = PgPool::connect(&database_url)
         .await
         .expect("Failed to connect to database");
+    db::run_migrations(&pool)
+        .await
+        .expect("Failed to run database migrations");
 
     let state = Arc::new(AppState {
         pool,
         jwt_secret,
         internal_auth_secret,
-        google_client_id,
-        google_client_secret,
+        oauth_broker_url: oauth_broker_url.trim_end_matches('/').to_string(),
+        http: reqwest::Client::new(),
     });
 
     let app = Router::new()
@@ -73,8 +77,9 @@ async fn main() {
                 .put(update_credential)
                 .delete(delete_credential),
         )
-        .route("/oauth/pending", post(create_pending_oauth))
-        .route("/oauth/pending/{state}", get(consume_pending_oauth))
+        .route("/oauth/providers", get(list_hosted_oauth_providers))
+        .route("/oauth/sessions", post(create_hosted_oauth_session))
+        .route("/oauth/sessions/{id}", get(get_hosted_oauth_session))
         .route("/auth/token", post(mint_token))
         .route("/health", get(health))
         .layer(TraceLayer::new_for_http())

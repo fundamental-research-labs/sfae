@@ -1,0 +1,182 @@
+//! State hashing and token encryption helpers used by the hosted OAuth service.
+
+use base64::Engine;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use hmac::{Hmac, Mac};
+use rand::Rng;
+use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+use sha2::Sha256;
+
+/// HMAC-SHA256 state hashing so raw OAuth state never needs to be stored.
+#[derive(Clone)]
+pub(crate) struct StateHasher {
+    key: Vec<u8>,
+}
+
+impl StateHasher {
+    /// Create a state hasher from a high-entropy runtime secret.
+    pub(crate) fn new(secret: &str) -> Self {
+        Self {
+            key: secret.as_bytes().to_vec(),
+        }
+    }
+
+    /// Compute a stable URL-safe hash for a raw OAuth state value.
+    pub(crate) fn hash(&self, state: &str) -> String {
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(&self.key).expect("HMAC accepts keys of any length");
+        mac.update(state.as_bytes());
+        URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+    }
+}
+
+/// AES-256-GCM token encryption wrapper.
+#[derive(Clone)]
+pub(crate) struct TokenCipher {
+    key: LessSafeKey,
+}
+
+impl TokenCipher {
+    /// Build a cipher from the base64 32-byte deployment secret.
+    pub(crate) fn from_base64_key(raw: &str) -> Result<Self, String> {
+        let bytes = STANDARD
+            .decode(raw)
+            .map_err(|e| format!("invalid base64 encryption key: {e}"))?;
+        if bytes.len() != 32 {
+            return Err(format!(
+                "encryption key is {} bytes, expected 32",
+                bytes.len()
+            ));
+        }
+        let unbound =
+            UnboundKey::new(&AES_256_GCM, &bytes).map_err(|_| "invalid AES key".to_string())?;
+        Ok(Self {
+            key: LessSafeKey::new(unbound),
+        })
+    }
+
+    /// Encrypt a token and return `v1:<nonce>:<ciphertext>` for DB storage.
+    pub(crate) fn encrypt(&self, plaintext: &str) -> Result<String, String> {
+        let mut nonce_bytes = [0u8; 12];
+        rand::rng().fill(&mut nonce_bytes);
+        let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+        let mut in_out = plaintext.as_bytes().to_vec();
+        self.key
+            .seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out)
+            .map_err(|_| "token encryption failed".to_string())?;
+        Ok(format!(
+            "v1:{}:{}",
+            URL_SAFE_NO_PAD.encode(nonce_bytes),
+            URL_SAFE_NO_PAD.encode(in_out)
+        ))
+    }
+
+    /// Decrypt a `v1:<nonce>:<ciphertext>` token value from DB storage.
+    pub(crate) fn decrypt(&self, ciphertext: &str) -> Result<String, String> {
+        let mut parts = ciphertext.split(':');
+        let version = parts.next().unwrap_or_default();
+        let nonce = parts.next().unwrap_or_default();
+        let body = parts.next().unwrap_or_default();
+        if version != "v1" || parts.next().is_some() {
+            return Err("unsupported token ciphertext format".to_string());
+        }
+        let nonce_bytes = URL_SAFE_NO_PAD
+            .decode(nonce)
+            .map_err(|e| format!("invalid nonce: {e}"))?;
+        let nonce: [u8; 12] = nonce_bytes
+            .try_into()
+            .map_err(|_| "invalid nonce length".to_string())?;
+        let mut in_out = URL_SAFE_NO_PAD
+            .decode(body)
+            .map_err(|e| format!("invalid ciphertext: {e}"))?;
+        let plaintext = self
+            .key
+            .open_in_place(
+                Nonce::assume_unique_for_key(nonce),
+                Aad::empty(),
+                &mut in_out,
+            )
+            .map_err(|_| "token decryption failed".to_string())?;
+        String::from_utf8(plaintext.to_vec()).map_err(|e| format!("invalid UTF-8: {e}"))
+    }
+}
+
+/// Generate a high-entropy OAuth state value for a browser redirect flow.
+pub(crate) fn generate_state() -> String {
+    let mut bytes = [0u8; 32];
+    rand::rng().fill(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// Compute the public S256 challenge for a local-CLI redeem verifier.
+pub(crate) fn redeem_challenge(verifier: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let digest = Sha256::digest(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    fn test_key() -> String {
+        STANDARD.encode([7u8; 32])
+    }
+
+    #[test]
+    fn state_hash_is_stable_keyed_and_not_plaintext() {
+        let first = StateHasher::new("secret-one");
+        let second = StateHasher::new("secret-two");
+
+        assert_eq!(first.hash("state"), first.hash("state"));
+        assert_ne!(first.hash("state"), second.hash("state"));
+        assert_ne!(first.hash("state"), "state");
+        assert!(!first.hash("state").contains('='));
+    }
+
+    #[test]
+    fn generated_states_are_url_safe_and_unique_in_sample() {
+        let mut seen = HashSet::new();
+        for _ in 0..32 {
+            let state = generate_state();
+            assert!(
+                state
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            );
+            assert!(seen.insert(state));
+        }
+    }
+
+    #[test]
+    fn token_cipher_round_trips_and_rejects_tampering() {
+        let cipher = TokenCipher::from_base64_key(&test_key()).unwrap();
+        let ciphertext = cipher.encrypt("access-token").unwrap();
+
+        assert_eq!(cipher.decrypt(&ciphertext).unwrap(), "access-token");
+        assert_ne!(ciphertext, "access-token");
+        assert!(cipher.decrypt(&format!("{ciphertext}x")).is_err());
+    }
+
+    #[test]
+    fn token_cipher_rejects_wrong_key_size() {
+        let short = STANDARD.encode([1u8; 16]);
+        let Err(err) = TokenCipher::from_base64_key(&short) else {
+            panic!("short key should fail");
+        };
+        assert!(err.contains("expected 32"));
+    }
+
+    #[test]
+    fn redeem_challenge_is_stable_and_verifier_bound() {
+        let challenge = redeem_challenge("redeem-verifier");
+
+        assert_eq!(challenge, redeem_challenge("redeem-verifier"));
+        assert_ne!(challenge, redeem_challenge("wrong-verifier"));
+        assert_ne!(challenge, "redeem-verifier");
+        assert!(!challenge.contains('='));
+    }
+}

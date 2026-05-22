@@ -1,898 +1,901 @@
-//! OAuth2 authorization-code-with-PKCE flow primitives plus per-domain provider presets.
+//! Hosted OAuth broker boundaries and client adapters.
 //!
-//! Builds authorization URLs, exchanges codes, refreshes tokens, and persists
-//! the per-credential metadata needed for transparent token refresh.
+//! SFAE clients do not implement provider OAuth locally. They ask a hosted
+//! broker to create and poll browser sessions. Local CLI mode redeems completed
+//! token material once and stores it in the OS credential store; backend mode
+//! keeps the existing SFAE-server proxy path.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::SfaeError;
 
-/// OAuth2 token response from the token endpoint.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TokenResponse {
-    pub access_token: String,
-    pub refresh_token: Option<String>,
-}
+const DEFAULT_OAUTH_BROKER_URL: &str = "https://oauth.sfae.io";
+const PROVIDER_REGISTRY_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 
-/// Non-secret OAuth metadata needed to refresh tokens for a domain.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OAuthMetadata {
-    pub token_url: String,
-    pub client_id: String,
-    #[serde(default)]
-    pub revocation_url: Option<String>,
-}
-
-/// Returns the path to `~/.sfae/oauth.json`.
-pub fn oauth_metadata_path() -> Result<PathBuf, SfaeError> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| SfaeError::ConfigError("cannot determine home directory".into()))?;
-    Ok(home.join(".sfae").join("oauth.json"))
-}
-
-// -- Metadata key + file access ---------------------------------------------
-
-/// The domain + optional username used to address a row in `oauth.json`.
-pub struct MetadataKey<'a> {
-    pub domain: &'a str,
-    pub username: Option<&'a str>,
-}
-
-impl<'a> MetadataKey<'a> {
-    /// The flat string key used in `oauth.json`: `domain` or `domain:username`.
-    pub fn as_key(&self) -> String {
-        match self.username {
-            Some(user) => format!("{}:{}", self.domain, user),
-            None => self.domain.to_string(),
-        }
+/// Typed hosted OAuth broker capability used by browser and CLI code.
+pub trait HostedOAuthBroker {
+    /// Fetch supported provider metadata from the broker.
+    fn provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        Err(SfaeError::Other(
+            "this OAuth broker adapter does not expose provider metadata".into(),
+        ))
     }
 
-    /// Save/insert OAuth metadata for this key.
-    pub fn save(&self, metadata: OAuthMetadata) -> Result<(), SfaeError> {
-        let path = oauth_metadata_path()?;
-        let file = MetadataFile { path: &path };
-        let mut map = file.read()?;
-        map.insert(self.as_key(), metadata);
-        file.write(&map)
+    /// Start a hosted OAuth browser session.
+    fn start_session(
+        &self,
+        input: HostedOAuthStart<'_>,
+    ) -> Result<StartedHostedOAuthSession, SfaeError>;
+
+    /// Poll sanitized session status. This must never return token material.
+    fn session_status(&self, session_id: &str) -> Result<HostedOAuthStatus, SfaeError>;
+
+    /// Redeem token material once for trusted local storage.
+    // xtask: allow-multi-param - trait method pairs session id with verifier
+    fn redeem_session(
+        &self,
+        _session_id: &str,
+        _redeem_verifier: &str,
+        _completion_verifier: &str,
+    ) -> Result<HostedOAuthCredential, SfaeError> {
+        Err(SfaeError::Other(
+            "this OAuth broker adapter does not support local redemption".into(),
+        ))
     }
 
-    /// Look up OAuth metadata for this key with parent-domain fallback.
-    pub fn get(&self) -> Result<Option<OAuthMetadata>, SfaeError> {
-        let map = read_all_oauth_metadata()?;
-        Ok(self.lookup_in(&map))
+    /// Refresh a locally stored OAuth credential through the hosted broker.
+    fn refresh_credential(
+        &self,
+        _input: HostedOAuthRefresh<'_>,
+    ) -> Result<HostedOAuthCredential, SfaeError> {
+        Err(SfaeError::Other(
+            "this OAuth broker adapter does not support local refresh".into(),
+        ))
     }
 
-    /// Remove OAuth metadata for this key.
-    pub fn remove(&self) -> Result<(), SfaeError> {
-        let path = oauth_metadata_path()?;
-        let file = MetadataFile { path: &path };
-        let mut map = file.read()?;
-        map.remove(&self.as_key());
-        file.write(&map)
-    }
-
-    /// Look up this key (+ parent-domain fallback) inside an already-loaded map.
-    pub fn lookup_in(&self, map: &HashMap<String, OAuthMetadata>) -> Option<OAuthMetadata> {
-        if let Some(m) = map.get(&self.as_key()) {
-            return Some(m.clone());
-        }
-
-        let parts: Vec<&str> = self.domain.split('.').collect();
-        for i in 1..parts.len() {
-            let parent: Vec<&str> = parts[i..].to_vec();
-            if parent.len() < 2 {
-                break;
-            }
-            let parent_domain = parent.join(".");
-            let key = MetadataKey {
-                domain: &parent_domain,
-                username: self.username,
-            }
-            .as_key();
-            if let Some(m) = map.get(&key) {
-                return Some(m.clone());
-            }
-        }
-
-        None
+    /// Revoke locally stored OAuth token material through the hosted broker.
+    fn revoke_credential(&self, _input: HostedOAuthRevoke<'_>) -> Result<(), SfaeError> {
+        Err(SfaeError::Other(
+            "this OAuth broker adapter does not support local revoke".into(),
+        ))
     }
 }
 
-/// A view over an on-disk OAuth metadata JSON file (for read/write helpers).
-pub struct MetadataFile<'a> {
-    pub path: &'a Path,
+/// High-level OAuth credential orchestration over a broker implementation.
+pub struct OAuthCredentialManager<'a> {
+    broker: &'a dyn HostedOAuthBroker,
 }
 
-impl<'a> MetadataFile<'a> {
-    pub fn read(&self) -> Result<HashMap<String, OAuthMetadata>, SfaeError> {
-        if !self.path.exists() {
-            return Ok(HashMap::new());
-        }
-        let data = fs::read_to_string(self.path)?;
-        let map: HashMap<String, OAuthMetadata> = serde_json::from_str(&data)?;
-        Ok(map)
+impl<'a> OAuthCredentialManager<'a> {
+    pub fn new(broker: &'a dyn HostedOAuthBroker) -> Self {
+        Self { broker }
     }
 
-    pub fn write(&self, map: &HashMap<String, OAuthMetadata>) -> Result<(), SfaeError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let data = serde_json::to_string_pretty(map)?;
-        fs::write(self.path, data)?;
-        Ok(())
+    pub fn start_session(
+        &self,
+        input: HostedOAuthStart<'_>,
+    ) -> Result<StartedHostedOAuthSession, SfaeError> {
+        self.broker.start_session(input)
     }
-}
 
-/// Read all OAuth metadata from disk. Returns an empty map if the file is missing.
-pub fn read_all_oauth_metadata() -> Result<HashMap<String, OAuthMetadata>, SfaeError> {
-    MetadataFile {
-        path: &oauth_metadata_path()?,
+    pub fn provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        self.broker.provider_registry()
     }
-    .read()
-}
 
-/// Write all OAuth metadata to disk.
-pub fn write_all_oauth_metadata(map: &HashMap<String, OAuthMetadata>) -> Result<(), SfaeError> {
-    MetadataFile {
-        path: &oauth_metadata_path()?,
-    }
-    .write(map)
-}
-
-/// Delete the entire `oauth.json` file.
-pub fn delete_all_oauth_metadata() -> Result<(), SfaeError> {
-    let path = oauth_metadata_path()?;
-    if path.exists() {
-        fs::remove_file(&path)?;
-    }
-    Ok(())
-}
-
-// -- PKCE helpers -----------------------------------------------------------
-
-/// Generate a random PKCE code verifier (128 chars from unreserved charset).
-pub fn generate_code_verifier() -> String {
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-    let mut rng = rand::rng();
-    (0..128)
-        .map(|_| {
-            let idx = rng.random_range(0..CHARSET.len());
-            CHARSET[idx] as char
+    // xtask: allow-multi-param - resolves using the request domain and optional provider name
+    pub fn resolve_provider(
+        &self,
+        domain: &str,
+        requested_provider: Option<&str>,
+    ) -> Result<String, SfaeError> {
+        let registry = self.provider_registry()?;
+        resolve_hosted_provider(HostedProviderResolve {
+            domain,
+            requested_provider,
+            registry: &registry,
         })
-        .collect()
-}
+    }
 
-/// Compute the PKCE code challenge: BASE64URL_NO_PAD(SHA256(verifier)).
-pub fn compute_code_challenge(verifier: &str) -> String {
-    let hash = Sha256::digest(verifier.as_bytes());
-    URL_SAFE_NO_PAD.encode(hash)
-}
+    pub fn session_status(&self, session_id: &str) -> Result<HostedOAuthStatus, SfaeError> {
+        self.broker.session_status(session_id)
+    }
 
-/// Generate a random state string for CSRF protection.
-pub fn generate_state() -> String {
-    let mut rng = rand::rng();
-    let bytes: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
-    URL_SAFE_NO_PAD.encode(&bytes)
-}
-
-// -- Authorization URL ------------------------------------------------------
-
-/// Parameters for constructing an OAuth2 authorization URL.
-pub struct AuthorizationUrl<'a> {
-    pub auth_url: &'a str,
-    pub client_id: &'a str,
-    pub redirect_uri: &'a str,
-    pub code_challenge: &'a str,
-    pub scope: Option<&'a str>,
-    pub state: &'a str,
-}
-
-impl<'a> AuthorizationUrl<'a> {
-    /// Build the full OAuth2 authorization URL with query parameters.
-    pub fn build(&self) -> String {
-        let sep = if self.auth_url.contains('?') {
-            "&"
-        } else {
-            "?"
+    // xtask: allow-multi-param - manager forwards session id plus optional verifier
+    pub fn redeem_session(
+        &self,
+        session_id: &str,
+        redeem_verifier: Option<&str>,
+        completion_verifier: Option<&str>,
+    ) -> Result<Option<HostedOAuthCredential>, SfaeError> {
+        let (Some(redeem_verifier), Some(completion_verifier)) =
+            (redeem_verifier, completion_verifier)
+        else {
+            return Ok(None);
         };
-        let mut url = format!(
-            "{}{}client_id={}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256&state={}&prompt=consent&access_type=offline",
-            self.auth_url,
-            sep,
-            url_encode(self.client_id),
-            url_encode(self.redirect_uri),
-            url_encode(self.code_challenge),
-            url_encode(self.state),
-        );
-        if let Some(scope) = self.scope {
-            url.push_str(&format!("&scope={}", url_encode(scope)));
-        }
-        url
+        self.broker
+            .redeem_session(session_id, redeem_verifier, completion_verifier)
+            .map(Some)
+    }
+
+    pub fn refresh_credential(
+        &self,
+        input: HostedOAuthRefresh<'_>,
+    ) -> Result<HostedOAuthCredential, SfaeError> {
+        self.broker.refresh_credential(input)
+    }
+
+    pub fn revoke_credential(&self, input: HostedOAuthRevoke<'_>) -> Result<(), SfaeError> {
+        self.broker.revoke_credential(input)
     }
 }
 
-// -- Token request ----------------------------------------------------------
-
-/// Which OAuth2 grant flow a `TokenRequest` uses.
-pub enum Grant<'a> {
-    AuthorizationCode {
-        code: &'a str,
-        redirect_uri: &'a str,
-        code_verifier: &'a str,
-    },
-    RefreshToken {
-        refresh_token: &'a str,
-    },
+/// Inputs for starting a hosted OAuth session.
+pub struct HostedOAuthStart<'a> {
+    pub provider: &'a str,
+    pub domain: &'a str,
+    pub label: Option<&'a str>,
+    pub scopes: Vec<String>,
+    pub return_url: Option<&'a str>,
 }
 
-/// Parameters shared by every POST to an OAuth2 token endpoint.
-pub struct TokenRequest<'a> {
-    pub token_url: &'a str,
-    pub client_id: &'a str,
-    pub client_secret: Option<&'a str>,
-    pub grant: Grant<'a>,
+/// Inputs for broker-mediated local OAuth refresh.
+pub struct HostedOAuthRefresh<'a> {
+    pub provider: &'a str,
+    pub broker_credential_id: &'a str,
+    pub broker_credential_secret: &'a str,
+    pub refresh_token: &'a str,
 }
 
-impl<'a> TokenRequest<'a> {
-    /// Serialize the form body for this grant.
-    fn body(&self) -> String {
-        let mut pairs: Vec<(&str, &str)> = Vec::new();
-        match &self.grant {
-            Grant::AuthorizationCode {
-                code,
-                redirect_uri,
-                code_verifier,
-            } => {
-                pairs.push(("grant_type", "authorization_code"));
-                pairs.push(("code", code));
-                pairs.push(("redirect_uri", redirect_uri));
-                pairs.push(("client_id", self.client_id));
-                pairs.push(("code_verifier", code_verifier));
-            }
-            Grant::RefreshToken { refresh_token } => {
-                pairs.push(("grant_type", "refresh_token"));
-                pairs.push(("refresh_token", refresh_token));
-                pairs.push(("client_id", self.client_id));
-            }
-        }
-        if let Some(secret) = self.client_secret {
-            pairs.push(("client_secret", secret));
-        }
-        build_form_body(&pairs)
+/// Inputs for broker-mediated local OAuth revoke.
+pub struct HostedOAuthRevoke<'a> {
+    pub provider: &'a str,
+    pub broker_credential_id: &'a str,
+    pub broker_credential_secret: &'a str,
+    pub access_token: Option<&'a str>,
+    pub refresh_token: Option<&'a str>,
+}
+
+/// Broker-advertised hosted OAuth provider metadata.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HostedOAuthProvider {
+    pub provider: String,
+    #[serde(default)]
+    pub domains: Vec<String>,
+}
+
+/// Broker-advertised hosted OAuth provider registry.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+pub struct HostedOAuthProviderRegistry {
+    #[serde(default)]
+    pub providers: Vec<HostedOAuthProvider>,
+}
+
+/// Sanitized session-start response returned to browser/UI code.
+#[derive(Debug, Clone)]
+pub struct StartedHostedOAuthSession {
+    pub session_id: String,
+    pub authorization_url: String,
+    pub expires_at: String,
+    pub redeem_verifier: Option<String>,
+}
+
+/// Backward-compatible request body for starting a hosted OAuth session.
+#[derive(Serialize)]
+pub struct HostedOAuthSessionInput<'a> {
+    pub provider: &'a str,
+    pub domain: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+}
+
+/// Backward-compatible session-start response type.
+pub type HostedOAuthSession = StartedHostedOAuthSession;
+
+/// Sanitized hosted OAuth session status returned to browser/UI code.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HostedOAuthStatus {
+    pub session_id: String,
+    pub provider: String,
+    pub domain: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub status: String,
+    #[serde(default)]
+    pub error_code: Option<String>,
+    #[serde(default)]
+    pub provider_subject: Option<String>,
+    #[serde(default)]
+    pub credential_id: Option<String>,
+    pub expires_at: String,
+}
+
+impl HostedOAuthStatus {
+    pub fn is_success(&self) -> bool {
+        self.status == "success"
     }
 
-    /// POST to the token endpoint and parse the JSON response.
-    ///
-    /// Used for both authorization-code exchange and refresh-token flows.
-    /// Some providers rotate refresh tokens — if a new one is returned, it
-    /// will be in `TokenResponse::refresh_token`.
-    pub fn send(&self) -> Result<TokenResponse, SfaeError> {
-        let body = self.body();
+    pub fn is_error(&self) -> bool {
+        self.status == "error"
+    }
+}
 
+/// Broker-redeemed OAuth material split by credential compartment.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HostedOAuthCredential {
+    #[serde(default)]
+    pub values: HashMap<String, String>,
+    #[serde(default)]
+    pub internal: HashMap<String, String>,
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
+}
+
+/// Direct client for `oauth.sfae.io` local-CLI handoff endpoints.
+pub struct DirectHostedOAuthBroker {
+    base_url: String,
+    agent: ureq::Agent,
+    provider_cache: RefCell<Option<CachedProviderRegistry>>,
+}
+
+#[derive(Clone)]
+struct CachedProviderRegistry {
+    registry: HostedOAuthProviderRegistry,
+    expires_at: Instant,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ProviderRegistryCacheFile {
+    fetched_at_epoch_seconds: u64,
+    registry: HostedOAuthProviderRegistry,
+}
+
+impl DirectHostedOAuthBroker {
+    /// Create a direct broker client from `SFAE_OAUTH_BROKER_URL`, defaulting to production.
+    pub fn from_env() -> Result<Self, SfaeError> {
+        let base_url = std::env::var("SFAE_OAUTH_BROKER_URL")
+            .unwrap_or_else(|_| DEFAULT_OAUTH_BROKER_URL.to_string());
+        Self::new(&base_url)
+    }
+
+    pub fn new(base_url: &str) -> Result<Self, SfaeError> {
+        if base_url.trim().is_empty() {
+            return Err(SfaeError::ConfigError(
+                "SFAE_OAUTH_BROKER_URL cannot be empty".into(),
+            ));
+        }
+        validate_broker_url(base_url)?;
+        Ok(Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            agent: crate::http::make_agent_for_url(base_url),
+            provider_cache: RefCell::new(None),
+        })
+    }
+
+    fn send(&self, req: ureq::http::Request<impl ureq::AsSendBody>) -> Result<String, SfaeError> {
+        send_request(SendRequest {
+            agent: &self.agent,
+            request: req,
+            target: &self.base_url,
+            service: "OAuth broker",
+        })
+    }
+
+    fn cached_provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        if let Some(cache) = self.provider_cache.borrow().as_ref()
+            && Instant::now() < cache.expires_at
+        {
+            return Ok(cache.registry.clone());
+        }
+        if let Some((registry, remaining_ttl)) = read_provider_registry_cache(&self.base_url) {
+            *self.provider_cache.borrow_mut() = Some(CachedProviderRegistry {
+                registry: registry.clone(),
+                expires_at: Instant::now() + remaining_ttl,
+            });
+            return Ok(registry);
+        }
+
+        let url = format!("{}/v1/oauth/providers", self.base_url);
         let req = ureq::http::Request::builder()
-            .method("POST")
-            .uri(self.token_url)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("Accept", "application/json")
-            .body(body)
-            .map_err(|e| SfaeError::HttpError(format!("failed to build token request: {e}")))?;
+            .method("GET")
+            .uri(&url)
+            .body(())
+            .map_err(|e| {
+                SfaeError::StoreError(format!("failed to build OAuth providers request: {e}"))
+            })?;
+        let body = self.send(req)?;
+        let registry: HostedOAuthProviderRegistry = serde_json::from_str(&body).map_err(|e| {
+            SfaeError::StoreError(format!("failed to parse OAuth providers response: {e}"))
+        })?;
+        if provider_registry_disk_cache_enabled(&self.base_url) {
+            let _ = write_provider_registry_cache(&self.base_url, &registry);
+        }
+        *self.provider_cache.borrow_mut() = Some(CachedProviderRegistry {
+            registry: registry.clone(),
+            expires_at: Instant::now() + PROVIDER_REGISTRY_REFRESH_INTERVAL,
+        });
+        Ok(registry)
+    }
+}
 
-        let agent = crate::http::make_agent();
-        let mut response = agent
-            .run(req)
-            .map_err(|e| SfaeError::HttpError(format!("token request failed: {e}")))?;
+impl HostedOAuthBroker for DirectHostedOAuthBroker {
+    fn provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        self.cached_provider_registry()
+    }
 
-        let body_str = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| SfaeError::HttpError(format!("failed to read token response: {e}")))?;
+    fn start_session(
+        &self,
+        input: HostedOAuthStart<'_>,
+    ) -> Result<StartedHostedOAuthSession, SfaeError> {
+        let verifier = generate_redeem_verifier();
+        let challenge = redeem_challenge(&verifier);
+        let url = format!("{}/v1/local/oauth/sessions", self.base_url);
+        let body = serde_json::to_string(&LocalSessionReq {
+            provider: input.provider,
+            domain: input.domain,
+            label: input.label,
+            scopes: input.scopes,
+            redeem_challenge: &challenge,
+            redeem_challenge_method: "S256",
+            return_url: input.return_url,
+        })
+        .map_err(|e| SfaeError::StoreError(format!("failed to serialize OAuth request: {e}")))?;
+        let req = json_request("POST", &url, body)?;
+        let body = self.send(req)?;
+        let parsed: LocalSessionResp = serde_json::from_str(&body)
+            .map_err(|e| SfaeError::StoreError(format!("failed to parse OAuth response: {e}")))?;
+        Ok(StartedHostedOAuthSession {
+            session_id: parsed.session_id,
+            authorization_url: parsed.authorization_url,
+            expires_at: parsed.expires_at,
+            redeem_verifier: Some(verifier),
+        })
+    }
 
-        let json: serde_json::Value = serde_json::from_str(&body_str)
-            .map_err(|e| SfaeError::HttpError(format!("failed to parse token response: {e}")))?;
+    fn session_status(&self, session_id: &str) -> Result<HostedOAuthStatus, SfaeError> {
+        let url = format!("{}/v1/local/oauth/sessions/{session_id}", self.base_url);
+        let req = ureq::http::Request::builder()
+            .method("GET")
+            .uri(&url)
+            .body(())
+            .map_err(|e| {
+                SfaeError::StoreError(format!("failed to build OAuth status request: {e}"))
+            })?;
+        let body = self.send(req)?;
+        serde_json::from_str(&body).map_err(|e| {
+            SfaeError::StoreError(format!("failed to parse OAuth status response: {e}"))
+        })
+    }
 
-        let access_token = json["access_token"]
-            .as_str()
-            .ok_or_else(|| SfaeError::HttpError("token response missing access_token".into()))?
-            .to_string();
+    // xtask: allow-multi-param - broker endpoint requires session id and verifier
+    fn redeem_session(
+        &self,
+        session_id: &str,
+        redeem_verifier: &str,
+        completion_verifier: &str,
+    ) -> Result<HostedOAuthCredential, SfaeError> {
+        let url = format!(
+            "{}/v1/local/oauth/sessions/{session_id}/redeem",
+            self.base_url
+        );
+        let body = serde_json::to_string(&RedeemReq {
+            redeem_verifier,
+            completion_verifier,
+        })
+        .map_err(|e| SfaeError::StoreError(format!("failed to serialize redeem request: {e}")))?;
+        let req = json_request("POST", &url, body)?;
+        let body = self.send(req)?;
+        serde_json::from_str(&body).map_err(|e| {
+            SfaeError::StoreError(format!("failed to parse OAuth credential response: {e}"))
+        })
+    }
 
-        let refresh_token = json["refresh_token"].as_str().map(|s| s.to_string());
+    fn refresh_credential(
+        &self,
+        input: HostedOAuthRefresh<'_>,
+    ) -> Result<HostedOAuthCredential, SfaeError> {
+        let url = format!("{}/v1/local/oauth/refresh", self.base_url);
+        let body = serde_json::to_string(&RefreshReq {
+            provider: input.provider,
+            broker_credential_id: input.broker_credential_id,
+            broker_credential_secret: input.broker_credential_secret,
+            refresh_token: input.refresh_token,
+        })
+        .map_err(|e| SfaeError::StoreError(format!("failed to serialize refresh request: {e}")))?;
+        let req = json_request("POST", &url, body)?;
+        let body = self.send(req)?;
+        serde_json::from_str(&body).map_err(|e| {
+            SfaeError::StoreError(format!("failed to parse OAuth refresh response: {e}"))
+        })
+    }
 
-        Ok(TokenResponse {
+    fn revoke_credential(&self, input: HostedOAuthRevoke<'_>) -> Result<(), SfaeError> {
+        let url = format!("{}/v1/local/oauth/revoke", self.base_url);
+        let (access_token, refresh_token) = match input.refresh_token {
+            Some(refresh_token) => (None, Some(refresh_token)),
+            None => (input.access_token, None),
+        };
+        let body = serde_json::to_string(&RevokeReq {
+            provider: input.provider,
+            broker_credential_id: input.broker_credential_id,
+            broker_credential_secret: input.broker_credential_secret,
             access_token,
             refresh_token,
         })
-    }
-}
-
-// -- Revocation -------------------------------------------------------------
-
-/// An OAuth2 token revocation request (RFC 7009).
-pub struct Revocation<'a> {
-    pub revocation_url: &'a str,
-    pub token: &'a str,
-}
-
-impl<'a> Revocation<'a> {
-    fn body(&self) -> String {
-        build_form_body(&[("token", self.token)])
-    }
-
-    /// POST to the provider's revocation endpoint.
-    ///
-    /// The provider may return success even if the token is already invalid —
-    /// that is fine. Callers should treat errors as non-fatal.
-    pub fn send(&self) -> Result<(), SfaeError> {
-        let body = self.body();
-
-        let req = ureq::http::Request::builder()
-            .method("POST")
-            .uri(self.revocation_url)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(body)
-            .map_err(|e| {
-                SfaeError::HttpError(format!("failed to build revocation request: {e}"))
-            })?;
-
-        let agent = crate::http::make_agent();
-        agent
-            .run(req)
-            .map_err(|e| SfaeError::HttpError(format!("token revocation request failed: {e}")))?;
-
+        .map_err(|e| SfaeError::StoreError(format!("failed to serialize revoke request: {e}")))?;
+        let req = json_request("POST", &url, body)?;
+        self.send(req)?;
         Ok(())
     }
 }
 
-// -- Helpers ----------------------------------------------------------------
+/// Client for SFAE backend endpoints that proxy hosted OAuth broker sessions.
+pub struct BackendProxyHostedOAuthBroker {
+    base_url: String,
+    token: String,
+    agent: ureq::Agent,
+    provider_cache: RefCell<Option<CachedProviderRegistry>>,
+}
 
-/// Serialize URL-encoded form pairs as `k1=v1&k2=v2...`.
-fn build_form_body(pairs: &[(&str, &str)]) -> String {
-    let mut body = String::new();
-    for (i, (k, v)) in pairs.iter().enumerate() {
-        if i > 0 {
-            body.push('&');
-        }
-        body.push_str(k);
-        body.push('=');
-        body.push_str(&url_encode(v));
+/// Construction parameters for the SFAE-backend OAuth proxy adapter.
+pub struct BackendProxyConfig<'a> {
+    pub base_url: &'a str,
+    pub token: &'a str,
+}
+
+/// Backward-compatible name for the backend-proxy OAuth client.
+pub type HostedOAuthClient = BackendProxyHostedOAuthBroker;
+
+impl BackendProxyHostedOAuthBroker {
+    /// Create a backend-proxy client from `SFAE_STORE_URL` and `SFAE_STORE_TOKEN`.
+    pub fn from_env() -> Result<Self, SfaeError> {
+        let base_url = std::env::var("SFAE_STORE_URL").map_err(|_| {
+            SfaeError::ConfigError("hosted OAuth backend proxy requires SFAE_STORE_URL".into())
+        })?;
+        let token = std::env::var("SFAE_STORE_TOKEN").map_err(|_| {
+            SfaeError::ConfigError("hosted OAuth backend proxy requires SFAE_STORE_TOKEN".into())
+        })?;
+        Self::new(BackendProxyConfig {
+            base_url: &base_url,
+            token: &token,
+        })
     }
-    body
+
+    /// Create a backend-proxy client from explicit connection settings.
+    pub fn new(config: BackendProxyConfig<'_>) -> Result<Self, SfaeError> {
+        if config.base_url.trim().is_empty() {
+            return Err(SfaeError::ConfigError(
+                "SFAE backend OAuth proxy URL cannot be empty".into(),
+            ));
+        }
+        if config.token.trim().is_empty() {
+            return Err(SfaeError::ConfigError(
+                "SFAE backend OAuth proxy token cannot be empty".into(),
+            ));
+        }
+        Ok(Self {
+            base_url: config.base_url.trim_end_matches('/').to_string(),
+            token: config.token.to_string(),
+            agent: crate::http::make_agent_for_url(config.base_url),
+            provider_cache: RefCell::new(None),
+        })
+    }
+
+    fn auth_header(&self) -> String {
+        format!("Bearer {}", self.token)
+    }
+
+    fn send(&self, req: ureq::http::Request<impl ureq::AsSendBody>) -> Result<String, SfaeError> {
+        send_request(SendRequest {
+            agent: &self.agent,
+            request: req,
+            target: &self.base_url,
+            service: "SFAE backend",
+        })
+    }
+
+    fn cached_provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        if let Some(cache) = self.provider_cache.borrow().as_ref()
+            && Instant::now() < cache.expires_at
+        {
+            return Ok(cache.registry.clone());
+        }
+        if let Some((registry, remaining_ttl)) = read_provider_registry_cache(&self.base_url) {
+            *self.provider_cache.borrow_mut() = Some(CachedProviderRegistry {
+                registry: registry.clone(),
+                expires_at: Instant::now() + remaining_ttl,
+            });
+            return Ok(registry);
+        }
+
+        let url = format!("{}/oauth/providers", self.base_url);
+        let req = ureq::http::Request::builder()
+            .method("GET")
+            .uri(&url)
+            .header("Authorization", self.auth_header())
+            .body(())
+            .map_err(|e| {
+                SfaeError::StoreError(format!("failed to build OAuth providers request: {e}"))
+            })?;
+        let body = self.send(req)?;
+        let registry: HostedOAuthProviderRegistry = serde_json::from_str(&body).map_err(|e| {
+            SfaeError::StoreError(format!("failed to parse OAuth providers response: {e}"))
+        })?;
+        if provider_registry_disk_cache_enabled(&self.base_url) {
+            let _ = write_provider_registry_cache(&self.base_url, &registry);
+        }
+        *self.provider_cache.borrow_mut() = Some(CachedProviderRegistry {
+            registry: registry.clone(),
+            expires_at: Instant::now() + PROVIDER_REGISTRY_REFRESH_INTERVAL,
+        });
+        Ok(registry)
+    }
+
+    /// Ask the SFAE backend to start a hosted OAuth browser session.
+    pub fn create_session(
+        &self,
+        input: HostedOAuthSessionInput<'_>,
+    ) -> Result<HostedOAuthSession, SfaeError> {
+        HostedOAuthBroker::start_session(
+            self,
+            HostedOAuthStart {
+                provider: input.provider,
+                domain: input.domain,
+                label: input.label,
+                scopes: input.scopes,
+                return_url: None,
+            },
+        )
+    }
+
+    /// Poll hosted OAuth session status through the SFAE backend.
+    pub fn session_status(&self, session_id: &str) -> Result<HostedOAuthStatus, SfaeError> {
+        HostedOAuthBroker::session_status(self, session_id)
+    }
 }
 
-/// Minimal percent-encoding for URL query parameter values.
-fn url_encode(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for byte in s.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                result.push(byte as char);
-            }
-            _ => {
-                result.push_str(&format!("%{byte:02X}"));
-            }
+impl HostedOAuthBroker for BackendProxyHostedOAuthBroker {
+    fn provider_registry(&self) -> Result<HostedOAuthProviderRegistry, SfaeError> {
+        self.cached_provider_registry()
+    }
+
+    fn start_session(
+        &self,
+        input: HostedOAuthStart<'_>,
+    ) -> Result<StartedHostedOAuthSession, SfaeError> {
+        let url = format!("{}/oauth/sessions", self.base_url);
+        let body = serde_json::to_string(&BackendSessionReq {
+            provider: input.provider,
+            domain: input.domain,
+            label: input.label,
+            scopes: input.scopes,
+        })
+        .map_err(|e| SfaeError::StoreError(format!("failed to serialize OAuth request: {e}")))?;
+        let req = ureq::http::Request::builder()
+            .method("POST")
+            .uri(&url)
+            .header("Authorization", self.auth_header())
+            .header("Content-Type", "application/json")
+            .body(body)
+            .map_err(|e| SfaeError::StoreError(format!("failed to build OAuth request: {e}")))?;
+        let body = self.send(req)?;
+        let parsed: BackendSessionResp = serde_json::from_str(&body)
+            .map_err(|e| SfaeError::StoreError(format!("failed to parse OAuth response: {e}")))?;
+        Ok(StartedHostedOAuthSession {
+            session_id: parsed.session_id,
+            authorization_url: parsed.authorization_url,
+            expires_at: parsed.expires_at,
+            redeem_verifier: None,
+        })
+    }
+
+    fn session_status(&self, session_id: &str) -> Result<HostedOAuthStatus, SfaeError> {
+        let url = format!("{}/oauth/sessions/{session_id}", self.base_url);
+        let req = ureq::http::Request::builder()
+            .method("GET")
+            .uri(&url)
+            .header("Authorization", self.auth_header())
+            .body(())
+            .map_err(|e| {
+                SfaeError::StoreError(format!("failed to build OAuth status request: {e}"))
+            })?;
+        let body = self.send(req)?;
+        serde_json::from_str(&body).map_err(|e| {
+            SfaeError::StoreError(format!("failed to parse OAuth status response: {e}"))
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct LocalSessionReq<'a> {
+    provider: &'a str,
+    domain: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    scopes: Vec<String>,
+    redeem_challenge: &'a str,
+    redeem_challenge_method: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    return_url: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+struct LocalSessionResp {
+    session_id: String,
+    authorization_url: String,
+    expires_at: String,
+}
+
+#[derive(Serialize)]
+struct RedeemReq<'a> {
+    redeem_verifier: &'a str,
+    completion_verifier: &'a str,
+}
+
+#[derive(Serialize)]
+struct RefreshReq<'a> {
+    provider: &'a str,
+    broker_credential_id: &'a str,
+    broker_credential_secret: &'a str,
+    refresh_token: &'a str,
+}
+
+#[derive(Serialize)]
+struct RevokeReq<'a> {
+    provider: &'a str,
+    broker_credential_id: &'a str,
+    broker_credential_secret: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access_token: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refresh_token: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct BackendSessionReq<'a> {
+    provider: &'a str,
+    domain: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    scopes: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct BackendSessionResp {
+    session_id: String,
+    authorization_url: String,
+    expires_at: String,
+}
+
+struct SendRequest<'a, B: ureq::AsSendBody> {
+    agent: &'a ureq::Agent,
+    request: ureq::http::Request<B>,
+    target: &'a str,
+    service: &'a str,
+}
+
+fn send_request<B: ureq::AsSendBody>(args: SendRequest<'_, B>) -> Result<String, SfaeError> {
+    let SendRequest {
+        agent,
+        request,
+        target,
+        service,
+    } = args;
+    let mut response = agent.run(request).map_err(|e| {
+        SfaeError::StoreError(format!("failed to contact {service} at {target}: {e}"))
+    })?;
+    let status = response.status().as_u16();
+    let body = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| SfaeError::StoreError(format!("failed to read OAuth response: {e}")))?;
+    if status == 401 || status == 403 {
+        return Err(SfaeError::StoreError(format!(
+            "{service} rejected OAuth request: {status}"
+        )));
+    }
+    if status >= 400 {
+        return Err(SfaeError::StoreError(format!(
+            "{service} returned {status}"
+        )));
+    }
+    Ok(body)
+}
+
+// xtask: allow-multi-param - small HTTP request builder helper
+fn json_request(
+    method: &str,
+    url: &str,
+    body: String,
+) -> Result<ureq::http::Request<String>, SfaeError> {
+    ureq::http::Request::builder()
+        .method(method)
+        .uri(url)
+        .header("Content-Type", "application/json")
+        .body(body)
+        .map_err(|e| SfaeError::StoreError(format!("failed to build OAuth request: {e}")))
+}
+
+/// Generate the high-entropy verifier kept only in the trusted CLI process.
+pub fn generate_redeem_verifier() -> String {
+    format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
+}
+
+/// Compute the local broker redeem challenge for a verifier.
+pub fn redeem_challenge(verifier: &str) -> String {
+    let digest = Sha256::digest(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
+}
+
+/// Resolve the hosted provider name for an OAuth spec/domain pair.
+pub fn resolve_hosted_provider(input: HostedProviderResolve<'_>) -> Result<String, SfaeError> {
+    let HostedProviderResolve {
+        domain,
+        requested_provider,
+        registry,
+    } = input;
+    if let Some(provider) = requested_provider {
+        if registry
+            .providers
+            .iter()
+            .any(|candidate| candidate.provider == provider)
+        {
+            return Ok(provider.to_string());
+        }
+        return Err(SfaeError::ConfigError(format!(
+            "unsupported hosted OAuth provider \"{provider}\"{}",
+            supported_provider_hint(registry)
+        )));
+    }
+
+    for candidate in parent_domains(domain) {
+        if let Some(provider) = registry.providers.iter().find(|provider| {
+            provider
+                .domains
+                .iter()
+                .any(|supported_domain| supported_domain == &candidate)
+        }) {
+            return Ok(provider.provider.clone());
         }
     }
-    result
+
+    Err(SfaeError::ConfigError(format!(
+        "hosted OAuth provider is required for \"{domain}\"{}",
+        supported_provider_hint(registry)
+    )))
 }
 
-// -- Provider presets -------------------------------------------------------
-
-/// Built-in OAuth configuration for a known provider.
-pub struct ProviderPreset {
-    pub client_id: &'static str,
-    pub client_secret: Option<&'static str>,
-    pub auth_url: &'static str,
-    pub token_url: &'static str,
-    pub revocation_url: Option<&'static str>,
+/// Inputs for resolving a hosted provider.
+pub struct HostedProviderResolve<'a> {
+    pub domain: &'a str,
+    pub requested_provider: Option<&'a str>,
+    pub registry: &'a HostedOAuthProviderRegistry,
 }
 
-/// Look up a built-in OAuth provider preset by domain.
-///
-/// Uses parent-domain walk-up so `gmail.googleapis.com` matches the
-/// `googleapis.com` preset.
-pub fn get_provider_preset(domain: &str) -> Option<ProviderPreset> {
+fn supported_provider_hint(registry: &HostedOAuthProviderRegistry) -> String {
+    if registry.providers.is_empty() {
+        return "; the broker did not report any hosted OAuth providers".to_string();
+    }
+    let mut providers: Vec<&str> = registry
+        .providers
+        .iter()
+        .map(|provider| provider.provider.as_str())
+        .collect();
+    providers.sort();
+    providers.dedup();
+    format!("; supported providers: {}", providers.join(", "))
+}
+
+fn parent_domains(domain: &str) -> Vec<String> {
     let parts: Vec<&str> = domain.split('.').collect();
+    let mut domains = Vec::new();
     for start in 0..parts.len() {
-        let candidate: String = parts[start..].join(".");
+        let candidate = parts[start..].join(".");
         if candidate.matches('.').count() < 1 {
             break;
         }
-        if let Some(preset) = match_preset(&candidate) {
-            return Some(preset);
-        }
+        domains.push(candidate);
     }
-    None
+    domains
 }
 
-// Cross-reference: these preset URLs are duplicated in the API server at
-// api/server-v1/src/routes/sfae-oauth.ts (resolveProviderPreset function).
-// If you change a URL here, update the TS side too.
-fn match_preset(domain: &str) -> Option<ProviderPreset> {
-    match domain {
-        "googleapis.com" => Some(ProviderPreset {
-            client_id: option_env!("SFAE_OAUTH_GOOGLE_CLIENT_ID").unwrap_or(
-                "648921945993-7bgg2l4k5qqir28pgdve4kgfv7udfs95.apps.googleusercontent.com",
-            ),
-            client_secret: option_env!("SFAE_OAUTH_GOOGLE_CLIENT_SECRET"),
-            auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
-            token_url: "https://oauth2.googleapis.com/token",
-            revocation_url: Some("https://oauth2.googleapis.com/revoke"),
-        }),
-        _ => None,
+fn read_provider_registry_cache(base_url: &str) -> Option<(HostedOAuthProviderRegistry, Duration)> {
+    if !provider_registry_disk_cache_enabled(base_url) {
+        return None;
     }
+    let raw = fs::read_to_string(provider_registry_cache_path(base_url)).ok()?;
+    let cache: ProviderRegistryCacheFile = serde_json::from_str(&raw).ok()?;
+    let now = current_epoch_seconds()?;
+    let max_age = PROVIDER_REGISTRY_REFRESH_INTERVAL.as_secs();
+    let age = now.checked_sub(cache.fetched_at_epoch_seconds)?;
+    if age >= max_age {
+        return None;
+    }
+    Some((
+        cache.registry,
+        Duration::from_secs(max_age.saturating_sub(age)),
+    ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn code_verifier_length_and_charset() {
-        let verifier = generate_code_verifier();
-        assert_eq!(verifier.len(), 128);
-        for ch in verifier.chars() {
-            assert!(
-                ch.is_ascii_alphanumeric() || ch == '-' || ch == '.' || ch == '_' || ch == '~',
-                "invalid char in verifier: {ch}"
-            );
-        }
+// xtask: allow-multi-param - cache key pairs broker URL with fetched registry
+fn write_provider_registry_cache(
+    base_url: &str,
+    registry: &HostedOAuthProviderRegistry,
+) -> Result<(), SfaeError> {
+    let path = provider_registry_cache_path(base_url);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
     }
+    let cache = ProviderRegistryCacheFile {
+        fetched_at_epoch_seconds: current_epoch_seconds()
+            .ok_or_else(|| SfaeError::Other("system clock is before unix epoch".into()))?,
+        registry: registry.clone(),
+    };
+    let raw = serde_json::to_string(&cache)?;
+    fs::write(path, raw)?;
+    Ok(())
+}
 
-    #[test]
-    fn code_challenge_is_base64url() {
-        let verifier = "test_verifier_string";
-        let challenge = compute_code_challenge(verifier);
-        // Should be valid base64url with no padding.
-        assert!(!challenge.contains('='));
-        assert!(!challenge.contains('+'));
-        assert!(!challenge.contains('/'));
-        assert!(!challenge.is_empty());
+fn provider_registry_cache_path(base_url: &str) -> PathBuf {
+    let digest = Sha256::digest(base_url.as_bytes());
+    let key = URL_SAFE_NO_PAD.encode(digest);
+    let cache_dir = dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("sfae");
+    cache_dir.join(format!("oauth-providers-{key}.json"))
+}
+
+fn provider_registry_disk_cache_enabled(base_url: &str) -> bool {
+    !broker_url_is_loopback(base_url)
+}
+
+fn current_epoch_seconds() -> Option<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+fn broker_url_is_loopback(raw: &str) -> bool {
+    let Ok(uri) = raw.parse::<ureq::http::Uri>() else {
+        return false;
+    };
+    matches!(uri.host(), Some("localhost" | "127.0.0.1" | "::1"))
+}
+
+fn validate_broker_url(raw: &str) -> Result<(), SfaeError> {
+    let trimmed = raw.trim_end_matches('/');
+    let uri: ureq::http::Uri = trimmed.parse().map_err(|e| {
+        SfaeError::ConfigError(format!("SFAE_OAUTH_BROKER_URL must be a valid URL: {e}"))
+    })?;
+    let scheme = uri.scheme_str().unwrap_or_default();
+    let host = uri.host().unwrap_or_default();
+    let loopback = broker_url_is_loopback(trimmed);
+    if loopback && matches!(scheme, "http" | "https") {
+        return Ok(());
     }
-
-    #[test]
-    fn code_challenge_known_value() {
-        // RFC 7636 Appendix B: verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-        // expected challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
-        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-        let challenge = compute_code_challenge(verifier);
-        assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    if scheme == "https" && host == "oauth.sfae.io" {
+        return Ok(());
     }
-
-    #[test]
-    fn authorization_url_construction() {
-        let url = AuthorizationUrl {
-            auth_url: "https://example.com/auth",
-            client_id: "my_client",
-            redirect_uri: "http://127.0.0.1:8080/callback",
-            code_challenge: "challenge123",
-            scope: Some("read write"),
-            state: "state456",
-        }
-        .build();
-        assert!(url.starts_with("https://example.com/auth?"));
-        assert!(url.contains("client_id=my_client"));
-        assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fcallback"));
-        assert!(url.contains("code_challenge=challenge123"));
-        assert!(url.contains("code_challenge_method=S256"));
-        assert!(url.contains("state=state456"));
-        assert!(url.contains("scope=read%20write"));
-        assert!(url.contains("response_type=code"));
-    }
-
-    #[test]
-    fn authorization_url_no_scope() {
-        let url = AuthorizationUrl {
-            auth_url: "https://example.com/auth",
-            client_id: "my_client",
-            redirect_uri: "http://127.0.0.1:8080/callback",
-            code_challenge: "challenge123",
-            scope: None,
-            state: "state456",
-        }
-        .build();
-        assert!(!url.contains("scope="));
-    }
-
-    #[test]
-    fn state_is_nonempty() {
-        let state = generate_state();
-        assert!(!state.is_empty());
-        // 32 random bytes base64url-encoded = 43 chars.
-        assert_eq!(state.len(), 43);
-    }
-
-    #[test]
-    fn url_encode_preserves_unreserved() {
-        assert_eq!(url_encode("hello-world_2.0~test"), "hello-world_2.0~test");
-    }
-
-    #[test]
-    fn url_encode_encodes_special() {
-        assert_eq!(url_encode("a b&c=d"), "a%20b%26c%3Dd");
-    }
-
-    // --- OAuthMetadata tests ---
-
-    fn sample_metadata() -> OAuthMetadata {
-        OAuthMetadata {
-            token_url: "https://oauth2.example.com/token".into(),
-            client_id: "my-client-id".into(),
-            revocation_url: None,
-        }
-    }
-
-    #[test]
-    fn metadata_key_without_username() {
-        assert_eq!(
-            MetadataKey {
-                domain: "example.com",
-                username: None
-            }
-            .as_key(),
-            "example.com"
-        );
-    }
-
-    #[test]
-    fn metadata_key_with_username() {
-        assert_eq!(
-            MetadataKey {
-                domain: "example.com",
-                username: Some("alice")
-            }
-            .as_key(),
-            "example.com:alice"
-        );
-    }
-
-    #[test]
-    fn metadata_serialization_roundtrip() {
-        let m = sample_metadata();
-        let json = serde_json::to_string(&m).unwrap();
-        let m2: OAuthMetadata = serde_json::from_str(&json).unwrap();
-        assert_eq!(m.token_url, m2.token_url);
-        assert_eq!(m.client_id, m2.client_id);
-        assert_eq!(m.revocation_url, m2.revocation_url);
-    }
-
-    #[test]
-    fn metadata_deserializes_without_revocation_url() {
-        let json = r#"{"token_url":"https://example.com/token","client_id":"old-client"}"#;
-        let m: OAuthMetadata = serde_json::from_str(json).unwrap();
-        assert_eq!(m.token_url, "https://example.com/token");
-        assert_eq!(m.client_id, "old-client");
-        assert_eq!(m.revocation_url, None);
-    }
-
-    #[test]
-    fn metadata_serialization_with_revocation_url() {
-        let m = OAuthMetadata {
-            token_url: "https://example.com/token".into(),
-            client_id: "my-client".into(),
-            revocation_url: Some("https://example.com/revoke".into()),
-        };
-        let json = serde_json::to_string(&m).unwrap();
-        let m2: OAuthMetadata = serde_json::from_str(&json).unwrap();
-        assert_eq!(m2.revocation_url, Some("https://example.com/revoke".into()));
-    }
-
-    #[test]
-    fn read_missing_file_returns_empty_map() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("does_not_exist.json");
-        let map = MetadataFile { path: &path }.read().unwrap();
-        assert!(map.is_empty());
-    }
-
-    #[test]
-    fn write_and_read_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("oauth.json");
-
-        let mut map = HashMap::new();
-        map.insert("example.com".to_string(), sample_metadata());
-        MetadataFile { path: &path }.write(&map).unwrap();
-
-        let loaded = MetadataFile { path: &path }.read().unwrap();
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded["example.com"].client_id, "my-client-id");
-    }
-
-    #[test]
-    fn save_and_get_via_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("oauth.json");
-
-        // Save
-        let mut map = HashMap::new();
-        map.insert(
-            MetadataKey {
-                domain: "google.com",
-                username: None,
-            }
-            .as_key(),
-            OAuthMetadata {
-                token_url: "https://oauth2.googleapis.com/token".into(),
-                client_id: "goog-123".into(),
-                revocation_url: None,
-            },
-        );
-        MetadataFile { path: &path }.write(&map).unwrap();
-
-        // Read back
-        let loaded = MetadataFile { path: &path }.read().unwrap();
-        let m = loaded.get("google.com").unwrap();
-        assert_eq!(m.token_url, "https://oauth2.googleapis.com/token");
-        assert_eq!(m.client_id, "goog-123");
-    }
-
-    #[test]
-    fn save_overwrites_existing() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("oauth.json");
-
-        let mut map = HashMap::new();
-        map.insert("d.com".to_string(), sample_metadata());
-        MetadataFile { path: &path }.write(&map).unwrap();
-
-        // Overwrite with new metadata
-        let mut map = MetadataFile { path: &path }.read().unwrap();
-        map.insert(
-            "d.com".to_string(),
-            OAuthMetadata {
-                token_url: "https://new.example.com/token".into(),
-                client_id: "new-id".into(),
-                revocation_url: None,
-            },
-        );
-        MetadataFile { path: &path }.write(&map).unwrap();
-
-        let loaded = MetadataFile { path: &path }.read().unwrap();
-        assert_eq!(loaded["d.com"].client_id, "new-id");
-    }
-
-    #[test]
-    fn lookup_exact_match() {
-        let mut map = HashMap::new();
-        map.insert("example.com".to_string(), sample_metadata());
-        let found = MetadataKey {
-            domain: "example.com",
-            username: None,
-        }
-        .lookup_in(&map);
-        assert!(found.is_some());
-        assert_eq!(found.unwrap().client_id, "my-client-id");
-    }
-
-    #[test]
-    fn lookup_parent_domain_fallback() {
-        let mut map = HashMap::new();
-        map.insert("example.com".to_string(), sample_metadata());
-        let found = MetadataKey {
-            domain: "api.example.com",
-            username: None,
-        }
-        .lookup_in(&map);
-        assert!(found.is_some());
-        assert_eq!(found.unwrap().client_id, "my-client-id");
-    }
-
-    #[test]
-    fn lookup_deep_subdomain_fallback() {
-        let mut map = HashMap::new();
-        map.insert("example.com".to_string(), sample_metadata());
-        let found = MetadataKey {
-            domain: "a.b.example.com",
-            username: None,
-        }
-        .lookup_in(&map);
-        assert!(found.is_some());
-    }
-
-    #[test]
-    fn lookup_stops_at_two_labels() {
-        let mut map = HashMap::new();
-        map.insert("com".to_string(), sample_metadata());
-        let found = MetadataKey {
-            domain: "api.example.com",
-            username: None,
-        }
-        .lookup_in(&map);
-        assert!(found.is_none());
-    }
-
-    #[test]
-    fn lookup_not_found() {
-        let map = HashMap::new();
-        let found = MetadataKey {
-            domain: "example.com",
-            username: None,
-        }
-        .lookup_in(&map);
-        assert!(found.is_none());
-    }
-
-    #[test]
-    fn lookup_with_username() {
-        let mut map = HashMap::new();
-        map.insert("example.com:alice".to_string(), sample_metadata());
-
-        // With matching username
-        let found = MetadataKey {
-            domain: "example.com",
-            username: Some("alice"),
-        }
-        .lookup_in(&map);
-        assert!(found.is_some());
-
-        // Without username — should not match
-        let found = MetadataKey {
-            domain: "example.com",
-            username: None,
-        }
-        .lookup_in(&map);
-        assert!(found.is_none());
-    }
-
-    // --- TokenRequest body tests ---
-
-    #[test]
-    fn refresh_body_without_client_secret() {
-        let body = TokenRequest {
-            token_url: "https://example.com/token",
-            client_id: "my-client",
-            client_secret: None,
-            grant: Grant::RefreshToken {
-                refresh_token: "my-refresh-tok",
-            },
-        }
-        .body();
-        assert_eq!(
-            body,
-            "grant_type=refresh_token&refresh_token=my-refresh-tok&client_id=my-client"
-        );
-    }
-
-    #[test]
-    fn refresh_body_with_client_secret() {
-        let body = TokenRequest {
-            token_url: "https://example.com/token",
-            client_id: "my-client",
-            client_secret: Some("s3cret"),
-            grant: Grant::RefreshToken {
-                refresh_token: "my-refresh-tok",
-            },
-        }
-        .body();
-        assert_eq!(
-            body,
-            "grant_type=refresh_token&refresh_token=my-refresh-tok&client_id=my-client&client_secret=s3cret"
-        );
-    }
-
-    #[test]
-    fn refresh_body_encodes_special_chars() {
-        let body = TokenRequest {
-            token_url: "https://example.com/token",
-            client_id: "id with spaces",
-            client_secret: Some("sec/ret"),
-            grant: Grant::RefreshToken {
-                refresh_token: "tok&en=val",
-            },
-        }
-        .body();
-        assert!(body.contains("refresh_token=tok%26en%3Dval"));
-        assert!(body.contains("client_id=id%20with%20spaces"));
-        assert!(body.contains("client_secret=sec%2Fret"));
-    }
-
-    #[test]
-    fn authorization_code_body() {
-        let body = TokenRequest {
-            token_url: "https://example.com/token",
-            client_id: "my-client",
-            client_secret: None,
-            grant: Grant::AuthorizationCode {
-                code: "auth-code-123",
-                redirect_uri: "http://127.0.0.1:8080/callback",
-                code_verifier: "verifier-abc",
-            },
-        }
-        .body();
-        assert!(body.starts_with("grant_type=authorization_code&"));
-        assert!(body.contains("code=auth-code-123"));
-        assert!(body.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fcallback"));
-        assert!(body.contains("client_id=my-client"));
-        assert!(body.contains("code_verifier=verifier-abc"));
-    }
-
-    // --- Revocation body tests ---
-
-    #[test]
-    fn revocation_body_basic() {
-        let body = Revocation {
-            revocation_url: "https://example.com/revoke",
-            token: "ya29.some-access-token",
-        }
-        .body();
-        assert_eq!(body, "token=ya29.some-access-token");
-    }
-
-    #[test]
-    fn revocation_body_encodes_special_chars() {
-        let body = Revocation {
-            revocation_url: "https://example.com/revoke",
-            token: "tok&en=val ue",
-        }
-        .body();
-        assert_eq!(body, "token=tok%26en%3Dval%20ue");
-    }
-
-    // --- ProviderPreset tests ---
-
-    #[test]
-    fn preset_known_domain() {
-        let preset = get_provider_preset("googleapis.com");
-        assert!(preset.is_some());
-        let p = preset.unwrap();
-        assert!(p.client_id.ends_with(".apps.googleusercontent.com"));
-        assert_eq!(p.auth_url, "https://accounts.google.com/o/oauth2/v2/auth");
-        assert_eq!(p.token_url, "https://oauth2.googleapis.com/token");
-        assert_eq!(
-            p.revocation_url,
-            Some("https://oauth2.googleapis.com/revoke")
-        );
-    }
-
-    #[test]
-    fn preset_subdomain_walkup() {
-        let preset = get_provider_preset("gmail.googleapis.com");
-        assert!(preset.is_some());
-        let p = preset.unwrap();
-        assert!(p.client_id.ends_with(".apps.googleusercontent.com"));
-    }
-
-    #[test]
-    fn preset_deep_subdomain_walkup() {
-        let preset = get_provider_preset("www.mail.googleapis.com");
-        assert!(preset.is_some());
-    }
-
-    #[test]
-    fn preset_unknown_domain() {
-        assert!(get_provider_preset("github.com").is_none());
-    }
-
-    #[test]
-    fn preset_tld_not_matched() {
-        assert!(get_provider_preset("com").is_none());
-    }
-
-    #[test]
-    fn remove_from_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("oauth.json");
-
-        let mut map = HashMap::new();
-        map.insert("a.com".to_string(), sample_metadata());
-        map.insert("b.com".to_string(), sample_metadata());
-        MetadataFile { path: &path }.write(&map).unwrap();
-
-        // Remove one
-        let mut map = MetadataFile { path: &path }.read().unwrap();
-        map.remove("a.com");
-        MetadataFile { path: &path }.write(&map).unwrap();
-
-        let loaded = MetadataFile { path: &path }.read().unwrap();
-        assert_eq!(loaded.len(), 1);
-        assert!(loaded.contains_key("b.com"));
-        assert!(!loaded.contains_key("a.com"));
-    }
+    Err(SfaeError::ConfigError(
+        "SFAE_OAUTH_BROKER_URL must be https://oauth.sfae.io or a local loopback URL".into(),
+    ))
 }

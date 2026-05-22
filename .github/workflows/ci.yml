@@ -12,6 +12,20 @@ env:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: sfae_oauth_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sfae_oauth_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v5
 
@@ -23,4 +37,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.1
 
       - name: Run CI checks
+        env:
+          SFAE_OAUTH_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/sfae_oauth_test
         run: cargo xtask ci

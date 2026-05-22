@@ -1,7 +1,5 @@
 //! `sfae flush`: bulk-delete every local credential set (with optional dry-run).
 
-use sfae_core::oauth;
-
 use crate::store_factory::create_store;
 
 pub fn run(dry_run: bool) -> anyhow::Result<()> {
@@ -33,11 +31,6 @@ pub fn run(dry_run: bool) -> anyhow::Result<()> {
                 eprintln!("Failed to delete {key}: {e}");
             }
         }
-    }
-
-    // Delete OAuth metadata file since all credentials are gone.
-    if let Err(e) = oauth::delete_all_oauth_metadata() {
-        eprintln!("Warning: failed to remove OAuth metadata: {e}");
     }
 
     eprintln!("Flushed {} credential(s).", keys.len());

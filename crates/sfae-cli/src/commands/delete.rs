@@ -1,10 +1,9 @@
-//! `sfae delete`: remove a credential set by UUID and revoke any associated OAuth tokens.
+//! `sfae delete`: remove a credential set by UUID or legacy flat credentials.
 
 use sfae_core::credential::{CredentialKey, CredentialType, credential_key};
-use sfae_core::oauth;
-use sfae_core::store::SecretStore;
+use sfae_core::store::{SecretStore, parse_structured_credential_set};
 
-use crate::store_factory::create_store;
+use crate::store_factory::{create_store, uses_remote_store};
 
 /// Check if a string looks like a UUID (8-4-4-4-12 hex pattern).
 fn looks_like_uuid(s: &str) -> bool {
@@ -43,6 +42,9 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         if cred_type_str.is_some() || username.is_some() {
             anyhow::bail!("--type and --label/--user flags are not used with UUID deletion");
         }
+        if !uses_remote_store() {
+            revoke_hosted_oauth_if_needed(&*store, target);
+        }
         store.delete_credential_set(target)?;
         eprintln!("Deleted credential set: {target}");
         return Ok(());
@@ -60,16 +62,6 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         });
         store.delete(&key)?;
         eprintln!("Deleted: {key}");
-
-        // When deleting ACCESS_TOKEN, also clean up OAuth metadata and client secret
-        // since the refresh flow is useless without an access token placeholder.
-        if cred_type == CredentialType::AccessToken {
-            cleanup_oauth(CleanupOAuth {
-                domain,
-                username,
-                store: &mut *store,
-            });
-        }
     } else {
         let mut deleted = 0;
         for ct in CredentialType::all() {
@@ -89,42 +81,57 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
                 None => domain.to_string(),
             };
             eprintln!("No credentials found for '{target}'.");
-        } else {
-            // Full-domain deletion: clean up OAuth metadata too.
-            cleanup_oauth(CleanupOAuth {
-                domain,
-                username,
-                store: &mut *store,
-            });
         }
     }
     Ok(())
 }
 
-/// Inputs for `cleanup_oauth`: the target credential plus a mutable store handle.
-struct CleanupOAuth<'a> {
-    domain: &'a str,
-    username: Option<&'a str>,
-    store: &'a mut dyn SecretStore,
-}
-
-/// Remove OAuth metadata and client secret for a domain.
-fn cleanup_oauth(ctx: CleanupOAuth<'_>) {
-    let CleanupOAuth {
-        domain,
-        username,
-        store,
-    } = ctx;
-    let metadata_key = oauth::MetadataKey { domain, username };
-    if let Err(e) = metadata_key.remove() {
-        eprintln!("Warning: failed to remove OAuth metadata: {e}");
+// xtask: allow-multi-param - deletion needs the selected store and credential id
+fn revoke_hosted_oauth_if_needed(store: &dyn SecretStore, id: &str) {
+    let Ok(blob) = store.get(id) else {
+        return;
+    };
+    let Ok(data) = parse_structured_credential_set(&blob) else {
+        return;
+    };
+    let Some(provider) = data.metadata.get("OAUTH_PROVIDER") else {
+        return;
+    };
+    if provider != "discord" {
+        return;
     }
-    let cs_key = credential_key(CredentialKey {
-        domain,
-        username,
-        cred_type: CredentialType::ClientSecret,
-    });
-    if store.delete(&cs_key).is_ok() {
-        eprintln!("Deleted: {cs_key}");
+
+    let access_token = data.values.get("OAUTH_ACCESS_TOKEN").map(String::as_str);
+    let refresh_token = data.internal.get("OAUTH_REFRESH_TOKEN").map(String::as_str);
+    if access_token.is_none() && refresh_token.is_none() {
+        return;
+    }
+    let Some(broker_credential_id) = data.metadata.get("OAUTH_BROKER_CREDENTIAL_ID") else {
+        eprintln!("OAuth credential has no broker credential id; deleting locally only.");
+        return;
+    };
+    let Some(broker_credential_secret) = data.internal.get("OAUTH_BROKER_CREDENTIAL_SECRET") else {
+        eprintln!("OAuth credential has no broker credential secret; deleting locally only.");
+        return;
+    };
+
+    let broker = match sfae_core::oauth::DirectHostedOAuthBroker::from_env() {
+        Ok(broker) => broker,
+        Err(e) => {
+            eprintln!("Could not configure OAuth broker for revoke; deleting locally only: {e}");
+            return;
+        }
+    };
+    let manager = sfae_core::oauth::OAuthCredentialManager::new(&broker);
+    if let Err(e) = manager.revoke_credential(sfae_core::oauth::HostedOAuthRevoke {
+        provider,
+        broker_credential_id,
+        broker_credential_secret,
+        access_token,
+        refresh_token,
+    }) {
+        eprintln!("OAuth revoke failed; deleting local credential anyway: {e}");
+    } else {
+        eprintln!("Revoked hosted OAuth credential.");
     }
 }

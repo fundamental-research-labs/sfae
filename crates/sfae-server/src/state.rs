@@ -1,13 +1,10 @@
 //! Shared application state plus authentication helpers used across handlers.
 //!
-//! `AppState` carries the database pool, secrets, and OAuth client config.
+//! `AppState` carries the database pool, auth secrets, and hosted OAuth broker config.
 //! The auth helpers here centralize the bearer/internal extraction pattern
 //! that handlers would otherwise repeat for each route.
 
-use axum::{
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
-};
+use axum::http::{HeaderMap, StatusCode};
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -16,8 +13,8 @@ pub(crate) struct AppState {
     pub(crate) pool: PgPool,
     pub(crate) jwt_secret: String,
     pub(crate) internal_auth_secret: String,
-    pub(crate) google_client_id: Option<String>,
-    pub(crate) google_client_secret: Option<String>,
+    pub(crate) oauth_broker_url: String,
+    pub(crate) http: reqwest::Client,
 }
 
 /// The two authentication modes.
@@ -33,10 +30,6 @@ impl AuthInfo {
         match self {
             AuthInfo::Internal { user_id } | AuthInfo::Bearer { user_id } => user_id,
         }
-    }
-
-    pub(crate) fn is_internal(&self) -> bool {
-        matches!(self, AuthInfo::Internal { .. })
     }
 }
 
@@ -85,22 +78,6 @@ impl AppState {
         }
 
         Err((StatusCode::UNAUTHORIZED, "Authentication required".into()))
-    }
-
-    /// Extract auth and require it be internal. On success returns the user id;
-    /// on failure returns a ready-to-return Response. Bearer-only callers get a
-    /// 403 with the standard "Internal auth required" message.
-    #[allow(clippy::result_large_err)]
-    pub(crate) fn require_internal(&self, headers: &HeaderMap) -> Result<String, Response> {
-        let auth = self
-            .extract_auth(headers)
-            .map_err(IntoResponse::into_response)?;
-        if !auth.is_internal() {
-            return Err(
-                (StatusCode::FORBIDDEN, "Internal auth required".to_string()).into_response(),
-            );
-        }
-        Ok(auth.user_id().to_string())
     }
 }
 
