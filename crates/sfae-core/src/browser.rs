@@ -101,6 +101,10 @@ impl LocalServer {
         loop {
             match self.listener.accept() {
                 Ok((stream, _addr)) => {
+                    stream.set_nonblocking(false).map_err(|e| {
+                        let _ = self.listener.set_nonblocking(false);
+                        SfaeError::Other(format!("failed to configure request stream: {e}"))
+                    })?;
                     let remaining = match remaining_until(RemainingDeadline {
                         deadline: opts.deadline,
                         timeout_message: opts.timeout_message,

@@ -1,6 +1,6 @@
 //! Route-level tests for the transient code browser loop.
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
@@ -59,15 +59,28 @@ fn send_http(req: TestHttpRequest) -> String {
         req.body
     );
     stream.write_all(raw.as_bytes()).unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).unwrap();
-    response
+    let mut response = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => response.extend_from_slice(&buf[..n]),
+            Err(e) if e.kind() == ErrorKind::ConnectionReset && !response.is_empty() => break,
+            Err(e) => panic!("failed to read test response: {e}"),
+        }
+    }
+    String::from_utf8_lossy(&response).into_owned()
 }
 
 fn extract_csrf(html: &str) -> String {
     let marker = r#"name="_csrf" value=""#;
-    let start = html.find(marker).unwrap() + marker.len();
-    let end = html[start..].find('"').unwrap();
+    let start = html
+        .find(marker)
+        .unwrap_or_else(|| panic!("csrf marker missing in response: {html:?}"))
+        + marker.len();
+    let end = html[start..]
+        .find('"')
+        .unwrap_or_else(|| panic!("csrf value terminator missing in response: {html:?}"));
     html[start..start + end].to_string()
 }
 
