@@ -361,6 +361,11 @@
 }'</code></pre>
         </li>
         <li>
+          <div class="step-label">Code</div>
+          <p class="step-desc">If a workflow asks for a short-lived 2FA/MFA code, SFAE opens a transient browser form and prints the code for immediate submission without storing it.</p>
+          <pre><code>sfae code github.com --label Work --length 6</code></pre>
+        </li>
+        <li>
           <div class="step-label">Request</div>
           <p class="step-desc">Agent makes calls with placeholders. SFAE resolves them.</p>
           <pre><code>sfae request GET "https://api.github.com/user" \

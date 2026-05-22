@@ -14,12 +14,13 @@ const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
   1. Read the target service's official online API and authentication docs to choose endpoints, auth method, scopes, and credential fields.
   2. Run `sfae credentials <domain>` to see stored credential sets for the service. If a suitable set exists, no human action is needed.
   3. If credentials are missing, run `sfae prompt <domain> --spec '<JSON>'` to ask the human to provide or authorize them. Treat `sfae prompt` as a blocking human-interaction step: credential collection can take as long as the human needs, so wait until the command exits. Do not impose an agent-side timeout, kill/retry it while waiting, or ask the human to paste secrets into chat. If multiple auth methods are acceptable, put several alternatives in the spec with preferred methods first. Use `sfae prompt --help` to learn the spec format.
-  4. Send HTTP requests with `sfae request ...` and `{KEY}` placeholders in headers, URLs, or bodies. HTTP is the only protocol currently supported. SFAE resolves placeholders without revealing secret values to the agent."#;
+  4. Send HTTP requests with `sfae request ...` and `{KEY}` placeholders in headers, URLs, or bodies. HTTP is the only protocol currently supported. SFAE resolves placeholders without revealing secret values to the agent.
+  5. If a provider asks for a short-lived 2FA/MFA code during a workflow, run `sfae code <domain>` and submit the code it prints. This intentionally returns only that transient code to the agent; it is not stored."#;
 
 #[cfg(not(feature = "native-keychain"))]
 const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
   SFAE is a credential gateway for agents making HTTP requests to service APIs.
-  `credentials` lists credential sets, and `request` sends HTTP API requests with `{KEY}` placeholders resolved by SFAE.
+  `credentials` lists credential sets, `request` sends HTTP API requests with `{KEY}` placeholders resolved by SFAE, and `code` can request a transient 2FA/MFA code through the local browser.
   `prompt`, `delete`, and `flush` are not available in this build. Use the host integration's request_credential client tool when credentials are missing."#;
 
 /// Credential gateway for LLM agents making HTTP API requests
@@ -149,6 +150,27 @@ EXAMPLES:
     sfae request GET "https://api.github.com/user" \
       -H "Authorization: Bearer {ACCESS_TOKEN}" \
       --dry-run"#;
+
+const CODE_AFTER_HELP: &str = r#"AGENT RULES:
+  Use this command only for short-lived verification codes requested by an active login or API workflow.
+  The submitted code is printed to stdout so the agent can complete the challenge. It is not stored in the OS credential store, remote credential store, logs, or a {KEY} placeholder.
+  Never use this command for long-lived credentials. Use this build's credential prompt or host integration for API keys, passwords, tokens, or OAuth authorization.
+
+OUTPUT:
+  Stdout is exactly the submitted code plus a newline. Browser/status messages go to stderr.
+  Cancel, timeout, or invalid configuration exits non-zero without printing a code.
+
+VALIDATION:
+  Default format is digits, with length 4-12 and a 300 second timeout.
+  `--length N` enforces an exact length. Do not combine it with `--min-length` or `--max-length`.
+  Formats: digits, alnum, text.
+
+EXAMPLES:
+  Request a 6-digit code:
+    sfae code github.com --label Work --message "Enter the 6-digit GitHub authentication code." --length 6
+
+  Request an alphanumeric code:
+    sfae code example.com --format alnum --min-length 6 --max-length 10"#;
 
 #[cfg(feature = "native-keychain")]
 const PROMPT_AFTER_HELP_BASE: &str = r#"AGENT RULES:
@@ -312,6 +334,36 @@ enum Command {
         #[arg(long)]
         verbose: bool,
     },
+    /// Request a transient 2FA/MFA code via browser form
+    #[command(after_help = CODE_AFTER_HELP)]
+    Code {
+        /// Target service domain asking for the code (e.g. github.com)
+        domain: String,
+        /// Account or credential-set label shown to the human (e.g. "Work")
+        #[arg(long = "label", alias = "user", value_name = "LABEL")]
+        label: Option<String>,
+        /// Human-facing instruction shown on the browser page
+        #[arg(long)]
+        message: Option<String>,
+        /// Optional verification page link shown on the browser page
+        #[arg(long = "help-url")]
+        help_url: Option<String>,
+        /// Accepted code format: digits, alnum, or text
+        #[arg(long, default_value = "digits")]
+        format: String,
+        /// Exact code length; cannot be combined with --min-length or --max-length
+        #[arg(long)]
+        length: Option<usize>,
+        /// Minimum code length when --length is not set
+        #[arg(long = "min-length")]
+        min_length: Option<usize>,
+        /// Maximum code length when --length is not set
+        #[arg(long = "max-length")]
+        max_length: Option<usize>,
+        /// Seconds to wait for the human before timing out
+        #[arg(long, default_value_t = sfae_core::code::DEFAULT_TIMEOUT_SECS)]
+        timeout: u64,
+    },
     /// Collect or authorize missing credentials via browser form
     #[cfg(feature = "native-keychain")]
     #[command(after_help = PROMPT_AFTER_HELP_BASE)]
@@ -393,6 +445,29 @@ fn main() -> anyhow::Result<()> {
                 headers: &headers,
                 body: body.as_deref(),
                 opts: &opts,
+            })?;
+        }
+        Command::Code {
+            domain,
+            label,
+            message,
+            help_url,
+            format,
+            length,
+            min_length,
+            max_length,
+            timeout,
+        } => {
+            commands::code::run(commands::code::RunArgs {
+                domain: &domain,
+                label: label.as_deref(),
+                message: message.as_deref(),
+                help_url: help_url.as_deref(),
+                format: &format,
+                length,
+                min_length,
+                max_length,
+                timeout_secs: timeout,
             })?;
         }
         #[cfg(feature = "native-keychain")]

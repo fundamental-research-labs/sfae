@@ -6,63 +6,10 @@
 <title>sfae — enter credential</title>
 <style>
   {{BASE_STYLES}}
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.85em;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-tertiary);
-    margin-bottom: 24px;
-  }
-  .logo svg {
-    width: 1.2em;
-    height: 1.2em;
-  }
-  h1 {
-    font-size: 1.25em;
-    font-weight: 600;
-    line-height: 1.4;
-    margin-bottom: 16px;
-  }
-  .url-hint {
-    font-size: 0.9em;
-    color: var(--text-secondary);
-    margin-bottom: 20px;
-    line-height: 1.5;
-  }
-  .url-hint a {
-    color: var(--link);
-    text-decoration: none;
-    word-break: break-all;
-  }
-  .url-hint a:hover {
-    text-decoration: underline;
-  }
-  .field { margin-bottom: 14px; }
   .optional-hint {
     font-weight: 400;
     color: var(--text-tertiary);
     font-size: 0.9em;
-  }
-  label {
-    display: block;
-    font-size: 0.85em;
-    font-weight: 500;
-    color: var(--text-secondary);
-    margin-bottom: 6px;
-  }
-  input[type="text"] {
-    width: 100%;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 1em;
-    font-family: inherit;
-    outline: none;
-    transition: border-color 0.15s;
   }
   input[data-m] { color: transparent; caret-color: var(--text); }
   .dots {
@@ -78,34 +25,8 @@
     color: var(--text);
     line-height: normal;
   }
-  input[type="text"]:focus {
-    border-color: var(--link);
-    box-shadow: 0 0 0 3px var(--focus-ring);
-  }
-  button, .oauth-btn {
-    display: block;
-    width: 100%;
-    padding: 10px;
-    font-size: 1em;
-    font-weight: 500;
-    font-family: inherit;
-    color: var(--surface);
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    text-align: center;
-    text-decoration: none;
-    transition: background 0.15s;
-  }
-  button {
+  #credential-form > button {
     margin-top: 16px;
-    background: var(--text);
-  }
-  button:hover {
-    background: #333;
-  }
-  button:active {
-    background: #000;
   }
   .groups { margin-top: 4px; }
   .group-tabs {
@@ -169,12 +90,6 @@
     font-size: 0.95em;
     color: var(--accent);
     font-weight: 500;
-  }
-  .footer-note {
-    font-size: 0.78em;
-    color: var(--text-tertiary);
-    margin-top: 16px;
-    line-height: 1.5;
   }
 </style>
 </head>

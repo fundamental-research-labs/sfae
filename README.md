@@ -39,9 +39,15 @@ sfae prompt github.com --spec '{
 sfae request GET "https://api.github.com/user" \
   -H "Authorization: Bearer {ACCESS_TOKEN}" \
   -H "User-Agent: sfae"
+
+# If a workflow asks for a short-lived 2FA/MFA code, request it from the human.
+# The code is printed to stdout for immediate use and is not stored.
+sfae code github.com --label Work --message "Enter the 6-digit GitHub authentication code." --length 6
 ```
 
 Agents should treat `sfae prompt` as a blocking step. Wait indefinitely until the process exits, and only continue to `sfae request` after it prints a stored or connected credential message. Do not ask the human to paste secrets into chat or use `--terminal`.
+
+Agents should use `sfae code` only for active, short-lived verification challenges. Unlike `sfae prompt`, the submitted code is intentionally returned to stdout so the agent can complete the challenge, and SFAE does not store it.
 
 For hosted OAuth:
 
@@ -63,6 +69,7 @@ sfae request GET "https://discord.com/api/v10/users/@me" \
 
 - `sfae credentials [domain] [--label <label>]` lists credential sets as `<uuid> <domain> <label-or-> [KEY, ...]`.
 - `sfae prompt <domain> --spec '<JSON>' [--label <label>]` opens the human-paced browser flow and stores a credential set.
+- `sfae code <domain> [--label <label>] [--message <text>] [--help-url <url>] [--format digits|alnum|text] [--length <n> | --min-length <n> --max-length <n>] [--timeout <seconds>]` requests a transient 2FA/MFA code and prints it to stdout without storing it.
 - `sfae request <METHOD> <URL> [-H "Header: {KEY}"] [-d BODY] [--domain <domain>] [--cred <uuid>] [--label <label>] [--dry-run] [--verbose]` sends HTTP requests with `{KEY}` placeholders resolved from the selected credential set.
 - `sfae delete <uuid>` removes one credential set. Domain deletion and `--type` are legacy flat-key paths.
 - `sfae flush --dry-run` previews a local full wipe; `sfae flush` deletes every locally indexed credential.

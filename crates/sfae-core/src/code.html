@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+  {{BASE_STYLES}}
+  .code-card h1 { margin-bottom: 8px; }
+  .message { margin: 16px 0; }
+  .code-input {
+    font-size: 1.1em;
+  }
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .timer { margin-top: 14px; }
+</style>
+</head>
+<body>
+<div class="card code-card">
+  <div class="logo"><svg viewBox="0 0 48 48" fill="none"><rect x="12" y="20" width="24" height="20" rx="3" stroke="currentColor" stroke-width="2.5"/><path d="M18 20V14a6 6 0 1 1 12 0v6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><circle cx="24" cy="31" r="2.5" fill="currentColor"/><line x1="24" y1="33.5" x2="24" y2="37" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>sfae</div>
+  <h1>{{HEADING}}</h1>
+  {{META}}
+  <p class="message">{{MESSAGE}}</p>
+  {{HELP_SECTION}}
+  {{ERROR_SECTION}}
+  <div id="code-form">
+    <input type="hidden" name="_csrf" value="{{CSRF}}">
+    <label for="code">Code</label>
+    <input class="code-input" id="code" name="_code" type="text" inputmode="{{INPUTMODE}}" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" minlength="{{MIN_LENGTH}}" maxlength="{{MAX_LENGTH}}"{{PATTERN_ATTR}} autofocus>
+    <div class="actions">
+      <button class="submit" type="button" onclick="sfaeSubmit()">Submit</button>
+      <button class="secondary-button cancel" type="button" onclick="sfaeCancel()">Cancel</button>
+    </div>
+  </div>
+  <p class="timer">Expires in <span id="timer">{{TIMEOUT_SECONDS}}</span>s</p>
+  <p class="footer-note">This short-lived code is returned to the waiting command and is not saved.</p>
+</div>
+<script>
+var sfaeRemaining = Number('{{TIMEOUT_SECONDS}}');
+function sfaeReplace(html){
+  var doc = new DOMParser().parseFromString(html,'text/html');
+  document.title = doc.title || '';
+  document.body.innerHTML = doc.body.innerHTML;
+  var s = doc.querySelector('style');
+  if(s){var os=document.querySelector('style');if(os)os.textContent=s.textContent}
+}
+function sfaeNetworkError(){
+  var c=document.getElementById('code-form');
+  if(c){
+    c.insertAdjacentHTML('beforebegin','<p class="error" role="alert">The code request is no longer active. You can close this tab.</p>');
+  }
+}
+function sfaeSubmit(){
+  var c=document.getElementById('code-form');
+  if(!c)return;
+  var code=c.querySelector('input[name="_code"]');
+  var csrf=c.querySelector('input[name="_csrf"]');
+  if(!code.value.trim()){code.focus();return}
+  var body=new URLSearchParams();
+  body.append('_code',code.value);
+  body.append('_csrf',csrf.value);
+  fetch('/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body,cache:'no-store'})
+    .then(function(r){return r.text()})
+    .then(sfaeReplace)
+    .catch(sfaeNetworkError);
+}
+function sfaeCancel(){
+  var csrf=document.querySelector('input[name="_csrf"]');
+  var body=new URLSearchParams();
+  body.append('_csrf',csrf ? csrf.value : '');
+  fetch('/cancel',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body,cache:'no-store'})
+    .then(function(r){return r.text()})
+    .then(sfaeReplace)
+    .catch(sfaeNetworkError);
+}
+document.addEventListener('keydown',function(e){
+  if(e.key==='Enter'&&e.target.tagName==='INPUT')sfaeSubmit();
+});
+setInterval(function(){
+  sfaeRemaining -= 1;
+  var el=document.getElementById('timer');
+  if(el&&sfaeRemaining>=0)el.textContent=String(sfaeRemaining);
+},1000);
+</script>
+</body>
+</html>

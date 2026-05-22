@@ -93,6 +93,9 @@ fn root_help_explains_agent_workflow() {
         assert!(stdout.contains("preferred methods first"));
         assert!(stdout.contains("HTTP is the only protocol currently supported"));
         assert!(stdout.contains("without revealing secret values"));
+        assert!(stdout.contains("short-lived 2FA/MFA code"));
+        assert!(stdout.contains("sfae code <domain>"));
+        assert!(stdout.contains("it is not stored"));
         assert!(!stdout.contains("SECRETS:"));
         assert!(!stdout.contains("Passwords/login keychain on macOS"));
         assert!(!stdout.contains("oauth.sfae.io"));
@@ -101,6 +104,22 @@ fn root_help_explains_agent_workflow() {
         assert!(stdout.contains("sfae prompt --help"));
         assert!(stdout.contains("sfae request ..."));
     }
+}
+
+#[test]
+fn code_help_explains_transient_output_and_validation() {
+    let stdout = help_output(&["code", "--help"]);
+    assert!(stdout.contains("transient 2FA/MFA code"));
+    assert!(stdout.contains("short-lived verification codes"));
+    assert!(stdout.contains("printed to stdout"));
+    assert!(stdout.contains("not stored in the OS credential store"));
+    assert!(stdout.contains("Stdout is exactly the submitted code plus a newline"));
+    assert!(stdout.contains("Cancel, timeout, or invalid configuration exits non-zero"));
+    assert!(stdout.contains("Default format is digits"));
+    assert!(stdout.contains("--length N"));
+    assert!(stdout.contains("Formats: digits, alnum, text"));
+    assert!(stdout.contains("--help-url"));
+    assert!(stdout.contains("--timeout"));
 }
 
 #[test]

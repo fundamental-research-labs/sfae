@@ -4,6 +4,8 @@
 pub mod api_store;
 pub mod browser;
 pub mod browser_html;
+pub mod code;
+mod code_html;
 pub mod credential;
 pub mod error;
 pub mod http;
