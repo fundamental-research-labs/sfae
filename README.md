@@ -12,6 +12,23 @@ SFAE lets AI coding agents make authenticated API calls without ever seeing cred
 - **All sorts of credentials** — Basic Auth, API Key, hosted OAuth, and more.
 - **Communication protocols** — HTTP today; Postgres and other protocols are planned.
 
+## Roadmap
+
+SFAE is private/pre-release. The current path to an open-source-ready release is tracked in GitHub issues:
+
+| Priority | Area | Work | Issue |
+| --- | --- | --- | --- |
+| P0 | OAuth | Make hosted OAuth release-ready: live-path validation, refresh/revoke coverage, failure UX, and the `oauth.sfae.io` operations runbook. | [#25](https://github.com/fundamental-research-labs/sfae/issues/25) |
+| P0 | Release | Prepare the public release checklist: audit secrets/history, finish public-facing docs, confirm CI from a clean checkout, and decide release timing. | [#26](https://github.com/fundamental-research-labs/sfae/issues/26) |
+| P0 | Distribution | Publish the SFAE CLI after the release checklist is satisfied. | [#13](https://github.com/fundamental-research-labs/sfae/issues/13) |
+| P1 | Authentication | Support x.509 certificate authentication for mTLS without exposing private keys to agents. | [#27](https://github.com/fundamental-research-labs/sfae/issues/27) |
+| P1 | OAuth | Expand hosted OAuth providers with provider adapters, app setup, approval tracking, smoke tests, and public docs. | [#28](https://github.com/fundamental-research-labs/sfae/issues/28) |
+| P1 | OAuth | Centralize multi-provider OAuth app config for hosted provider client IDs and secrets. | [#10](https://github.com/fundamental-research-labs/sfae/issues/10) |
+| P2 | Protocols | Add a protocol adapter architecture that keeps HTTP working while adding a typed execution boundary for native protocols. | [#29](https://github.com/fundamental-research-labs/sfae/issues/29) |
+| P2 | Protocols | Support native Postgres execution without leaking database credentials. | [#30](https://github.com/fundamental-research-labs/sfae/issues/30) |
+| P2 | Protocols | Support native ClickHouse execution with masked credentials and integration coverage. | [#31](https://github.com/fundamental-research-labs/sfae/issues/31) |
+| P2 | Product | Add a credential management UI for reviewing and managing stored credential sets and secrets outside the CLI. | [#12](https://github.com/fundamental-research-labs/sfae/issues/12) |
+
 ## Installation
 
 ```
