@@ -550,12 +550,25 @@ fn public_oauth_error_code(error_code: Option<&str>) -> Option<String> {
     let code = match error_code? {
         "access_denied" => "access_denied",
         "missing_code" => "missing_code",
+        code if provider_token_failure(code) => "provider_token_exchange_failed",
+        code if provider_identity_failure(code) => "provider_identity_failed",
         code if code.starts_with("discord_token_status_") => "provider_token_exchange_failed",
         code if code.starts_with("discord_user_status_") => "provider_identity_failed",
         code if code.contains("_failed") => "oauth_completion_failed",
         _ => "oauth_failed",
     };
     Some(code.to_string())
+}
+
+fn provider_token_failure(code: &str) -> bool {
+    code.starts_with("provider_token_status_")
+        || code.starts_with("provider_refresh_status_")
+        || code.starts_with("provider token ")
+        || code.starts_with("provider refresh ")
+}
+
+fn provider_identity_failure(code: &str) -> bool {
+    code.starts_with("provider_identity_status_") || code.starts_with("provider identity ")
 }
 
 /// POST /credentials/refresh — OAuth refresh will delegate to the hosted broker in a later phase.
@@ -580,4 +593,50 @@ pub(crate) async fn health() -> impl IntoResponse {
     axum::Json(HealthResponse {
         status: "ok".to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_oauth_error_mapping_is_provider_neutral() {
+        for code in [
+            "provider_token_status_400",
+            "provider token request failed: timeout",
+            "provider token response parse failed: missing field",
+            "provider_refresh_status_400",
+            "provider refresh request failed: timeout",
+            "provider refresh response parse failed: missing field",
+        ] {
+            assert_eq!(
+                public_oauth_error_code(Some(code)).as_deref(),
+                Some("provider_token_exchange_failed"),
+                "{code}"
+            );
+        }
+        for code in [
+            "provider_identity_status_401",
+            "provider identity request failed: timeout",
+            "provider identity response parse failed: missing sub",
+        ] {
+            assert_eq!(
+                public_oauth_error_code(Some(code)).as_deref(),
+                Some("provider_identity_failed"),
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn public_oauth_error_mapping_preserves_legacy_discord_codes() {
+        assert_eq!(
+            public_oauth_error_code(Some("discord_token_status_400")).as_deref(),
+            Some("provider_token_exchange_failed")
+        );
+        assert_eq!(
+            public_oauth_error_code(Some("discord_user_status_401")).as_deref(),
+            Some("provider_identity_failed")
+        );
+    }
 }

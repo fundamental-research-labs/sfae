@@ -33,7 +33,7 @@ fn format_credential_set_metadata(info: &CredentialSetInfo) -> String {
 
     output.push_str("metadata:\n");
     let mut entries: Vec<_> = info.metadata.iter().collect();
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries.sort_by_key(|(key, _)| *key);
     if entries.is_empty() {
         output.push_str("  -\n");
     } else {

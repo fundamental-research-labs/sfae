@@ -4,7 +4,7 @@
 
 *Pronounced "safe."* &nbsp; [sfae.io](https://sfae.io)
 
-SFAE lets AI coding agents make authenticated API calls without ever seeing credentials. Agents read the target service's official API/auth docs, ask the human for any missing credentials through SFAE, then write placeholders like `{ACCESS_TOKEN}` or `{API_KEY}` in requests. SFAE resolves them from the local OS credential store or an authenticated SFAE backend at execution time. Supports static tokens, API keys, and hosted OAuth handoff for Discord.
+SFAE lets AI coding agents make authenticated API calls without ever seeing credentials. Agents read the target service's official API/auth docs, ask the human for any missing credentials through SFAE, then write placeholders like `{ACCESS_TOKEN}` or `{API_KEY}` in requests. SFAE resolves them from the local OS credential store or an authenticated SFAE backend at execution time. Supports static tokens, API keys, and hosted OAuth handoff for Discord and Google APIs.
 
 ## Features
 
@@ -66,7 +66,7 @@ Agents should treat `sfae prompt` as a blocking step. Wait indefinitely until th
 
 Agents should use `sfae code` only for active, short-lived verification challenges. Unlike `sfae prompt`, the submitted code is intentionally returned to stdout so the agent can complete the challenge, and SFAE does not store it.
 
-For hosted OAuth:
+For hosted OAuth, the hosted broker currently supports Discord and Google APIs. Use `googleapis.com` as the credential domain for Google API credentials so parent-domain fallback can resolve the same token for hosts such as `gmail.googleapis.com`, `docs.googleapis.com`, `sheets.googleapis.com`, and `www.googleapis.com`.
 
 ```bash
 # No SFAE_STORE_URL or SFAE_STORE_TOKEN required for local CLI OAuth.
@@ -79,6 +79,21 @@ sfae prompt discord.com --spec '{
 
 # Then make requests as usual
 sfae request GET "https://discord.com/api/v10/users/@me" \
+  -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}"
+
+# Google API OAuth uses the same spec shape.
+sfae prompt googleapis.com --spec '{
+  "groups": [{
+    "label": "OAuth",
+    "oauth": {
+      "provider": "google",
+      "scopes": ["https://www.googleapis.com/auth/drive.metadata.readonly"]
+    }
+  }]
+}'
+
+sfae request GET "https://www.googleapis.com/drive/v3/files?pageSize=10" \
+  --domain googleapis.com \
   -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}"
 ```
 

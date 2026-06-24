@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::crypto::StateHasher;
 use crate::crypto::{generate_state, redeem_challenge};
-use crate::discord::{self, DiscordAuthorize, DiscordRefreshRequest, DiscordRevokeRequest};
+use crate::provider::{self, BuildAuthorization, ProviderToken, RefreshToken, RevokeToken};
 use crate::state::AppState;
 use crate::types::{
     CreateLocalSessionReq, CreateLocalSessionResp, LocalSessionStatusResp, RedeemLocalSessionReq,
@@ -26,13 +26,13 @@ pub(crate) async fn create_local_session(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<CreateLocalSessionReq>,
 ) -> Response {
-    if body.provider != "discord" {
+    let Some(provider_name) = provider::canonical_provider_name(&body.provider) else {
         return (
             StatusCode::BAD_REQUEST,
             format!("unsupported OAuth provider \"{}\"", body.provider),
         )
             .into_response();
-    }
+    };
     if body.redeem_challenge_method != "S256" || body.redeem_challenge.len() < 32 {
         return (StatusCode::BAD_REQUEST, "invalid redeem challenge").into_response();
     }
@@ -42,7 +42,8 @@ pub(crate) async fn create_local_session(
 
     let raw_state = generate_state();
     let state_hash = state.state_hasher.hash(&raw_state);
-    let discord_session = match discord::build_authorization(DiscordAuthorize {
+    let provider_session = match provider::build_authorization(BuildAuthorization {
+        provider: provider_name,
         config: &state.config,
         state: &raw_state,
         requested_scopes: &body.scopes,
@@ -71,13 +72,14 @@ pub(crate) async fn create_local_session(
          (state_hash, provider, user_id, domain, label, scopes, return_url, expires_at, \
           session_mode, redeem_challenge_hash, redeem_challenge_method, \
           completion_challenge_hash, completion_verifier_ciphertext) \
-         VALUES ($1, 'discord', 'local-cli', $2, $3, $4, $5, $6, 'local', $7, 'S256', $8, $9) \
+         VALUES ($1, $2, 'local-cli', $3, $4, $5, $6, $7, 'local', $8, 'S256', $9, $10) \
          RETURNING id",
     )
     .bind(&state_hash)
+    .bind(provider_name)
     .bind(&body.domain)
     .bind(&body.label)
-    .bind(&discord_session.scopes)
+    .bind(&provider_session.scopes)
     .bind(&body.return_url)
     .bind(expires_at)
     .bind(&body.redeem_challenge)
@@ -89,7 +91,7 @@ pub(crate) async fn create_local_session(
     match row {
         Ok((session_id,)) => axum::Json(CreateLocalSessionResp {
             session_id,
-            authorization_url: discord_session.authorization_url,
+            authorization_url: provider_session.authorization_url,
             expires_at,
         })
         .into_response(),
@@ -250,7 +252,7 @@ pub(crate) async fn refresh_local_credential(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<RefreshLocalCredentialReq>,
 ) -> Response {
-    if body.provider != "discord" {
+    if provider::canonical_provider_name(&body.provider).is_none() {
         return (
             StatusCode::BAD_REQUEST,
             format!("unsupported OAuth provider \"{}\"", body.provider),
@@ -278,7 +280,8 @@ pub(crate) async fn refresh_local_credential(
         return (StatusCode::FORBIDDEN, "refresh token rejected").into_response();
     }
 
-    let token = match discord::refresh_token(DiscordRefreshRequest {
+    let token = match provider::refresh_token(RefreshToken {
+        provider: &body.provider,
         http: &state.http,
         config: &state.config,
         refresh_token: &body.refresh_token,
@@ -306,6 +309,7 @@ pub(crate) async fn refresh_local_credential(
 
     axum::Json(refreshed_credential_blob(RefreshedCredentialBlob {
         state: &state,
+        provider: &body.provider,
         token: &token,
     }))
     .into_response()
@@ -317,7 +321,7 @@ pub(crate) async fn revoke_local_credential(
     State(state): State<Arc<AppState>>,
     axum::Json(body): axum::Json<RevokeLocalCredentialReq>,
 ) -> Response {
-    if body.provider != "discord" {
+    if provider::canonical_provider_name(&body.provider).is_none() {
         return (
             StatusCode::BAD_REQUEST,
             format!("unsupported OAuth provider \"{}\"", body.provider),
@@ -373,11 +377,12 @@ pub(crate) async fn revoke_local_credential(
             .into_response();
     };
 
-    if discord::revoke_token(DiscordRevokeRequest {
+    if provider::revoke_token(RevokeToken {
+        provider: &body.provider,
         http: &state.http,
         config: &state.config,
         token,
-        token_type_hint,
+        token_type_hint: Some(token_type_hint),
     })
     .await
     .is_err()
@@ -507,11 +512,16 @@ async fn mark_local_grant_revoked(args: MarkLocalGrantRevoked<'_>) {
 
 struct RefreshedCredentialBlob<'a> {
     state: &'a AppState,
-    token: &'a discord::DiscordToken,
+    provider: &'a str,
+    token: &'a ProviderToken,
 }
 
 fn refreshed_credential_blob(args: RefreshedCredentialBlob<'_>) -> RedeemedCredentialResp {
-    let RefreshedCredentialBlob { state, token } = args;
+    let RefreshedCredentialBlob {
+        state,
+        provider,
+        token,
+    } = args;
     let mut values = HashMap::new();
     values.insert("OAUTH_ACCESS_TOKEN".to_string(), token.access_token.clone());
 
@@ -521,19 +531,18 @@ fn refreshed_credential_blob(args: RefreshedCredentialBlob<'_>) -> RedeemedCrede
     }
 
     let mut metadata = HashMap::new();
-    metadata.insert("OAUTH_PROVIDER".to_string(), "discord".to_string());
+    metadata.insert("OAUTH_PROVIDER".to_string(), provider.to_string());
     metadata.insert(
         "OAUTH_BROKER_URL".to_string(),
         state.config.base_url.to_string(),
     );
-    let scopes = token.scopes(&[]);
-    if !scopes.is_empty() {
-        metadata.insert("OAUTH_SCOPES".to_string(), scopes.join(" "));
+    if !token.scopes.is_empty() {
+        metadata.insert("OAUTH_SCOPES".to_string(), token.scopes.join(" "));
     }
     if let Some(token_type) = token.token_type.as_deref() {
         metadata.insert("OAUTH_TOKEN_TYPE".to_string(), token_type.to_string());
     }
-    if let Some(expires_at) = token.expires_at() {
+    if let Some(expires_at) = token.expires_at.as_ref() {
         metadata.insert("OAUTH_EXPIRES_AT".to_string(), expires_at.to_rfc3339());
     }
 
@@ -628,6 +637,16 @@ mod tests {
             )
             .unwrap(),
             discord_userinfo_url: url::Url::parse("https://discord.com/api/v10/users/@me").unwrap(),
+            google_client_id: "google-client-id".to_string(),
+            google_client_secret: "google-client-secret".to_string(),
+            google_authorize_url: url::Url::parse("https://accounts.google.com/o/oauth2/v2/auth")
+                .unwrap(),
+            google_token_url: url::Url::parse("https://oauth2.googleapis.com/token").unwrap(),
+            google_revoke_url: url::Url::parse("https://oauth2.googleapis.com/revoke").unwrap(),
+            google_userinfo_url: url::Url::parse(
+                "https://openidconnect.googleapis.com/v1/userinfo",
+            )
+            .unwrap(),
             base_url: url::Url::parse("https://oauth.sfae.io").unwrap(),
             allowed_return_origins: std::collections::HashSet::new(),
             port: 3100,
@@ -642,28 +661,29 @@ mod tests {
             .unwrap(),
             state_hasher: StateHasher::new("hash-secret"),
         };
-        let token = discord::DiscordToken {
+        let token = ProviderToken {
             access_token: "new-access".to_string(),
             refresh_token: Some("new-refresh".to_string()),
             token_type: Some("Bearer".to_string()),
-            scope: Some("identify scope.read".to_string()),
-            expires_in: Some(60),
+            scopes: vec!["email".to_string(), "profile".to_string()],
+            expires_at: Some(Utc::now() + Duration::seconds(60)),
         };
 
         let credential = refreshed_credential_blob(RefreshedCredentialBlob {
             state: &state,
+            provider: "google",
             token: &token,
         });
 
         assert_eq!(credential.values["OAUTH_ACCESS_TOKEN"], "new-access");
         assert!(!credential.values.contains_key("OAUTH_REFRESH_TOKEN"));
         assert_eq!(credential.internal["OAUTH_REFRESH_TOKEN"], "new-refresh");
-        assert_eq!(credential.metadata["OAUTH_PROVIDER"], "discord");
+        assert_eq!(credential.metadata["OAUTH_PROVIDER"], "google");
         assert_eq!(
             credential.metadata["OAUTH_BROKER_URL"],
             "https://oauth.sfae.io/"
         );
-        assert_eq!(credential.metadata["OAUTH_SCOPES"], "identify scope.read");
+        assert_eq!(credential.metadata["OAUTH_SCOPES"], "email profile");
         assert!(credential.metadata.contains_key("OAUTH_EXPIRES_AT"));
     }
 }

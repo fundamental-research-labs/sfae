@@ -18,6 +18,12 @@ pub(crate) struct Config {
     pub(crate) discord_token_url: Url,
     pub(crate) discord_token_revoke_url: Url,
     pub(crate) discord_userinfo_url: Url,
+    pub(crate) google_client_id: String,
+    pub(crate) google_client_secret: String,
+    pub(crate) google_authorize_url: Url,
+    pub(crate) google_token_url: Url,
+    pub(crate) google_revoke_url: Url,
+    pub(crate) google_userinfo_url: Url,
     pub(crate) base_url: Url,
     pub(crate) allowed_return_origins: HashSet<String>,
     pub(crate) port: u16,
@@ -44,6 +50,20 @@ impl Config {
         let discord_userinfo_url = provider_url(
             "DISCORD_USERINFO_URL",
             "https://discord.com/api/v10/users/@me",
+        );
+        let google_client_id = required_env("GOOGLE_CLIENT_ID");
+        let google_client_secret = required_env("GOOGLE_CLIENT_SECRET");
+        let google_authorize_url = provider_url(
+            "GOOGLE_AUTHORIZE_URL",
+            "https://accounts.google.com/o/oauth2/v2/auth",
+        );
+        let google_token_url =
+            provider_url("GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token");
+        let google_revoke_url =
+            provider_url("GOOGLE_REVOKE_URL", "https://oauth2.googleapis.com/revoke");
+        let google_userinfo_url = provider_url(
+            "GOOGLE_USERINFO_URL",
+            "https://openidconnect.googleapis.com/v1/userinfo",
         );
         let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:3100".into());
         let base_url = Url::parse(base_url.trim_end_matches('/')).expect("BASE_URL must be a URL");
@@ -76,6 +96,12 @@ impl Config {
             discord_token_url,
             discord_token_revoke_url,
             discord_userinfo_url,
+            google_client_id,
+            google_client_secret,
+            google_authorize_url,
+            google_token_url,
+            google_revoke_url,
+            google_userinfo_url,
             base_url,
             allowed_return_origins,
             port,
@@ -84,8 +110,13 @@ impl Config {
 
     /// Build the registered Discord callback URL from BASE_URL.
     pub(crate) fn discord_redirect_uri(&self) -> String {
+        self.generic_redirect_uri()
+    }
+
+    /// Build the provider-neutral OAuth callback URL from BASE_URL.
+    pub(crate) fn generic_redirect_uri(&self) -> String {
         self.base_url
-            .join("/v1/callback/discord")
+            .join("/oauth/callback")
             .expect("valid callback path")
             .to_string()
     }

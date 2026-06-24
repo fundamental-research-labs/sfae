@@ -13,7 +13,9 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::crypto::generate_state;
-use crate::discord::{self, DiscordAuthorize, DiscordTokenRequest, DiscordUserRequest};
+use crate::provider::{
+    self, BuildAuthorization, ExchangeCode, FetchUser, ProviderToken, ProviderUser,
+};
 use crate::state::AppState;
 use crate::types::{
     CreateSessionReq, CreateSessionResp, HealthResp, ProviderListResp, ProviderResp,
@@ -28,10 +30,13 @@ pub(crate) async fn health() -> impl IntoResponse {
 /// GET /v1/oauth/providers — public provider metadata for client discovery.
 pub(crate) async fn list_providers() -> impl IntoResponse {
     axum::Json(ProviderListResp {
-        providers: vec![ProviderResp {
-            provider: "discord",
-            domains: vec!["discord.com"],
-        }],
+        providers: provider::provider_metadata()
+            .iter()
+            .map(|provider| ProviderResp {
+                provider: provider.provider,
+                domains: provider.domains.to_vec(),
+            })
+            .collect(),
     })
 }
 
@@ -54,7 +59,7 @@ pub(crate) struct DoneQuery {
     pub(crate) status: Option<String>,
 }
 
-/// POST /internal/oauth/sessions — create a one-time Discord OAuth browser flow.
+/// POST /internal/oauth/sessions — create a one-time hosted OAuth browser flow.
 // xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn create_session(
     State(state): State<Arc<AppState>>,
@@ -67,18 +72,19 @@ pub(crate) async fn create_session(
     }) {
         return resp.into_response();
     }
-    if body.provider != "discord" {
+    let Some(provider_name) = provider::canonical_provider_name(&body.provider) else {
         return (
             StatusCode::BAD_REQUEST,
             format!("unsupported OAuth provider \"{}\"", body.provider),
         )
             .into_response();
-    }
+    };
 
     let raw_state = generate_state();
     let state_hash = state.state_hasher.hash(&raw_state);
     let requested_scopes = body.scopes.unwrap_or_default();
-    let discord_session = match discord::build_authorization(DiscordAuthorize {
+    let provider_session = match provider::build_authorization(BuildAuthorization {
+        provider: provider_name,
         config: &state.config,
         state: &raw_state,
         requested_scopes: &requested_scopes,
@@ -94,19 +100,22 @@ pub(crate) async fn create_session(
         return (StatusCode::BAD_REQUEST, "return_url origin is not allowed").into_response();
     }
 
-    let domain = body.domain.unwrap_or_else(|| "discord.com".to_string());
+    let domain = body
+        .domain
+        .unwrap_or_else(|| provider::default_domain(provider_name).unwrap().to_string());
     let expires_at = Utc::now() + Duration::minutes(10);
     let row = sqlx::query_as::<_, (Uuid,)>(
         "INSERT INTO oauth_sessions \
          (state_hash, provider, user_id, domain, label, scopes, return_url, expires_at) \
-         VALUES ($1, 'discord', $2, $3, $4, $5, $6, $7) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
          RETURNING id",
     )
     .bind(&state_hash)
+    .bind(provider_name)
     .bind(&body.user_id)
     .bind(&domain)
     .bind(&body.label)
-    .bind(&discord_session.scopes)
+    .bind(&provider_session.scopes)
     .bind(&return_url)
     .bind(expires_at)
     .fetch_one(&state.pool)
@@ -115,7 +124,7 @@ pub(crate) async fn create_session(
     match row {
         Ok((session_id,)) => axum::Json(CreateSessionResp {
             session_id,
-            authorization_url: discord_session.authorization_url,
+            authorization_url: provider_session.authorization_url,
             expires_at,
         })
         .into_response(),
@@ -195,19 +204,54 @@ pub(crate) async fn get_session(
     }
 }
 
-/// GET /v1/callback/discord — Discord OAuth redirect target.
+/// GET /oauth/callback — provider-neutral OAuth redirect target.
+// xtask: allow-multi-param - axum handler extractors
+pub(crate) async fn callback_oauth(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<CallbackQuery>,
+) -> Response {
+    callback_for_provider(CallbackRequest {
+        state: &state,
+        query,
+        required_provider: None,
+    })
+    .await
+}
+
+/// GET /v1/callback/discord — legacy Discord OAuth redirect target.
 // xtask: allow-multi-param - axum handler extractors
 pub(crate) async fn callback_discord(
     State(state): State<Arc<AppState>>,
     Query(query): Query<CallbackQuery>,
 ) -> Response {
+    callback_for_provider(CallbackRequest {
+        state: &state,
+        query,
+        required_provider: Some("discord"),
+    })
+    .await
+}
+
+struct CallbackRequest<'a> {
+    state: &'a AppState,
+    query: CallbackQuery,
+    required_provider: Option<&'a str>,
+}
+
+async fn callback_for_provider(args: CallbackRequest<'_>) -> Response {
+    let CallbackRequest {
+        state,
+        query,
+        required_provider,
+    } = args;
     let Some(raw_state) = query.state.as_deref() else {
         return (StatusCode::BAD_REQUEST, "missing state").into_response();
     };
     let state_hash = state.state_hasher.hash(raw_state);
     let session = match consume_session(ConsumeSession {
-        state: &state,
+        state,
         state_hash: &state_hash,
+        required_provider,
     })
     .await
     {
@@ -218,7 +262,7 @@ pub(crate) async fn callback_discord(
 
     if let Some(error) = query.error {
         mark_session_error(MarkSession {
-            state: &state,
+            state,
             session_id: session.id,
             error_code: &error,
         })
@@ -234,7 +278,7 @@ pub(crate) async fn callback_discord(
 
     let Some(code) = query.code.as_deref() else {
         mark_session_error(MarkSession {
-            state: &state,
+            state,
             session_id: session.id,
             error_code: "missing_code",
         })
@@ -249,13 +293,13 @@ pub(crate) async fn callback_discord(
     };
 
     let completion_verifier = match local_completion_verifier(LocalCompletion {
-        state: &state,
+        state,
         session: &session,
     }) {
         Ok(value) => value,
         Err(error_code) => {
             mark_session_error(MarkSession {
-                state: &state,
+                state,
                 session_id: session.id,
                 error_code: &error_code,
             })
@@ -270,8 +314,8 @@ pub(crate) async fn callback_discord(
         }
     };
 
-    match complete_discord_callback(CompleteCallback {
-        state: &state,
+    match complete_provider_callback(CompleteCallback {
+        state,
         session: &session,
         code,
     })
@@ -286,7 +330,7 @@ pub(crate) async fn callback_discord(
         .into_response(),
         Err(error_code) => {
             mark_session_error(MarkSession {
-                state: &state,
+                state,
                 session_id: session.id,
                 error_code: &error_code,
             })
@@ -311,6 +355,7 @@ pub(crate) struct CallbackQuery {
 
 struct ConsumedSession {
     id: Uuid,
+    provider: String,
     user_id: String,
     domain: String,
     label: Option<String>,
@@ -323,14 +368,20 @@ struct ConsumedSession {
 struct ConsumeSession<'a> {
     state: &'a AppState,
     state_hash: &'a str,
+    required_provider: Option<&'a str>,
 }
 
 async fn consume_session(args: ConsumeSession<'_>) -> Result<Option<ConsumedSession>, Response> {
-    let ConsumeSession { state, state_hash } = args;
+    let ConsumeSession {
+        state,
+        state_hash,
+        required_provider,
+    } = args;
     let row = sqlx::query_as::<
         _,
         (
             Uuid,
+            String,
             String,
             String,
             Option<String>,
@@ -343,15 +394,18 @@ async fn consume_session(args: ConsumeSession<'_>) -> Result<Option<ConsumedSess
         "UPDATE oauth_sessions \
          SET consumed_at = now(), status = 'consuming', updated_at = now() \
          WHERE state_hash = $1 AND consumed_at IS NULL AND expires_at > now() \
-         RETURNING id, user_id, domain, label, scopes, return_url, session_mode, \
+           AND ($2::text IS NULL OR provider = $2) \
+         RETURNING id, provider, user_id, domain, label, scopes, return_url, session_mode, \
                    completion_verifier_ciphertext",
     )
     .bind(state_hash)
+    .bind(required_provider)
     .fetch_optional(&state.pool)
     .await;
     match row {
         Ok(Some((
             id,
+            provider,
             user_id,
             domain,
             label,
@@ -361,6 +415,7 @@ async fn consume_session(args: ConsumeSession<'_>) -> Result<Option<ConsumedSess
             completion_verifier_ciphertext,
         ))) => Ok(Some(ConsumedSession {
             id,
+            provider,
             user_id,
             domain,
             label,
@@ -404,33 +459,34 @@ fn local_completion_verifier(args: LocalCompletion<'_>) -> Result<Option<String>
         .map_err(|_| "local_completion_decrypt_failed".to_string())
 }
 
-async fn complete_discord_callback(args: CompleteCallback<'_>) -> Result<(), String> {
+async fn complete_provider_callback(args: CompleteCallback<'_>) -> Result<(), String> {
     let CompleteCallback {
         state,
         session,
         code,
     } = args;
-    let token = discord::exchange_code(DiscordTokenRequest {
+    let token = provider::exchange_code(ExchangeCode {
+        provider: &session.provider,
         http: &state.http,
         config: &state.config,
         code,
+        requested_scopes: &session.scopes,
     })
     .await?;
-    let user = discord::fetch_user(DiscordUserRequest {
+    let user = provider::fetch_user(FetchUser {
+        provider: &session.provider,
         http: &state.http,
         config: &state.config,
         access_token: &token.access_token,
     })
     .await?;
 
-    let provider_scopes = token.scopes(&session.scopes);
     if session.session_mode == "local" {
         mark_local_session_success(MarkLocalSuccess {
             state,
             session,
             token: &token,
             user: &user,
-            scopes: &provider_scopes,
         })
         .await?;
         return Ok(());
@@ -440,14 +496,13 @@ async fn complete_discord_callback(args: CompleteCallback<'_>) -> Result<(), Str
         state,
         session,
         user: &user,
-        scopes: &provider_scopes,
+        scopes: &token.scopes,
     })
     .await?;
     upsert_token(UpsertToken {
         state,
         account_id,
         token: &token,
-        scopes: &provider_scopes,
     })
     .await?;
     let credential_id = upsert_credential(UpsertCredential {
@@ -460,7 +515,7 @@ async fn complete_discord_callback(args: CompleteCallback<'_>) -> Result<(), Str
     mark_session_success(MarkSuccess {
         state,
         session_id: session.id,
-        provider_subject: &user.id,
+        provider_subject: &user.subject,
         credential_id: Some(credential_id),
     })
     .await?;
@@ -470,9 +525,8 @@ async fn complete_discord_callback(args: CompleteCallback<'_>) -> Result<(), Str
 struct MarkLocalSuccess<'a> {
     state: &'a AppState,
     session: &'a ConsumedSession,
-    token: &'a discord::DiscordToken,
-    user: &'a discord::DiscordUser,
-    scopes: &'a [String],
+    token: &'a ProviderToken,
+    user: &'a ProviderUser,
 }
 
 async fn mark_local_session_success(args: MarkLocalSuccess<'_>) -> Result<(), String> {
@@ -481,13 +535,12 @@ async fn mark_local_session_success(args: MarkLocalSuccess<'_>) -> Result<(), St
         session,
         token,
         user,
-        scopes,
     } = args;
     let credential = local_credential_blob(LocalCredentialBlob {
         state,
+        provider: &session.provider,
         token,
         user,
-        scopes,
     })
     .await?;
     let value_json = serde_json::to_string(&credential)
@@ -500,7 +553,7 @@ async fn mark_local_session_success(args: MarkLocalSuccess<'_>) -> Result<(), St
          WHERE id = $1 AND session_mode = 'local'",
     )
     .bind(session.id)
-    .bind(&user.id)
+    .bind(&user.subject)
     .bind(ciphertext)
     .execute(&state.pool)
     .await
@@ -510,9 +563,9 @@ async fn mark_local_session_success(args: MarkLocalSuccess<'_>) -> Result<(), St
 
 struct LocalCredentialBlob<'a> {
     state: &'a AppState,
-    token: &'a discord::DiscordToken,
-    user: &'a discord::DiscordUser,
-    scopes: &'a [String],
+    provider: &'a str,
+    token: &'a ProviderToken,
+    user: &'a ProviderUser,
 }
 
 async fn local_credential_blob(
@@ -520,9 +573,9 @@ async fn local_credential_blob(
 ) -> Result<RedeemedCredentialResp, String> {
     let LocalCredentialBlob {
         state,
+        provider,
         token,
         user,
-        scopes,
     } = args;
     let broker_credential_secret = generate_state();
     let broker_credential_secret_hash = state.state_hasher.hash(&broker_credential_secret);
@@ -533,9 +586,10 @@ async fn local_credential_blob(
     let (broker_credential_id,) = sqlx::query_as::<_, (Uuid,)>(
         "INSERT INTO local_oauth_grants \
          (provider, provider_subject, secret_hash, refresh_token_hash) \
-         VALUES ('discord', $1, $2, $3) RETURNING id",
+         VALUES ($1, $2, $3, $4) RETURNING id",
     )
-    .bind(&user.id)
+    .bind(provider)
+    .bind(&user.subject)
     .bind(&broker_credential_secret_hash)
     .bind(&refresh_token_hash)
     .fetch_one(&state.pool)
@@ -555,7 +609,7 @@ async fn local_credential_blob(
     );
 
     let mut metadata = HashMap::new();
-    metadata.insert("OAUTH_PROVIDER".to_string(), "discord".to_string());
+    metadata.insert("OAUTH_PROVIDER".to_string(), provider.to_string());
     metadata.insert(
         "OAUTH_BROKER_URL".to_string(),
         state.config.base_url.to_string(),
@@ -564,15 +618,15 @@ async fn local_credential_blob(
         "OAUTH_BROKER_CREDENTIAL_ID".to_string(),
         broker_credential_id.to_string(),
     );
-    metadata.insert("OAUTH_SCOPES".to_string(), scopes.join(" "));
-    metadata.insert("OAUTH_PROVIDER_SUBJECT".to_string(), user.id.clone());
-    if let Some(display_name) = user.display_name() {
-        metadata.insert("OAUTH_DISPLAY_NAME".to_string(), display_name);
+    metadata.insert("OAUTH_SCOPES".to_string(), token.scopes.join(" "));
+    metadata.insert("OAUTH_PROVIDER_SUBJECT".to_string(), user.subject.clone());
+    if let Some(display_name) = user.display_name.as_deref() {
+        metadata.insert("OAUTH_DISPLAY_NAME".to_string(), display_name.to_string());
     }
     if let Some(token_type) = token.token_type.as_deref() {
         metadata.insert("OAUTH_TOKEN_TYPE".to_string(), token_type.to_string());
     }
-    if let Some(expires_at) = token.expires_at() {
+    if let Some(expires_at) = token.expires_at.as_ref() {
         metadata.insert("OAUTH_EXPIRES_AT".to_string(), expires_at.to_rfc3339());
     }
 
@@ -586,7 +640,7 @@ async fn local_credential_blob(
 struct UpsertAccount<'a> {
     state: &'a AppState,
     session: &'a ConsumedSession,
-    user: &'a discord::DiscordUser,
+    user: &'a ProviderUser,
     scopes: &'a [String],
 }
 
@@ -600,15 +654,16 @@ async fn upsert_account(args: UpsertAccount<'_>) -> Result<Uuid, String> {
     let row = sqlx::query_as::<_, (Uuid,)>(
         "INSERT INTO oauth_accounts \
          (user_id, provider, provider_subject, display_name, email, scopes, last_authorized_at) \
-         VALUES ($1, 'discord', $2, $3, $4, $5, now()) \
+         VALUES ($1, $2, $3, $4, $5, $6, now()) \
          ON CONFLICT (user_id, provider, provider_subject) DO UPDATE SET \
            display_name = EXCLUDED.display_name, email = EXCLUDED.email, scopes = EXCLUDED.scopes, \
            status = 'active', last_authorized_at = now(), updated_at = now() \
          RETURNING id",
     )
     .bind(&session.user_id)
-    .bind(&user.id)
-    .bind(user.display_name())
+    .bind(&session.provider)
+    .bind(&user.subject)
+    .bind(&user.display_name)
     .bind(&user.email)
     .bind(scopes)
     .fetch_one(&state.pool)
@@ -620,8 +675,7 @@ async fn upsert_account(args: UpsertAccount<'_>) -> Result<Uuid, String> {
 struct UpsertToken<'a> {
     state: &'a AppState,
     account_id: Uuid,
-    token: &'a discord::DiscordToken,
-    scopes: &'a [String],
+    token: &'a ProviderToken,
 }
 
 async fn upsert_token(args: UpsertToken<'_>) -> Result<(), String> {
@@ -629,7 +683,6 @@ async fn upsert_token(args: UpsertToken<'_>) -> Result<(), String> {
         state,
         account_id,
         token,
-        scopes,
     } = args;
     let access_ciphertext = state.cipher.encrypt(&token.access_token)?;
     let refresh_ciphertext = token
@@ -651,8 +704,8 @@ async fn upsert_token(args: UpsertToken<'_>) -> Result<(), String> {
     .bind(access_ciphertext)
     .bind(refresh_ciphertext)
     .bind(&token.token_type)
-    .bind(scopes)
-    .bind(token.expires_at())
+    .bind(&token.scopes)
+    .bind(token.expires_at.as_ref().cloned())
     .execute(&state.pool)
     .await
     .map_err(|e| format!("token_upsert_failed: {e}"))?;
@@ -663,7 +716,7 @@ struct UpsertCredential<'a> {
     state: &'a AppState,
     session: &'a ConsumedSession,
     account_id: Uuid,
-    token: &'a discord::DiscordToken,
+    token: &'a ProviderToken,
 }
 
 async fn upsert_credential(args: UpsertCredential<'_>) -> Result<Uuid, String> {
@@ -673,7 +726,11 @@ async fn upsert_credential(args: UpsertCredential<'_>) -> Result<Uuid, String> {
         account_id,
         token,
     } = args;
-    let values = credential_blob(CredentialBlob { account_id, token });
+    let values = credential_blob(CredentialBlob {
+        provider: &session.provider,
+        account_id,
+        token,
+    });
     let mut keys: Vec<String> = values.keys().cloned().collect();
     keys.sort();
     let value_json =
@@ -721,15 +778,20 @@ async fn upsert_credential(args: UpsertCredential<'_>) -> Result<Uuid, String> {
 }
 
 struct CredentialBlob<'a> {
+    provider: &'a str,
     account_id: Uuid,
-    token: &'a discord::DiscordToken,
+    token: &'a ProviderToken,
 }
 
 fn credential_blob(args: CredentialBlob<'_>) -> HashMap<String, String> {
-    let CredentialBlob { account_id, token } = args;
+    let CredentialBlob {
+        provider,
+        account_id,
+        token,
+    } = args;
     let mut values = HashMap::new();
     values.insert("OAUTH_ACCESS_TOKEN".to_string(), token.access_token.clone());
-    values.insert("OAUTH_PROVIDER".to_string(), "discord".to_string());
+    values.insert("OAUTH_PROVIDER".to_string(), provider.to_string());
     values.insert("OAUTH_ACCOUNT_ID".to_string(), account_id.to_string());
     values
 }
@@ -871,21 +933,22 @@ mod tests {
     #[test]
     fn backend_credential_blob_contains_only_injectable_access_token() {
         let account_id = Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8").unwrap();
-        let token = discord::DiscordToken {
+        let token = ProviderToken {
             access_token: "access-token".to_string(),
             refresh_token: Some("refresh-token".to_string()),
             token_type: Some("Bearer".to_string()),
-            scope: Some("identify".to_string()),
-            expires_in: Some(60),
+            scopes: vec!["email".to_string(), "profile".to_string()],
+            expires_at: Some(Utc::now()),
         };
 
         let blob = credential_blob(CredentialBlob {
+            provider: "google",
             account_id,
             token: &token,
         });
 
         assert_eq!(blob["OAUTH_ACCESS_TOKEN"], "access-token");
-        assert_eq!(blob["OAUTH_PROVIDER"], "discord");
+        assert_eq!(blob["OAUTH_PROVIDER"], "google");
         assert_eq!(blob["OAUTH_ACCOUNT_ID"], account_id.to_string());
         assert!(!blob.contains_key("OAUTH_REFRESH_TOKEN"));
     }

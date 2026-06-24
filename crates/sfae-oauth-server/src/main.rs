@@ -19,15 +19,17 @@ mod config;
 mod crypto;
 mod db;
 mod discord;
+mod google;
 mod handlers;
 mod local;
+mod provider;
 mod state;
 mod types;
 
 use crate::config::Config;
 use crate::crypto::{StateHasher, TokenCipher};
 use crate::handlers::{
-    callback_discord, create_session, done, get_session, health, list_providers,
+    callback_discord, callback_oauth, create_session, done, get_session, health, list_providers,
 };
 use crate::local::{
     create_local_session, get_local_session, redeem_local_session, refresh_local_credential,
@@ -73,6 +75,7 @@ async fn main() {
         .route("/health", get(health))
         .route("/v1/done", get(done))
         .route("/v1/oauth/providers", get(list_providers))
+        .route("/oauth/callback", get(callback_oauth))
         .route("/v1/callback/discord", get(callback_discord))
         .route("/v1/local/oauth/sessions", post(create_local_session))
         .route("/v1/local/oauth/sessions/{id}", get(get_local_session))

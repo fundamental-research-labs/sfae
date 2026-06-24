@@ -1,7 +1,9 @@
 //! `sfae delete`: forget a credential set by UUID or legacy flat credentials.
 
 use sfae_core::credential::{CredentialKey, CredentialType, credential_key};
-use sfae_core::store::{SecretStore, parse_structured_credential_set};
+use sfae_core::store::{
+    CredentialSetInfo, SecretStore, load_credential_set_metadata, parse_structured_credential_set,
+};
 
 use crate::store_factory::{create_store, uses_remote_store};
 
@@ -44,7 +46,7 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         if cred_type_str.is_some() || username.is_some() {
             anyhow::bail!("--type and --label/--user flags are not used with UUID deletion");
         }
-        if purge && !uses_remote_store() {
+        if should_attempt_hosted_oauth_revoke(uses_remote_store(), purge) {
             revoke_hosted_oauth_if_needed(&*store, target);
         }
         if purge {
@@ -104,32 +106,26 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+// xtask: allow-multi-param - helper makes purge-independent revoke behavior explicit
+fn should_attempt_hosted_oauth_revoke(remote_store: bool, _purge: bool) -> bool {
+    !remote_store
+}
+
 // xtask: allow-multi-param - deletion needs the selected store and credential id
 fn revoke_hosted_oauth_if_needed(store: &dyn SecretStore, id: &str) {
+    let Ok(metadata) = load_credential_set_metadata(store, id) else {
+        return;
+    };
+    if !credential_set_metadata_is_hosted_oauth(&metadata) {
+        return;
+    }
     let Ok(blob) = store.get(id) else {
         return;
     };
     let Ok(data) = parse_structured_credential_set(&blob) else {
         return;
     };
-    let Some(provider) = data.metadata.get("OAUTH_PROVIDER") else {
-        return;
-    };
-    if provider != "discord" {
-        return;
-    }
-
-    let access_token = data.values.get("OAUTH_ACCESS_TOKEN").map(String::as_str);
-    let refresh_token = data.internal.get("OAUTH_REFRESH_TOKEN").map(String::as_str);
-    if access_token.is_none() && refresh_token.is_none() {
-        return;
-    }
-    let Some(broker_credential_id) = data.metadata.get("OAUTH_BROKER_CREDENTIAL_ID") else {
-        eprintln!("OAuth credential has no broker credential id; deleting locally only.");
-        return;
-    };
-    let Some(broker_credential_secret) = data.internal.get("OAUTH_BROKER_CREDENTIAL_SECRET") else {
-        eprintln!("OAuth credential has no broker credential secret; deleting locally only.");
+    let Some(material) = hosted_oauth_revoke_material(&data) else {
         return;
     };
 
@@ -142,14 +138,120 @@ fn revoke_hosted_oauth_if_needed(store: &dyn SecretStore, id: &str) {
     };
     let manager = sfae_core::oauth::OAuthCredentialManager::new(&broker);
     if let Err(e) = manager.revoke_credential(sfae_core::oauth::HostedOAuthRevoke {
+        provider: material.provider,
+        broker_credential_id: material.broker_credential_id,
+        broker_credential_secret: material.broker_credential_secret,
+        access_token: material.access_token,
+        refresh_token: material.refresh_token,
+    }) {
+        eprintln!("OAuth revoke failed; deleting local credential anyway: {e}");
+    } else {
+        eprintln!("Revoked hosted OAuth credential.");
+    }
+}
+
+fn credential_set_metadata_is_hosted_oauth(info: &CredentialSetInfo) -> bool {
+    info.metadata.contains_key("OAUTH_PROVIDER")
+}
+
+struct HostedOAuthRevokeMaterial<'a> {
+    provider: &'a str,
+    broker_credential_id: &'a str,
+    broker_credential_secret: &'a str,
+    access_token: Option<&'a str>,
+    refresh_token: Option<&'a str>,
+}
+
+fn hosted_oauth_revoke_material(
+    data: &sfae_core::store::CredentialSetData,
+) -> Option<HostedOAuthRevokeMaterial<'_>> {
+    let provider = data.metadata.get("OAUTH_PROVIDER")?;
+    let access_token = data.values.get("OAUTH_ACCESS_TOKEN").map(String::as_str);
+    let refresh_token = data.internal.get("OAUTH_REFRESH_TOKEN").map(String::as_str);
+    if access_token.is_none() && refresh_token.is_none() {
+        return None;
+    }
+    let Some(broker_credential_id) = data.metadata.get("OAUTH_BROKER_CREDENTIAL_ID") else {
+        eprintln!("OAuth credential has no broker credential id; deleting locally only.");
+        return None;
+    };
+    let Some(broker_credential_secret) = data.internal.get("OAUTH_BROKER_CREDENTIAL_SECRET") else {
+        eprintln!("OAuth credential has no broker credential secret; deleting locally only.");
+        return None;
+    };
+    Some(HostedOAuthRevokeMaterial {
         provider,
         broker_credential_id,
         broker_credential_secret,
         access_token,
         refresh_token,
-    }) {
-        eprintln!("OAuth revoke failed; deleting local credential anyway: {e}");
-    } else {
-        eprintln!("Revoked hosted OAuth credential.");
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    #[test]
+    fn hosted_oauth_revoke_material_accepts_google_provider() {
+        let data = sfae_core::store::CredentialSetData {
+            values: HashMap::from([("OAUTH_ACCESS_TOKEN".to_string(), "access-token".to_string())]),
+            internal: HashMap::from([
+                (
+                    "OAUTH_REFRESH_TOKEN".to_string(),
+                    "refresh-token".to_string(),
+                ),
+                (
+                    "OAUTH_BROKER_CREDENTIAL_SECRET".to_string(),
+                    "broker-secret".to_string(),
+                ),
+            ]),
+            metadata: HashMap::from([
+                ("OAUTH_PROVIDER".to_string(), "google".to_string()),
+                (
+                    "OAUTH_BROKER_CREDENTIAL_ID".to_string(),
+                    "broker-id".to_string(),
+                ),
+            ]),
+        };
+
+        let material = hosted_oauth_revoke_material(&data).unwrap();
+
+        assert_eq!(material.provider, "google");
+        assert_eq!(material.access_token, Some("access-token"));
+        assert_eq!(material.refresh_token, Some("refresh-token"));
+        assert_eq!(material.broker_credential_id, "broker-id");
+        assert_eq!(material.broker_credential_secret, "broker-secret");
+    }
+
+    #[test]
+    fn metadata_gate_identifies_oauth_without_blob_access() {
+        let oauth = CredentialSetInfo {
+            id: "oauth-id".to_string(),
+            domain: "googleapis.com".to_string(),
+            label: None,
+            keys: vec!["OAUTH_ACCESS_TOKEN".to_string()],
+            metadata: HashMap::from([("OAUTH_PROVIDER".to_string(), "google".to_string())]),
+        };
+        let non_oauth = CredentialSetInfo {
+            id: "api-key-id".to_string(),
+            domain: "api.example.com".to_string(),
+            label: None,
+            keys: vec!["API_KEY".to_string()],
+            metadata: HashMap::new(),
+        };
+
+        assert!(credential_set_metadata_is_hosted_oauth(&oauth));
+        assert!(!credential_set_metadata_is_hosted_oauth(&non_oauth));
+    }
+
+    #[test]
+    fn hosted_oauth_revoke_is_attempted_for_local_uuid_delete_with_or_without_purge() {
+        assert!(should_attempt_hosted_oauth_revoke(false, false));
+        assert!(should_attempt_hosted_oauth_revoke(false, true));
+        assert!(!should_attempt_hosted_oauth_revoke(true, false));
+        assert!(!should_attempt_hosted_oauth_revoke(true, true));
     }
 }

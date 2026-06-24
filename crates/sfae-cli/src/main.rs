@@ -212,6 +212,7 @@ SPEC FORMAT:
 OAUTH:
   Use OAuth groups when the target service's official docs require OAuth authorization.
   Set `provider` to the OAuth provider name from the service docs. If omitted, SFAE can infer it when the prompt domain matches provider metadata.
+  Hosted OAuth currently supports Discord (`discord.com`) and Google APIs (`googleapis.com`) when reported by the broker.
   SFAE forwards requested OAuth scopes to the provider. Ask for any scope required by the user's task, but choose the narrowest set that can satisfy the request.
   SFAE or the provider may reject unknown, unavailable, or app-restricted scopes.
   --terminal supports field prompts only; OAuth requires browser mode.
@@ -278,12 +279,23 @@ EXAMPLES:
         "label": "OAuth",
         "oauth": {"provider": "provider-name", "scopes": ["scope.read"]}
       }]
+    }'
+
+  Google OAuth for Google APIs:
+    sfae prompt googleapis.com --spec '{
+      "groups": [{
+        "label": "OAuth",
+        "oauth": {
+          "provider": "google",
+          "scopes": ["https://www.googleapis.com/auth/drive.metadata.readonly"]
+        }
+      }]
     }'"#;
 
 #[cfg(feature = "native-keychain")]
 const DELETE_AFTER_HELP: &str = r#"PREFERRED USE:
-  Default deletion is prompt-free: it forgets credentials from SFAE's public index so agents stop selecting them.
-  It does not read or delete keychain secret material and does not revoke hosted OAuth grants.
+  Default UUID deletion attempts broker-mediated hosted OAuth revoke when local OAuth material is available, then forgets credentials from SFAE's public index so agents stop selecting them.
+  It does not delete keychain secret material.
   Use --purge only for manual cleanup when you are prepared for keychain/password prompts.
   Delete by UUID from `sfae credentials`. Domain deletion is for legacy flat credentials.
   `--type` accepts ACCESS_TOKEN, REFRESH_TOKEN, API_KEY, PASSWORD, USERNAME, or CLIENT_SECRET, and cannot be used with UUID deletion.
@@ -412,7 +424,7 @@ enum Command {
     Delete {
         /// Credential set UUID or domain (e.g. github.com)
         target: String,
-        /// Also delete keychain secret material and revoke hosted OAuth when possible; may prompt for password
+        /// Also delete keychain secret material; hosted OAuth revoke is attempted for UUID deletes either way
         #[arg(long)]
         purge: bool,
         /// Delete only this credential type (legacy, not used with UUID)
