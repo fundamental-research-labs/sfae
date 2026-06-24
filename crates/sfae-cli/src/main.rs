@@ -276,19 +276,25 @@ EXAMPLES:
 
 #[cfg(feature = "native-keychain")]
 const DELETE_AFTER_HELP: &str = r#"PREFERRED USE:
+  Default deletion is prompt-free: it forgets credentials from SFAE's public index so agents stop selecting them.
+  It does not read or delete keychain secret material and does not revoke hosted OAuth grants.
+  Use --purge only for manual cleanup when you are prepared for keychain/password prompts.
   Delete by UUID from `sfae credentials`. Domain deletion is for legacy flat credentials.
   `--type` accepts ACCESS_TOKEN, REFRESH_TOKEN, API_KEY, PASSWORD, USERNAME, or CLIENT_SECRET, and cannot be used with UUID deletion.
   `--label` filters legacy flat credentials by label/username. `--user` is accepted as a legacy alias.
 
 EXAMPLES:
-  Delete one credential set:
+  Forget one credential set without prompting:
     sfae delete 550e8400-e29b-41d4-a716-446655440000
 
-  Delete all legacy flat credentials for a domain:
+  Forget all legacy flat credentials for a domain:
     sfae delete github.com
 
-  Delete one legacy flat credential type:
-    sfae delete github.com --type ACCESS_TOKEN"#;
+  Forget one legacy flat credential type:
+    sfae delete github.com --type ACCESS_TOKEN
+
+  Purge keychain material too (may prompt for password):
+    sfae delete 550e8400-e29b-41d4-a716-446655440000 --purge"#;
 
 #[cfg(feature = "native-keychain")]
 const FLUSH_AFTER_HELP: &str = r#"WARNING:
@@ -394,12 +400,15 @@ enum Command {
         #[arg(long)]
         terminal: bool,
     },
-    /// Delete a credential set by UUID or legacy credentials by domain
+    /// Forget a credential set by UUID or legacy credentials by domain
     #[cfg(feature = "native-keychain")]
     #[command(after_help = DELETE_AFTER_HELP)]
     Delete {
         /// Credential set UUID or domain (e.g. github.com)
         target: String,
+        /// Also delete keychain secret material and revoke hosted OAuth when possible; may prompt for password
+        #[arg(long)]
+        purge: bool,
         /// Delete only this credential type (legacy, not used with UUID)
         #[arg(long = "type", value_name = "TYPE")]
         cred_type: Option<String>,
@@ -507,6 +516,7 @@ fn main() -> anyhow::Result<()> {
         #[cfg(feature = "native-keychain")]
         Command::Delete {
             target,
+            purge,
             cred_type,
             label,
         } => {
@@ -514,6 +524,7 @@ fn main() -> anyhow::Result<()> {
                 target: &target,
                 cred_type_str: cred_type.as_deref(),
                 username: label.as_deref(),
+                purge,
             })?;
         }
         #[cfg(feature = "native-keychain")]

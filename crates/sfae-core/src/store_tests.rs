@@ -456,6 +456,25 @@ fn delete_credential_set_removes_blob_and_metadata() {
 }
 
 #[test]
+fn forget_credential_set_removes_metadata_but_keeps_blob() {
+    let mut store = InMemoryStore::new();
+    let mut values = HashMap::new();
+    values.insert("KEY".to_string(), "val".to_string());
+    let id = store
+        .store_credential_set(CredentialSetInput {
+            domain: "example.com",
+            label: None,
+            values: &values,
+        })
+        .unwrap();
+
+    store.forget_credential_set(&id).unwrap();
+
+    assert!(store.list_credential_sets(None).unwrap().is_empty());
+    assert!(store.get(&id).is_ok());
+}
+
+#[test]
 fn delete_credential_set_not_found() {
     let mut store = InMemoryStore::new();
     assert!(matches!(

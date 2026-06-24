@@ -71,6 +71,11 @@ pub trait SecretStore {
     /// Delete a secret by key.
     fn delete(&mut self, key: &str) -> Result<(), SfaeError>;
 
+    /// Forget a key from SFAE's public index without requiring secret access when possible.
+    fn forget(&mut self, key: &str) -> Result<(), SfaeError> {
+        self.delete(key)
+    }
+
     /// List all stored keys.
     fn list_keys(&self) -> Result<Vec<String>, SfaeError>;
 
@@ -139,6 +144,11 @@ pub trait SecretStore {
         Err(SfaeError::Other(
             "credential set operations not supported by this store".into(),
         ))
+    }
+
+    /// Forget a credential set from SFAE's public index without requiring secret access when possible.
+    fn forget_credential_set(&mut self, id: &str) -> Result<(), SfaeError> {
+        self.delete_credential_set(id)
     }
 }
 
@@ -422,6 +432,25 @@ fn write_index(keys: &[String]) -> Result<(), SfaeError> {
     write_credential_index(&index)
 }
 
+fn forget_index_key(key: &str) -> Result<(), SfaeError> {
+    let mut keys = read_index()?;
+    if !keys.contains(&key.to_string()) {
+        return Err(SfaeError::CredentialNotFound(key.to_string()));
+    }
+    keys.retain(|k| k != key);
+    write_index(&keys)
+}
+
+fn forget_index_credential_set(id: &str) -> Result<(), SfaeError> {
+    let mut index = read_credential_index()?;
+    if !index.sets.iter().any(|s| s.id == id) {
+        return Err(SfaeError::CredentialNotFound(id.to_string()));
+    }
+    index.sets.retain(|s| s.id != id);
+    index.version = 2;
+    write_credential_index(&index)
+}
+
 // --- macOS: use security-framework (modern SecItem APIs) ---
 
 #[cfg(all(feature = "native-keychain", target_os = "macos"))]
@@ -499,6 +528,10 @@ mod keyring_store {
                 Err(e) if is_not_found(&e) => Err(SfaeError::CredentialNotFound(key.to_string())),
                 Err(e) => Err(SfaeError::StoreError(e.to_string())),
             }
+        }
+
+        fn forget(&mut self, key: &str) -> Result<(), SfaeError> {
+            forget_index_key(key)
         }
 
         fn list_keys(&self) -> Result<Vec<String>, SfaeError> {
@@ -625,6 +658,10 @@ mod keyring_store {
 
             Ok(())
         }
+
+        fn forget_credential_set(&mut self, id: &str) -> Result<(), SfaeError> {
+            forget_index_credential_set(id)
+        }
     }
 }
 
@@ -696,6 +733,10 @@ mod keyring_store {
                 other => SfaeError::StoreError(other.to_string()),
             })?;
             Ok(())
+        }
+
+        fn forget(&mut self, key: &str) -> Result<(), SfaeError> {
+            forget_index_key(key)
         }
 
         fn list_keys(&self) -> Result<Vec<String>, SfaeError> {
@@ -821,146 +862,19 @@ mod keyring_store {
 
             Ok(())
         }
+
+        fn forget_credential_set(&mut self, id: &str) -> Result<(), SfaeError> {
+            forget_index_credential_set(id)
+        }
     }
 }
 
 #[cfg(feature = "native-keychain")]
 pub use keyring_store::KeyringStore;
 
-/// In-memory secret store for testing.
-#[derive(Default)]
-pub struct InMemoryStore {
-    entries: HashMap<String, String>,
-    credential_sets: Vec<CredentialSetInfo>,
-}
-
-impl InMemoryStore {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl SecretStore for InMemoryStore {
-    fn set(&mut self, entry: StoreEntry<'_>) -> Result<(), SfaeError> {
-        self.entries
-            .insert(entry.key.to_string(), entry.value.to_string());
-        Ok(())
-    }
-
-    fn get(&self, key: &str) -> Result<String, SfaeError> {
-        self.entries
-            .get(key)
-            .cloned()
-            .ok_or_else(|| SfaeError::CredentialNotFound(key.to_string()))
-    }
-
-    fn delete(&mut self, key: &str) -> Result<(), SfaeError> {
-        self.entries
-            .remove(key)
-            .ok_or_else(|| SfaeError::CredentialNotFound(key.to_string()))?;
-        Ok(())
-    }
-
-    fn list_keys(&self) -> Result<Vec<String>, SfaeError> {
-        let mut keys: Vec<String> = self.entries.keys().cloned().collect();
-        keys.sort();
-        Ok(keys)
-    }
-
-    fn supports_credential_sets(&self) -> bool {
-        true
-    }
-
-    fn store_credential_set(&mut self, input: CredentialSetInput<'_>) -> Result<String, SfaeError> {
-        let CredentialSetInput {
-            domain,
-            label,
-            values,
-        } = input;
-        let id = uuid::Uuid::new_v4().to_string();
-        let mut keys: Vec<String> = values.keys().cloned().collect();
-        keys.sort();
-
-        let json = serde_json::to_string(values)?;
-        self.entries.insert(id.clone(), json);
-
-        self.credential_sets.push(CredentialSetInfo {
-            id: id.clone(),
-            domain: domain.to_string(),
-            label: label.map(String::from),
-            keys,
-            metadata: HashMap::new(),
-        });
-
-        Ok(id)
-    }
-
-    fn store_structured_credential_set(
-        &mut self,
-        input: StructuredCredentialSetInput<'_>,
-    ) -> Result<String, SfaeError> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let mut keys: Vec<String> = input.values.keys().cloned().collect();
-        keys.sort();
-
-        let json = serialize_structured_credential_set(&input)?;
-        self.entries.insert(id.clone(), json);
-
-        self.credential_sets.push(CredentialSetInfo {
-            id: id.clone(),
-            domain: input.domain.to_string(),
-            label: input.label.map(String::from),
-            keys,
-            metadata: input.metadata.cloned().unwrap_or_default(),
-        });
-
-        Ok(id)
-    }
-
-    fn update_structured_credential_set(
-        &mut self,
-        input: StructuredCredentialSetUpdate<'_>,
-    ) -> Result<(), SfaeError> {
-        let blob = self.get(input.id)?;
-        let mut data = parse_structured_credential_set(&blob)?;
-        merge_structured_credential_data(&mut data, &input);
-        let json = serialize_credential_set_data(&data)?;
-        let Some(set_index) = self.credential_sets.iter().position(|s| s.id == input.id) else {
-            return Err(SfaeError::CredentialNotFound(input.id.to_string()));
-        };
-        self.entries.insert(input.id.to_string(), json);
-
-        self.credential_sets[set_index].keys = data.values.keys().cloned().collect();
-        self.credential_sets[set_index].keys.sort();
-        self.credential_sets[set_index].metadata = data.metadata;
-        Ok(())
-    }
-
-    fn list_credential_sets(
-        &self,
-        domain: Option<&str>,
-    ) -> Result<Vec<CredentialSetInfo>, SfaeError> {
-        let sets = match domain {
-            Some(d) => self
-                .credential_sets
-                .iter()
-                .filter(|s| s.domain == d)
-                .cloned()
-                .collect(),
-            None => self.credential_sets.clone(),
-        };
-        Ok(sets)
-    }
-
-    fn delete_credential_set(&mut self, id: &str) -> Result<(), SfaeError> {
-        if !self.credential_sets.iter().any(|s| s.id == id) {
-            return Err(SfaeError::CredentialNotFound(id.to_string()));
-        }
-        self.credential_sets.retain(|s| s.id != id);
-        self.entries.remove(id);
-        Ok(())
-    }
-}
+#[path = "memory_store.rs"]
+mod memory_store;
+pub use memory_store::InMemoryStore;
 
 #[cfg(test)]
 #[path = "store_tests.rs"]
