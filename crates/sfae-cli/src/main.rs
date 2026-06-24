@@ -180,6 +180,34 @@ EXAMPLES:
   Request an alphanumeric code:
     sfae code example.com --format alnum --min-length 6 --max-length 10"#;
 
+const INSTALL_SKILL_AFTER_HELP: &str = r#"AGENT-FIRST INSTALL:
+  SFAE is meant to be used by agents, so the primary install path is the skill. The skill includes install.sh, which can install the sfae CLI later if an agent needs it and the command is missing.
+
+TARGETS:
+  Without target flags, installs the default project-local skill folders for Codex, Claude, and Grok.
+  --codex installs .agents/skills/sfae, --claude installs .claude/skills/sfae, and --grok installs .grok/skills/sfae.
+  --target accepts either one of those target names or a custom directory.
+
+AUTO-REFRESH:
+  Normal sfae commands silently refresh existing project-local sfae skill folders from the embedded copy. They do not create missing skill folders. Set SFAE_SKILL_AUTO_UPDATE=off to disable that refresh.
+
+EXAMPLES:
+  Install the Codex skill in this project:
+    sfae install-skill --codex
+
+  Install every default target and immediately install the CLI if needed:
+    sfae install-skill --all --install-cli"#;
+
+const UPDATE_AFTER_HELP: &str = r#"INSTALL METHOD:
+  Updates delegate to the installation method that owns the current sfae binary.
+  Homebrew installs run `brew update` then `brew upgrade sfae`.
+  npm installs run `npm install -g @fundamental-research-labs/sfae@latest`.
+  Direct installs download and run the direct installer for the current binary directory.
+
+OVERRIDES:
+  Set SFAE_INSTALL_METHOD or SFAE_UPDATE_METHOD to brew, npm, or direct when detection is ambiguous.
+  SFAE_BREW_FORMULA, SFAE_NPM_PACKAGE, and SFAE_REPO override the default package sources."#;
+
 #[cfg(feature = "native-keychain")]
 const PROMPT_AFTER_HELP_BASE: &str = r#"AGENT RULES:
   Build this JSON from the target service's official authentication docs.
@@ -390,6 +418,34 @@ enum Command {
         #[arg(long, default_value_t = sfae_core::code::DEFAULT_TIMEOUT_SECS)]
         timeout: u64,
     },
+    /// Install the bundled agent skill into project-local agent skill folders
+    #[command(name = "install-skill", after_help = INSTALL_SKILL_AFTER_HELP)]
+    InstallSkill {
+        /// Install .agents/skills/sfae
+        #[arg(long)]
+        codex: bool,
+        /// Install .claude/skills/sfae
+        #[arg(long)]
+        claude: bool,
+        /// Install .grok/skills/sfae
+        #[arg(long)]
+        grok: bool,
+        /// Install every default target
+        #[arg(long)]
+        all: bool,
+        /// Install one named target or custom skill directory
+        #[arg(long = "target", value_name = "TARGET")]
+        targets: Vec<String>,
+        /// Use a skill folder name other than sfae for named targets
+        #[arg(long, default_value = "sfae")]
+        name: String,
+        /// Run the bundled skill installer after writing the skill
+        #[arg(long = "install-cli")]
+        install_cli: bool,
+    },
+    /// Update the sfae CLI through its owning package manager or installer
+    #[command(after_help = UPDATE_AFTER_HELP)]
+    Update,
     /// Collect or authorize missing credentials via browser form
     #[cfg(feature = "native-keychain")]
     #[command(after_help = PROMPT_AFTER_HELP_BASE)]
@@ -434,6 +490,7 @@ enum Command {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    commands::install_skill::auto_refresh_existing();
     let mut cmd = Cli::command();
     if let Some(name) = bin_name() {
         cmd = cmd.name(name);
@@ -501,6 +558,28 @@ fn main() -> anyhow::Result<()> {
                 max_length,
                 timeout_secs: timeout,
             })?;
+        }
+        Command::InstallSkill {
+            codex,
+            claude,
+            grok,
+            all,
+            targets,
+            name,
+            install_cli,
+        } => {
+            commands::install_skill::run(commands::install_skill::RunArgs {
+                codex,
+                claude,
+                grok,
+                all,
+                custom_targets: targets,
+                name,
+                install_cli,
+            })?;
+        }
+        Command::Update => {
+            commands::update::run()?;
         }
         #[cfg(feature = "native-keychain")]
         Command::Prompt {

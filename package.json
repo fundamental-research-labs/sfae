@@ -1,0 +1,51 @@
+{
+  "name": "@fundamental-research-labs/sfae",
+  "version": "0.0.0-development",
+  "description": "Credential gateway CLI for agents making authenticated API requests",
+  "license": "MIT",
+  "homepage": "https://sfae.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fundamental-research-labs/sfae.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fundamental-research-labs/sfae/issues"
+  },
+  "keywords": [
+    "agent",
+    "credentials",
+    "cli",
+    "api",
+    "oauth"
+  ],
+  "bin": {
+    "sfae": "npm/bin/sfae.js"
+  },
+  "scripts": {
+    "postinstall": "node npm/scripts/install.js",
+    "test:npm": "node --check npm/bin/sfae.js && node --check npm/scripts/install.js"
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "install-skill.sh",
+    "npm/bin/sfae.js",
+    "npm/scripts/install.js",
+    "skill/SKILL.md",
+    "skill/install.sh"
+  ],
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

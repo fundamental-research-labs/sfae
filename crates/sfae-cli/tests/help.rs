@@ -123,6 +123,25 @@ fn code_help_explains_transient_output_and_validation() {
 }
 
 #[test]
+fn distribution_help_explains_skill_install_and_update() {
+    let install_stdout = help_output(&["install-skill", "--help"]);
+    assert!(install_stdout.contains("AGENT-FIRST INSTALL:"));
+    assert!(install_stdout.contains("primary install path is the skill"));
+    assert!(install_stdout.contains("includes install.sh"));
+    assert!(install_stdout.contains("--codex"));
+    assert!(install_stdout.contains(".agents/skills/sfae"));
+    assert!(install_stdout.contains("--install-cli"));
+    assert!(install_stdout.contains("SFAE_SKILL_AUTO_UPDATE=off"));
+
+    let update_stdout = help_output(&["update", "--help"]);
+    assert!(update_stdout.contains("INSTALL METHOD:"));
+    assert!(update_stdout.contains("brew update"));
+    assert!(update_stdout.contains("npm install -g @fundamental-research-labs/sfae@latest"));
+    assert!(update_stdout.contains("Direct installs"));
+    assert!(update_stdout.contains("SFAE_UPDATE_METHOD"));
+}
+
+#[test]
 fn prompt_help_explains_spec_and_secret_handling() {
     for args in [vec!["prompt", "--help"], vec!["prompt", "-h"]] {
         let stdout = help_output(&args);

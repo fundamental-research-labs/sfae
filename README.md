@@ -31,6 +31,79 @@ SFAE is private/pre-release. The current path to an open-source-ready release is
 
 ## Installation
 
+SFAE is for agent workflows, so the main install path is the skill. Install the
+skill in the current project first:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex
+```
+
+Use `--claude`, `--grok`, or `--all` for other agent targets. To install every
+default target:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --all
+```
+
+The skill includes a bundled `install.sh` support script. If an agent tries to
+use the skill before `sfae` is installed, that script can install the CLI by
+trying Homebrew first, then npm, then the direct release installer. To install
+the CLI immediately while installing the skill:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex --install-cli
+```
+
+When `sfae` is already available, refresh or install the bundled skill from the
+binary:
+
+```bash
+sfae install-skill --codex
+```
+
+Normal `sfae` commands silently refresh existing project-local SFAE skill folders
+from the embedded copy, without creating missing skill folders. Set
+`SFAE_SKILL_AUTO_UPDATE=off` to disable that refresh.
+
+To install only the CLI, prefer Homebrew:
+
+```bash
+brew install fundamental-research-labs/tap/sfae
+```
+
+After the npm scope is claimed and published, npm will be:
+
+```bash
+npm install -g @fundamental-research-labs/sfae
+```
+
+The npm package is only a thin wrapper that downloads and runs the native Rust
+binary. The package name is a placeholder until the npm account/scope exists.
+
+Or use the direct installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install.sh | sh
+```
+
+By default this installs to `/usr/local/bin/sfae`. To choose another location:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install.sh | env SFAE_INSTALL_DIR="$HOME/.local/bin" sh
+```
+
+Update through the owning install method:
+
+```bash
+sfae update
+```
+
+Homebrew installs run `brew update` and `brew upgrade sfae`; npm installs run
+`npm install -g @fundamental-research-labs/sfae@latest`; direct installs rerun
+the direct installer for the current binary directory.
+
+To build from source:
+
 ```
 cargo build --bin sfae --release
 ```
@@ -90,6 +163,8 @@ To upgrade OAuth scopes, re-run `sfae prompt` with the same domain/label and the
 - `sfae prompt <domain> --spec '<JSON>' [--label <label>]` opens the human-paced browser flow and stores a credential set.
 - `sfae code <domain> [--label <label>] [--message <text>] [--help-url <url>] [--format digits|alnum|text] [--length <n> | --min-length <n> --max-length <n>] [--timeout <seconds>]` requests a transient 2FA/MFA code and prints it to stdout without storing it.
 - `sfae request <METHOD> <URL> [-H "Header: {KEY}"] [-d BODY] [--domain <domain>] [--cred <uuid>] [--label <label>] [--dry-run] [--verbose]` sends HTTP requests with `{KEY}` placeholders resolved from the selected credential set.
+- `sfae install-skill [--codex] [--claude] [--grok] [--all] [--target <path>] [--install-cli]` writes the bundled skill and support installer into project-local agent skill folders.
+- `sfae update` updates the CLI through Homebrew, npm, or the direct installer based on how the current binary was installed.
 - `sfae delete <uuid>` forgets one credential set from SFAE's index; add `--purge` only when keychain/password prompts are acceptable. Domain deletion and `--type` are legacy flat-key paths.
 - `sfae flush --dry-run` previews a local full wipe; `sfae flush` deletes every locally indexed credential.
 
@@ -109,6 +184,28 @@ crates/
 ## License
 
 MIT
+
+## Release
+
+`release.sh` handles local release orchestration:
+
+```bash
+./release.sh 0.1.0
+```
+
+It verifies the workspace version, builds release archives, tags and pushes the
+tag, uploads GitHub release assets, updates the Homebrew tap, and publishes the
+npm package. Use step-only flags when releasing in stages:
+
+```bash
+./release.sh 0.1.0 --build-only --target x86_64-unknown-linux-gnu
+./release.sh 0.1.0 --publish-only
+./release.sh 0.1.0 --tap-only
+./release.sh 0.1.0 --npm-only
+```
+
+The default Homebrew tap and npm package are placeholders:
+`fundamental-research-labs/homebrew-tap` and `@fundamental-research-labs/sfae`.
 
 ---
 
