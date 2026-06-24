@@ -24,7 +24,8 @@ References:
   - `GOOGLE_CLIENT_SECRET`
   - test-only URL overrides for authorize, token, revoke, and userinfo endpoints.
 - Sync the new Google secrets in `.github/workflows/deploy-oauth.yml` so Fly receives them at runtime.
-- Register Google in `GET /v1/oauth/providers` with provider name `google` and domains `googleapis.com` and `google.com`.
+- Register Google in `GET /v1/oauth/providers` with provider name `google` and domain `googleapis.com`.
+- Treat `googleapis.com` as the Google API credential domain. Current parent-domain lookup then covers common Google API hosts such as `gmail.googleapis.com`, `docs.googleapis.com`, `sheets.googleapis.com`, `people.googleapis.com`, and `www.googleapis.com`. Do not register or recommend `google.com` for API credentials unless a future feature explicitly targets non-API Google web domains.
 - Add a Google provider module using:
   - authorize: `https://accounts.google.com/o/oauth2/v2/auth`
   - token: `https://oauth2.googleapis.com/token`
@@ -39,7 +40,8 @@ References:
   - broker state
   - `access_type=offline`
   - `prompt=consent`
-- Add `/v1/callback/google`, or a generic `/v1/callback/{provider}` route that keeps `/v1/callback/discord` compatible and validates the route provider matches the stored session provider.
+  - `include_granted_scopes=true`
+- Add provider-neutral callback route `/oauth/callback` for Google and all future OAuth providers. Keep `/v1/callback/discord` compatible for existing Discord app registrations until they are migrated. The generic callback handler must resolve the provider from the stored session matched by `state`; it must not trust any provider value from the callback request.
 - Refactor broker callback completion, credential materialization, local grants, refresh, and revoke to dispatch by provider instead of hard-coding Discord.
 - Remove Discord-only checks in local CLI refresh/delete paths so Google credentials can refresh after a 401 and revoke on delete through the broker.
 - Generalize backend public OAuth error mapping from `discord_*` to provider-neutral token and identity failure classes.
@@ -68,14 +70,30 @@ The broker provider registry will include:
 ```json
 {
   "provider": "google",
-  "domains": ["googleapis.com", "google.com"]
+  "domains": ["googleapis.com"]
 }
 ```
+
+Use `googleapis.com` as the prompt/request credential domain when a credential should work across Google APIs:
+
+```bash
+sfae prompt googleapis.com --spec '{
+  "groups": [{
+    "label": "OAuth",
+    "oauth": {
+      "provider": "google",
+      "scopes": ["https://www.googleapis.com/auth/drive.metadata.readonly"]
+    }
+  }]
+}'
+```
+
+This lets the existing parent-domain fallback resolve the same credential for API hosts like `gmail.googleapis.com`, `docs.googleapis.com`, `sheets.googleapis.com`, and `www.googleapis.com`. Users can still store a credential under an exact API host, such as `gmail.googleapis.com`, if they intentionally want a narrower credential set.
 
 Google Cloud must be configured with this authorized redirect URI:
 
 ```text
-https://oauth.sfae.io/v1/callback/google
+https://oauth.sfae.io/oauth/callback
 ```
 
 New deployment secrets required by the OAuth service:
@@ -94,7 +112,7 @@ Introduce a small provider abstraction inside `sfae-oauth-server` before adding 
 The abstraction should provide provider-specific operations and normalized data:
 
 - provider name and supported domains
-- redirect URI path or callback provider id
+- whether the provider uses the generic callback route or a temporary backwards-compatible legacy callback route
 - authorization URL builder
 - authorization-code token exchange
 - refresh-token exchange
@@ -119,12 +137,16 @@ Use provider-neutral structs for the rest of the broker flow:
 
 Google-specific details:
 
+- Use `https://oauth.sfae.io/oauth/callback` as the redirect URI.
 - Use Google `sub` from UserInfo as `OAUTH_PROVIDER_SUBJECT`.
 - Prefer Google `name` for `OAUTH_DISPLAY_NAME`, then fall back to `email`.
+- Exchange authorization codes by posting `application/x-www-form-urlencoded` body parameters to `https://oauth2.googleapis.com/token`: `code`, `client_id`, `client_secret`, `redirect_uri`, and `grant_type=authorization_code`.
+- Refresh access tokens by posting `application/x-www-form-urlencoded` body parameters to `https://oauth2.googleapis.com/token`: `client_id`, `client_secret`, `refresh_token`, and `grant_type=refresh_token`.
+- Fetch UserInfo from `https://openidconnect.googleapis.com/v1/userinfo` with the access token as an `Authorization: Bearer ...` header.
 - Store refresh tokens only in the internal credential compartment.
 - Keep only `OAUTH_ACCESS_TOKEN` injectable.
 - On refresh, preserve existing internal refresh material if Google does not return a replacement refresh token.
-- For revoke, send either the refresh token or access token as `token` to Google's revoke endpoint. Prefer refresh token when present.
+- For revoke, post `application/x-www-form-urlencoded` to `https://oauth2.googleapis.com/revoke` with only the `token` parameter. Prefer the refresh token when present; otherwise use the access token. Do not send Discord's `token_type_hint` parameter or use HTTP Basic Auth for Google revoke.
 
 ## Test Plan
 
@@ -136,14 +158,15 @@ Add unit tests for:
 - Google userinfo parsing and display-name fallback.
 - Google refresh and revoke request construction.
 - Provider registry includes Discord and Google.
-- Domain/provider resolution maps `gmail.googleapis.com` and other Google API subdomains to `google`.
+- Domain/provider resolution maps `googleapis.com`, `gmail.googleapis.com`, `docs.googleapis.com`, `sheets.googleapis.com`, `people.googleapis.com`, and `www.googleapis.com` to `google`.
 - Provider-neutral credential materialization stores the dynamic provider value in values/metadata/local grant rows.
 - Backend error mapping handles provider token and identity failures without Discord-specific prefixes.
 - CLI local refresh and delete no longer reject non-Discord hosted OAuth providers.
 
 Add or update integration tests for:
 
-- Mock-provider callback completion through `/v1/callback/google`.
+- Mock-provider callback completion through `/oauth/callback`.
+- Callback dispatch uses the provider stored on the session matched by `state`; callback query parameters must not be able to select or override the provider.
 - Local handoff redeem for Google returns only injectable access token in `values`, internal refresh/broker material in `internal`, and Google metadata in `metadata`.
 - Local refresh for Google updates `OAUTH_ACCESS_TOKEN`, preserves missing refresh tokens, and returns updated expiry/scope metadata.
 - Local revoke for Google marks the local broker grant revoked after provider revoke succeeds.
@@ -157,13 +180,14 @@ cargo test -p sfae-cli oauth
 cargo xtask ci
 ```
 
-Environment note from planning: in the local workspace used to draft this plan, pinned Rust `1.92.0` lacked a usable Cargo component, so baseline OAuth-related tests were run successfully with installed Rust `1.95.0`. CI should still use the repository-pinned toolchain or the toolchain pin should be repaired deliberately.
+Toolchain note: the project pin is `1.95.0`; run the verification commands with the pinned/default Cargo toolchain.
 
 ## Acceptance Criteria
 
-- `sfae prompt ... --spec '{"groups":[{"label":"OAuth","oauth":{"provider":"google","scopes":[...]}}]}'` opens Google consent through `oauth.sfae.io`.
+- `sfae prompt googleapis.com --spec '{"groups":[{"label":"OAuth","oauth":{"provider":"google","scopes":[...]}}]}'` opens Google consent through `oauth.sfae.io`.
 - Google callback completes and stores a credential set locally for CLI users without requiring `SFAE_STORE_URL` or `SFAE_STORE_TOKEN`.
-- `sfae request` can use `{OAUTH_ACCESS_TOKEN}` against Google APIs.
+- New OAuth providers use the shared callback URL `https://oauth.sfae.io/oauth/callback`.
+- `sfae request` can use `{OAUTH_ACCESS_TOKEN}` against Google API hosts under `googleapis.com`, including `gmail.googleapis.com`, `docs.googleapis.com`, `sheets.googleapis.com`, and `www.googleapis.com`.
 - A 401 response on a request using `{OAUTH_ACCESS_TOKEN}` refreshes a local Google OAuth credential through the broker and retries once.
 - `sfae delete <id>` attempts broker-mediated revoke for local Google OAuth credentials before deleting locally.
 - Agents and browsers never see Google client secrets, provider tokens, refresh tokens, broker credential secrets, or local redemption verifiers.
@@ -172,7 +196,7 @@ Environment note from planning: in the local workspace used to draft this plan, 
 ## Assumptions
 
 - The Google Cloud OAuth client named `SFAE CLI` is a Web application client, not a Desktop client.
-- The Google Cloud client has authorized redirect URI `https://oauth.sfae.io/v1/callback/google`.
+- The Google Cloud client has authorized redirect URI `https://oauth.sfae.io/oauth/callback`.
 - Google API enablement, OAuth consent screen publishing/test-user setup, and sensitive-scope verification remain external Google Cloud configuration.
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` already exist in GitHub secrets for the deployment environment.
 - Provider discovery cache TTL remains the existing 5 minutes; no forced client cache invalidation is needed.
