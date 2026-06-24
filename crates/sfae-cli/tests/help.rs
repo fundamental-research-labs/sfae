@@ -186,12 +186,22 @@ fn credentials_help_explains_output_and_label_filter() {
     let stdout = help_output(&["credentials", "--help"]);
     assert!(stdout.contains("--label <LABEL>"));
     assert!(stdout.contains("<uuid>  <domain>  <label-or->  [KEY, ...]"));
-    assert!(stdout.contains("sfae credentials show <uuid>"));
-    assert!(stdout.contains("Show non-secret metadata for one credential set"));
+    assert!(stdout.contains("sfae show <uuid>"));
     assert!(stdout.contains("domain filter is exact"));
     assert!(stdout.contains("legacy alias"));
     assert!(stdout.contains("sfae credentials github.com --label Work"));
-    assert!(stdout.contains("sfae credentials show 550e8400-e29b-41d4-a716-446655440000"));
+    assert!(!stdout.contains("sfae credentials show"));
+}
+
+#[test]
+fn show_help_explains_metadata_without_secret_blob_access() {
+    let stdout = help_output(&["show", "--help"]);
+    assert!(stdout.contains("Show non-secret metadata for one credential set"));
+    assert!(stdout.contains("sfae show 550e8400-e29b-41d4-a716-446655440000"));
+    assert!(
+        stdout.contains("does not read credential values from the keychain-backed secret blob")
+    );
+    assert!(stdout.contains("Older credentials may show empty metadata"));
 }
 
 #[test]

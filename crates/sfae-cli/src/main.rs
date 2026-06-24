@@ -92,8 +92,7 @@ const CREDENTIALS_AFTER_HELP: &str = r#"OUTPUT:
   Credential set stores print:
     <uuid>  <domain>  <label-or->  [KEY, ...]
 
-  Use the UUID with `sfae request --cred <uuid>` when a domain has more than one credential set, or with `sfae delete <uuid>` to remove the set.
-  Use `sfae credentials show <uuid>` to inspect non-secret metadata such as OAuth scopes, provider, expiration, and display name.
+  Use the UUID with `sfae request --cred <uuid>` when a domain has more than one credential set, with `sfae show <uuid>` to inspect non-secret metadata, or with `sfae delete <uuid>` to remove the set.
   The domain filter is exact. If requests to api.github.com use credentials stored for github.com, run `sfae credentials github.com`.
   `--label` filters by credential-set label in current stores. `--user` is accepted as a legacy alias.
 
@@ -105,10 +104,15 @@ EXAMPLES:
     sfae credentials github.com
 
   List the "Work" credential set for a service:
-    sfae credentials github.com --label Work
+    sfae credentials github.com --label Work"#;
 
+const SHOW_AFTER_HELP: &str = r#"OUTPUT:
+  Prints public credential-set index data and non-secret metadata such as OAuth scopes, provider, expiration, and display name.
+  This command does not read credential values from the keychain-backed secret blob. Older credentials may show empty metadata until recreated or refreshed.
+
+EXAMPLES:
   Show non-secret metadata for one credential set:
-    sfae credentials show 550e8400-e29b-41d4-a716-446655440000"#;
+    sfae show 550e8400-e29b-41d4-a716-446655440000"#;
 
 const REQUEST_AFTER_HELP: &str = r#"AGENT RULES:
   Use this command for HTTP API calls only. Read the target service's official API docs for methods, URLs, headers, bodies, and auth scheme.
@@ -303,13 +307,17 @@ enum Command {
     /// List credential sets stored for a target service domain
     #[command(after_help = CREDENTIALS_AFTER_HELP)]
     Credentials {
-        #[command(subcommand)]
-        action: Option<CredentialsAction>,
         /// Target service domain to filter by (e.g. github.com). Lists all if omitted.
         domain: Option<String>,
         /// Filter by credential-set label (e.g. "Work", "Personal")
         #[arg(long = "label", alias = "user", value_name = "LABEL")]
         label: Option<String>,
+    },
+    /// Show non-secret metadata for one credential set
+    #[command(after_help = SHOW_AFTER_HELP)]
+    Show {
+        /// Credential set UUID from `sfae credentials`
+        id: String,
     },
     /// Send an HTTP request, resolving {KEY} placeholders from stored credentials
     #[command(after_help = REQUEST_AFTER_HELP)]
@@ -409,15 +417,6 @@ enum Command {
     },
 }
 
-#[derive(Subcommand)]
-enum CredentialsAction {
-    /// Show non-secret metadata for one credential set
-    Show {
-        /// Credential set UUID from `sfae credentials`
-        id: String,
-    },
-}
-
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut cmd = Cli::command();
@@ -430,26 +429,14 @@ fn main() -> anyhow::Result<()> {
     }
     let cli = Cli::from_arg_matches(&cmd.get_matches())?;
     match cli.command {
-        Command::Credentials {
-            action,
-            domain,
-            label,
-        } => {
-            let action = match action.as_ref() {
-                Some(CredentialsAction::Show { id }) => {
-                    if domain.is_some() || label.is_some() {
-                        anyhow::bail!(
-                            "domain and --label/--user filters are not used with credentials show"
-                        );
-                    }
-                    commands::credentials::RunAction::Show { id }
-                }
-                None => commands::credentials::RunAction::List {
-                    domain: domain.as_deref(),
-                    username: label.as_deref(),
-                },
-            };
-            commands::credentials::run(commands::credentials::RunArgs { action })?;
+        Command::Credentials { domain, label } => {
+            commands::credentials::run(commands::credentials::RunArgs {
+                domain: domain.as_deref(),
+                username: label.as_deref(),
+            })?;
+        }
+        Command::Show { id } => {
+            commands::show::run(commands::show::RunArgs { id: &id })?;
         }
         Command::Request {
             method,
