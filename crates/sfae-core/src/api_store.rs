@@ -66,6 +66,8 @@ struct CredentialSetEntry {
     #[serde(default)]
     label: Option<String>,
     keys: Vec<String>,
+    #[serde(default)]
+    metadata: HashMap<String, String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -290,6 +292,7 @@ impl SecretStore for ApiStore {
                 domain: c.domain,
                 label: c.label,
                 keys: c.keys,
+                metadata: c.metadata,
             })
             .collect())
     }

@@ -154,6 +154,8 @@ For APIs that use SFAE-hosted OAuth instead of static tokens, use an OAuth group
 
    This opens the provider's consent page in the human's browser. After they authorize, the hosted broker materializes an SFAE credential containing `OAUTH_ACCESS_TOKEN` and related broker-managed metadata.
 
+   To upgrade OAuth scopes, re-run `sfae prompt` with the same domain/label and a spec containing the full required scope set. Local OAuth re-authorization stores fresh credentials with a new UUID; when SFAE can prove the authorized provider account is the same, it forgets older same-account entries from its index without reading or purging keychain secrets. If SFAE cannot prove the same account, or for non-OAuth credentials, older sets remain until `sfae delete <uuid>`.
+
 2. **Make requests normally** — use `{OAUTH_ACCESS_TOKEN}` as the placeholder:
    ```
    sfae request GET "https://discord.com/api/v10/users/@me" \
@@ -181,7 +183,7 @@ All credential fields are stored as a single JSON blob per credential set. Each 
 sfae delete <uuid>
 ```
 
-Delete a credential set by its UUID. Get UUIDs via `sfae credentials`.
+Forget a credential set from SFAE's index by UUID without reading keychain secrets. Get UUIDs via `sfae credentials`. Use `sfae delete <uuid> --purge` only when keychain/password prompts are acceptable.
 
 ### Important
 

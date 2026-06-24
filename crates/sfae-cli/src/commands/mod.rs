@@ -9,3 +9,4 @@ pub mod flush;
 #[cfg(feature = "native-keychain")]
 pub mod prompt;
 pub mod request;
+pub mod show;

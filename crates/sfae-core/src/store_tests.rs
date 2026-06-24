@@ -4,10 +4,52 @@ use std::collections::HashMap;
 
 use crate::error::SfaeError;
 use crate::store::{
-    CredentialSetInput, CredentialTypesQuery, InMemoryStore, SecretStore, StoreEntry,
-    StructuredCredentialSetInput, StructuredCredentialSetUpdate, list_credential_types,
-    parse_injectable_credential_values, parse_structured_credential_set,
+    CredentialSetInfo, CredentialSetInput, CredentialTypesQuery, InMemoryStore, SecretStore,
+    StoreEntry, StructuredCredentialSetInput, StructuredCredentialSetUpdate, list_credential_types,
+    load_credential_set_metadata, parse_injectable_credential_values,
+    parse_structured_credential_set,
 };
+
+struct IndexOnlyStore {
+    sets: Vec<CredentialSetInfo>,
+}
+
+impl SecretStore for IndexOnlyStore {
+    fn set(&mut self, _entry: StoreEntry<'_>) -> Result<(), SfaeError> {
+        unimplemented!("index-only test store does not write secrets")
+    }
+
+    fn get(&self, _key: &str) -> Result<String, SfaeError> {
+        panic!("credential blob should not be read for metadata inspection")
+    }
+
+    fn delete(&mut self, _key: &str) -> Result<(), SfaeError> {
+        unimplemented!("index-only test store does not delete secrets")
+    }
+
+    fn list_keys(&self) -> Result<Vec<String>, SfaeError> {
+        Ok(vec![])
+    }
+
+    fn supports_credential_sets(&self) -> bool {
+        true
+    }
+
+    fn list_credential_sets(
+        &self,
+        domain: Option<&str>,
+    ) -> Result<Vec<CredentialSetInfo>, SfaeError> {
+        Ok(match domain {
+            Some(domain) => self
+                .sets
+                .iter()
+                .filter(|set| set.domain == domain)
+                .cloned()
+                .collect(),
+            None => self.sets.clone(),
+        })
+    }
+}
 
 #[test]
 fn set_and_get() {
@@ -232,6 +274,7 @@ fn store_credential_set_basic() {
     assert_eq!(sets[0].domain, "example.com");
     assert!(sets[0].label.is_none());
     assert_eq!(sets[0].keys, vec!["HOST", "PASSWORD"]);
+    assert!(sets[0].metadata.is_empty());
 }
 
 #[test]
@@ -282,6 +325,34 @@ fn update_structured_credential_set_merges_compartments() {
     let injectable = parse_injectable_credential_values(&store.get(&id).unwrap()).unwrap();
     assert_eq!(injectable.len(), 1);
     assert_eq!(injectable["OAUTH_ACCESS_TOKEN"], "new-access");
+
+    let public = load_credential_set_metadata(&store, &id).unwrap();
+    assert_eq!(public.metadata["OAUTH_PROVIDER"], "discord");
+    assert_eq!(public.metadata["OAUTH_DISPLAY_NAME"], "Original");
+    assert_eq!(public.metadata["OAUTH_EXPIRES_AT"], "2026-01-01T00:00:00Z");
+}
+
+#[test]
+fn credential_set_metadata_loads_from_index_without_reading_blob() {
+    let mut metadata = HashMap::new();
+    metadata.insert("OAUTH_PROVIDER".to_string(), "discord".to_string());
+    metadata.insert("OAUTH_SCOPES".to_string(), "identify guilds".to_string());
+    let store = IndexOnlyStore {
+        sets: vec![CredentialSetInfo {
+            id: "00000000-0000-4000-8000-000000000001".to_string(),
+            domain: "discord.com".to_string(),
+            label: Some("Work".to_string()),
+            keys: vec!["OAUTH_ACCESS_TOKEN".to_string()],
+            metadata,
+        }],
+    };
+
+    let public =
+        load_credential_set_metadata(&store, "00000000-0000-4000-8000-000000000001").unwrap();
+    assert_eq!(public.domain, "discord.com");
+    assert_eq!(public.label.as_deref(), Some("Work"));
+    assert_eq!(public.metadata["OAUTH_PROVIDER"], "discord");
+    assert_eq!(public.metadata["OAUTH_SCOPES"], "identify guilds");
 }
 
 #[test]
@@ -382,6 +453,25 @@ fn delete_credential_set_removes_blob_and_metadata() {
 
     assert!(store.list_credential_sets(None).unwrap().is_empty());
     assert!(store.get(&id).is_err());
+}
+
+#[test]
+fn forget_credential_set_removes_metadata_but_keeps_blob() {
+    let mut store = InMemoryStore::new();
+    let mut values = HashMap::new();
+    values.insert("KEY".to_string(), "val".to_string());
+    let id = store
+        .store_credential_set(CredentialSetInput {
+            domain: "example.com",
+            label: None,
+            values: &values,
+        })
+        .unwrap();
+
+    store.forget_credential_set(&id).unwrap();
+
+    assert!(store.list_credential_sets(None).unwrap().is_empty());
+    assert!(store.get(&id).is_ok());
 }
 
 #[test]

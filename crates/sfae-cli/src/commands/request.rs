@@ -416,6 +416,7 @@ fn fetch_credential_set(
                 domain: domain.to_string(),
                 label: username.map(str::to_string),
                 keys: vec![],
+                metadata: std::collections::HashMap::new(),
             });
         return Ok(Some(SelectedCredentialSet {
             info,

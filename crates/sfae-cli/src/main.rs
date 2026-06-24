@@ -92,7 +92,7 @@ const CREDENTIALS_AFTER_HELP: &str = r#"OUTPUT:
   Credential set stores print:
     <uuid>  <domain>  <label-or->  [KEY, ...]
 
-  Use the UUID with `sfae request --cred <uuid>` when a domain has more than one credential set, or with `sfae delete <uuid>` to remove the set.
+  Use the UUID with `sfae request --cred <uuid>` when a domain has more than one credential set, with `sfae show <uuid>` to inspect non-secret metadata, or with `sfae delete <uuid>` to remove the set.
   The domain filter is exact. If requests to api.github.com use credentials stored for github.com, run `sfae credentials github.com`.
   `--label` filters by credential-set label in current stores. `--user` is accepted as a legacy alias.
 
@@ -105,6 +105,14 @@ EXAMPLES:
 
   List the "Work" credential set for a service:
     sfae credentials github.com --label Work"#;
+
+const SHOW_AFTER_HELP: &str = r#"OUTPUT:
+  Prints public credential-set index data and non-secret metadata such as OAuth scopes, provider, expiration, and display name.
+  This command does not read credential values from the keychain-backed secret blob. Older credentials may show empty metadata until recreated or refreshed.
+
+EXAMPLES:
+  Show non-secret metadata for one credential set:
+    sfae show 550e8400-e29b-41d4-a716-446655440000"#;
 
 const REQUEST_AFTER_HELP: &str = r#"AGENT RULES:
   Use this command for HTTP API calls only. Read the target service's official API docs for methods, URLs, headers, bodies, and auth scheme.
@@ -208,6 +216,12 @@ OAUTH:
   SFAE or the provider may reject unknown, unavailable, or app-restricted scopes.
   --terminal supports field prompts only; OAuth requires browser mode.
 
+SCOPE UPGRADES / RE-AUTHORIZATION:
+  To request broader OAuth access, re-run `sfae prompt` with the same domain/label and a spec containing the full required scope set.
+  Local OAuth re-authorization stores fresh credentials with a new UUID. When SFAE can prove the authorized provider account is the same as an existing set, it forgets older same-account credential entries from SFAE's index without reading or purging keychain secrets.
+  If SFAE cannot prove the same account, or for non-OAuth credentials, older credential sets remain until you run `sfae delete <uuid>`.
+  If multiple credential sets remain for a domain, list them with `sfae credentials <domain>` and pass `sfae request --cred <uuid>` or `--label <label>` to select the intended set.
+
 EXAMPLES:
   Personal access token:
     sfae prompt github.com --spec '{
@@ -268,19 +282,25 @@ EXAMPLES:
 
 #[cfg(feature = "native-keychain")]
 const DELETE_AFTER_HELP: &str = r#"PREFERRED USE:
+  Default deletion is prompt-free: it forgets credentials from SFAE's public index so agents stop selecting them.
+  It does not read or delete keychain secret material and does not revoke hosted OAuth grants.
+  Use --purge only for manual cleanup when you are prepared for keychain/password prompts.
   Delete by UUID from `sfae credentials`. Domain deletion is for legacy flat credentials.
   `--type` accepts ACCESS_TOKEN, REFRESH_TOKEN, API_KEY, PASSWORD, USERNAME, or CLIENT_SECRET, and cannot be used with UUID deletion.
   `--label` filters legacy flat credentials by label/username. `--user` is accepted as a legacy alias.
 
 EXAMPLES:
-  Delete one credential set:
+  Forget one credential set without prompting:
     sfae delete 550e8400-e29b-41d4-a716-446655440000
 
-  Delete all legacy flat credentials for a domain:
+  Forget all legacy flat credentials for a domain:
     sfae delete github.com
 
-  Delete one legacy flat credential type:
-    sfae delete github.com --type ACCESS_TOKEN"#;
+  Forget one legacy flat credential type:
+    sfae delete github.com --type ACCESS_TOKEN
+
+  Purge keychain material too (may prompt for password):
+    sfae delete 550e8400-e29b-41d4-a716-446655440000 --purge"#;
 
 #[cfg(feature = "native-keychain")]
 const FLUSH_AFTER_HELP: &str = r#"WARNING:
@@ -304,6 +324,12 @@ enum Command {
         /// Filter by credential-set label (e.g. "Work", "Personal")
         #[arg(long = "label", alias = "user", value_name = "LABEL")]
         label: Option<String>,
+    },
+    /// Show non-secret metadata for one credential set
+    #[command(after_help = SHOW_AFTER_HELP)]
+    Show {
+        /// Credential set UUID from `sfae credentials`
+        id: String,
     },
     /// Send an HTTP request, resolving {KEY} placeholders from stored credentials
     #[command(after_help = REQUEST_AFTER_HELP)]
@@ -380,12 +406,15 @@ enum Command {
         #[arg(long)]
         terminal: bool,
     },
-    /// Delete a credential set by UUID or legacy credentials by domain
+    /// Forget a credential set by UUID or legacy credentials by domain
     #[cfg(feature = "native-keychain")]
     #[command(after_help = DELETE_AFTER_HELP)]
     Delete {
         /// Credential set UUID or domain (e.g. github.com)
         target: String,
+        /// Also delete keychain secret material and revoke hosted OAuth when possible; may prompt for password
+        #[arg(long)]
+        purge: bool,
         /// Delete only this credential type (legacy, not used with UUID)
         #[arg(long = "type", value_name = "TYPE")]
         cred_type: Option<String>,
@@ -420,6 +449,9 @@ fn main() -> anyhow::Result<()> {
                 domain: domain.as_deref(),
                 username: label.as_deref(),
             })?;
+        }
+        Command::Show { id } => {
+            commands::show::run(commands::show::RunArgs { id: &id })?;
         }
         Command::Request {
             method,
@@ -490,6 +522,7 @@ fn main() -> anyhow::Result<()> {
         #[cfg(feature = "native-keychain")]
         Command::Delete {
             target,
+            purge,
             cred_type,
             label,
         } => {
@@ -497,6 +530,7 @@ fn main() -> anyhow::Result<()> {
                 target: &target,
                 cred_type_str: cred_type.as_deref(),
                 username: label.as_deref(),
+                purge,
             })?;
         }
         #[cfg(feature = "native-keychain")]

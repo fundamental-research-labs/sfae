@@ -75,10 +75,7 @@ impl LocalServer {
         Ok(())
     }
 
-    /// Accept one HTTP request. Returns (method, path, headers, body).
-    ///
-    /// The caller is responsible for cancelling the process if it should stop waiting.
-    /// The caller is responsible for sending a response via `send_response`.
+    /// Accept one HTTP request; the caller sends the response and owns cancellation.
     pub fn accept_request(&self) -> Result<HttpRequest, SfaeError> {
         let (stream, _addr) = self.listener.accept().map_err(|e| match e.kind() {
             std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => SfaeError::Cancelled,
@@ -243,8 +240,7 @@ fn read_http_request(read: RequestRead) -> Result<HttpRequest, SfaeError> {
         }
     }
 
-    // Read body if present. Code-request callers pass a cap to avoid
-    // unbounded local POST bodies; existing prompt callers preserve old behavior.
+    // Code-request callers pass a body cap; prompt callers preserve old behavior.
     let mut body = String::new();
     if content_length > 0 {
         let read_len = max_body_len
@@ -619,28 +615,50 @@ pub fn browser_prompt_spec(
                 req.redirect(&authorization_url);
             }
             ("GET", "/oauth-complete") => {
-                if let Some(flow) = hosted_oauth.as_mut() {
-                    let session_id = extract_query_param(QueryLookup {
-                        path: &req.path,
-                        key: "session_id",
+                let Some(flow) = hosted_oauth.as_mut() else {
+                    req.respond(Reply {
+                        status: 400,
+                        html: "OAuth authorization has not started",
                     });
-                    let status = extract_query_param(QueryLookup {
-                        path: &req.path,
-                        key: "status",
+                    return Err(SfaeError::Other(
+                        "OAuth authorization has not started".into(),
+                    ));
+                };
+                if let Err(err) = capture_hosted_oauth_callback(HostedOAuthCallback {
+                    path: &req.path,
+                    flow,
+                }) {
+                    let message = err.to_string();
+                    req.respond(Reply {
+                        status: 400,
+                        html: &message,
                     });
-                    if session_id.as_deref() == Some(flow.session_id.as_str()) {
-                        if let Some(status) = status {
-                            flow.status = status;
-                        }
-                        flow.completion_verifier = extract_query_param(QueryLookup {
-                            path: &req.path,
-                            key: "completion_verifier",
-                        });
-                    }
+                    return Err(err);
                 }
+                let credential_id = match oauth_manager
+                    .as_mut()
+                    .ok_or_else(|| SfaeError::ConfigError("hosted OAuth is not configured".into()))
+                    .and_then(|manager| {
+                        complete_hosted_oauth(flow, manager, &mut oauth_credential_sink)
+                    }) {
+                    Ok(credential_id) => credential_id,
+                    Err(err) => {
+                        let status = hosted_oauth_error_status(&err);
+                        let message = err.to_string();
+                        req.respond(Reply {
+                            status,
+                            html: &message,
+                        });
+                        return Err(err);
+                    }
+                };
                 req.respond(Reply {
                     status: 200,
-                    html: local_oauth_complete_page(),
+                    html: &build_done_page(),
+                });
+                return Ok(BrowserPromptResult::HostedOAuth {
+                    session_id: flow.session_id.clone(),
+                    credential_id,
                 });
             }
             ("GET", "/oauth-status") => {
@@ -672,70 +690,23 @@ pub fn browser_prompt_spec(
                 req.respond_json(&json);
             }
             ("POST", "/") => {
-                let raw = parse_form_fields(&req.body);
-
-                // Determine expected fields: common fields first, then
-                // the active group's fields.  The HTML used opaque names
-                // `_f0`, `_f1`, … — the index matches this ordered list.
-                let common = collect_common_fields(spec);
-                let mut expected = common.clone();
-                let selected_group_idx = selected_group_idx(&raw);
-                let selected_oauth = selected_group_idx
-                    .and_then(|idx| groups.get(idx).map(|group| (idx, group.oauth.is_some())));
-                if let Some((idx, false)) = selected_oauth
-                    && let Some(fields) = groups.get(idx).and_then(|group| group.fields.as_ref())
-                {
-                    expected.extend(fields.iter().cloned());
-                }
-
-                // Map opaque `_fN` keys back to real field names.
-                // Common fields: _f0 … _f(common.len()-1)
-                // Group fields:  _f(common.len()) … _f(common.len()+group.len()-1)
-                let mut values: HashMap<String, String> = HashMap::new();
-                for (i, field) in common.iter().enumerate() {
-                    if let Some(v) = raw.get(&format!("_f{i}")) {
-                        values.insert(field.name.clone(), v.clone());
-                    }
-                }
-                let offset = common.len();
-                for (i, field) in expected.iter().skip(offset).enumerate() {
-                    if let Some(v) = raw.get(&format!("_f{}", offset + i)) {
-                        values.insert(field.name.clone(), v.clone());
-                    }
-                }
-                // Validate no empty values for expected required fields.
-                for field in &expected {
-                    if field.is_optional() {
-                        continue;
-                    }
-                    let val = values.get(&field.name).map(|s| s.as_str()).unwrap_or("");
-                    if val.is_empty() {
-                        let message =
-                            format!("credential value for {} cannot be empty", field.name);
+                let submitted = match submitted_form_fields(FormFieldsCtx {
+                    body: &req.body,
+                    spec,
+                    groups,
+                }) {
+                    Ok(submitted) => submitted,
+                    Err(message) => {
                         req.respond(Reply {
                             status: 400,
                             html: &message,
                         });
                         return Err(SfaeError::Other(message));
                     }
-                }
+                };
 
-                // Return expected field values. Omit empty optional fields.
-                let result: HashMap<String, String> = expected
-                    .iter()
-                    .filter_map(|f| {
-                        values.remove(&f.name).and_then(|v| {
-                            if v.is_empty() && f.is_optional() {
-                                None
-                            } else {
-                                Some((f.name.clone(), v))
-                            }
-                        })
-                    })
-                    .collect();
-
-                if let Some((group_idx, true)) = selected_oauth {
-                    let Some(flow) = hosted_oauth.as_ref() else {
+                if let Some((group_idx, true)) = submitted.selected_oauth {
+                    let Some(flow) = hosted_oauth.as_mut() else {
                         req.respond(Reply {
                             status: 400,
                             html: "OAuth authorization has not started",
@@ -762,7 +733,7 @@ pub fn browser_prompt_spec(
                             "OAuth authorization has not completed".into(),
                         ));
                     }
-                    if !result.is_empty() {
+                    if !submitted.result.is_empty() {
                         req.respond(Reply {
                             status: 400,
                             html: "Hosted OAuth cannot store local form fields in this phase",
@@ -771,29 +742,24 @@ pub fn browser_prompt_spec(
                             "hosted OAuth cannot store local form fields in this phase".into(),
                         ));
                     }
-                    let credential = oauth_manager
+                    let credential_id = match oauth_manager
                         .as_mut()
                         .ok_or_else(|| {
                             SfaeError::ConfigError("hosted OAuth is not configured".into())
-                        })?
-                        .redeem_session(
-                            &flow.session_id,
-                            flow.redeem_verifier.as_deref(),
-                            flow.completion_verifier.as_deref(),
-                        )?;
-                    let credential_id = if let Some(credential) = credential {
-                        let Some(sink) = oauth_credential_sink.as_mut() else {
+                        })
+                        .and_then(|manager| {
+                            complete_hosted_oauth(flow, manager, &mut oauth_credential_sink)
+                        }) {
+                        Ok(credential_id) => credential_id,
+                        Err(err) => {
+                            let status = hosted_oauth_error_status(&err);
+                            let message = err.to_string();
                             req.respond(Reply {
-                                status: 500,
-                                html: "OAuth credential storage is not configured",
+                                status,
+                                html: &message,
                             });
-                            return Err(SfaeError::ConfigError(
-                                "OAuth credential storage is not configured".into(),
-                            ));
-                        };
-                        Some(sink(credential)?)
-                    } else {
-                        flow.credential_id.clone()
+                            return Err(err);
+                        }
                     };
                     req.respond(Reply {
                         status: 200,
@@ -809,7 +775,7 @@ pub fn browser_prompt_spec(
                     status: 200,
                     html: &build_done_page(),
                 });
-                return Ok(BrowserPromptResult::Values(result));
+                return Ok(BrowserPromptResult::Values(submitted.result));
             }
             _ => {
                 req.respond(Reply {
@@ -822,25 +788,177 @@ pub fn browser_prompt_spec(
 }
 
 #[cfg(feature = "cli")]
+struct FormFieldsCtx<'a> {
+    body: &'a str,
+    spec: &'a PromptSpec,
+    groups: &'a [crate::spec::GroupSpec],
+}
+
+#[cfg(feature = "cli")]
+struct SubmittedFields {
+    result: HashMap<String, String>,
+    selected_oauth: Option<(usize, bool)>,
+}
+
+#[cfg(feature = "cli")]
+fn submitted_form_fields(ctx: FormFieldsCtx<'_>) -> Result<SubmittedFields, String> {
+    let FormFieldsCtx { body, spec, groups } = ctx;
+    let raw = parse_form_fields(body);
+
+    let common = collect_common_fields(spec);
+    let mut expected = common.clone();
+    let selected_group_idx = selected_group_idx(&raw);
+    let selected_oauth = selected_group_idx
+        .and_then(|idx| groups.get(idx).map(|group| (idx, group.oauth.is_some())));
+    if let Some((idx, false)) = selected_oauth
+        && let Some(fields) = groups.get(idx).and_then(|group| group.fields.as_ref())
+    {
+        expected.extend(fields.iter().cloned());
+    }
+
+    let mut values: HashMap<String, String> = HashMap::new();
+    for (i, field) in common.iter().enumerate() {
+        if let Some(v) = raw.get(&format!("_f{i}")) {
+            values.insert(field.name.clone(), v.clone());
+        }
+    }
+    let offset = common.len();
+    for (i, field) in expected.iter().skip(offset).enumerate() {
+        if let Some(v) = raw.get(&format!("_f{}", offset + i)) {
+            values.insert(field.name.clone(), v.clone());
+        }
+    }
+    for field in &expected {
+        if field.is_optional() {
+            continue;
+        }
+        let val = values.get(&field.name).map(|s| s.as_str()).unwrap_or("");
+        if val.is_empty() {
+            return Err(format!(
+                "credential value for {} cannot be empty",
+                field.name
+            ));
+        }
+    }
+
+    let result = expected
+        .iter()
+        .filter_map(|f| {
+            values.remove(&f.name).and_then(|v| {
+                if v.is_empty() && f.is_optional() {
+                    None
+                } else {
+                    Some((f.name.clone(), v))
+                }
+            })
+        })
+        .collect();
+
+    Ok(SubmittedFields {
+        result,
+        selected_oauth,
+    })
+}
+
+#[cfg(feature = "cli")]
+struct HostedOAuthCallback<'a> {
+    path: &'a str,
+    flow: &'a mut HostedOAuthFlow,
+}
+
+#[cfg(feature = "cli")]
+fn capture_hosted_oauth_callback(args: HostedOAuthCallback<'_>) -> Result<(), SfaeError> {
+    let HostedOAuthCallback { path, flow } = args;
+    let session_id = extract_query_param(QueryLookup {
+        path,
+        key: "session_id",
+    });
+    if session_id.as_deref() != Some(flow.session_id.as_str()) {
+        return Err(SfaeError::Other(
+            "OAuth callback did not match the active authorization session".into(),
+        ));
+    }
+    if let Some(status) = extract_query_param(QueryLookup {
+        path,
+        key: "status",
+    }) {
+        flow.status = status;
+    }
+    flow.completion_verifier = extract_query_param(QueryLookup {
+        path,
+        key: "completion_verifier",
+    });
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+// xtask: allow-multi-param - helper coordinates flow state, OAuth manager, and storage sink
+fn complete_hosted_oauth(
+    flow: &mut HostedOAuthFlow,
+    manager: &crate::oauth::OAuthCredentialManager<'_>,
+    oauth_credential_sink: &mut Option<&mut OAuthCredentialSink<'_>>,
+) -> Result<Option<String>, SfaeError> {
+    let status = manager.session_status(&flow.session_id)?;
+    if status.session_id != flow.session_id {
+        return Err(SfaeError::Other(
+            "OAuth status did not match the active authorization session".into(),
+        ));
+    }
+    flow.status = status.status.clone();
+    flow.credential_id = status.credential_id.clone();
+    if status.is_error() {
+        let detail = status
+            .error_code
+            .as_deref()
+            .map(|code| format!(": {code}"))
+            .unwrap_or_default();
+        return Err(SfaeError::Other(format!(
+            "OAuth authorization failed{detail}"
+        )));
+    }
+    if !status.is_success() {
+        return Err(SfaeError::Other(
+            "OAuth authorization has not completed".into(),
+        ));
+    }
+    if flow.redeem_verifier.is_some() && flow.completion_verifier.is_none() {
+        return Err(SfaeError::Other(
+            "OAuth completion verifier is missing".into(),
+        ));
+    }
+
+    let credential = manager.redeem_session(
+        &flow.session_id,
+        flow.redeem_verifier.as_deref(),
+        flow.completion_verifier.as_deref(),
+    )?;
+    if let Some(credential) = credential {
+        let Some(sink) = oauth_credential_sink.as_mut() else {
+            return Err(SfaeError::ConfigError(
+                "OAuth credential storage is not configured".into(),
+            ));
+        };
+        return Ok(Some(sink(credential)?));
+    }
+    Ok(flow.credential_id.clone())
+}
+
+#[cfg(feature = "cli")]
+fn hosted_oauth_error_status(err: &SfaeError) -> u16 {
+    match err {
+        SfaeError::ConfigError(_) | SfaeError::StoreError(_) => 500,
+        _ => 400,
+    }
+}
+
+#[cfg(feature = "cli")]
 fn selected_group_idx(raw: &HashMap<String, String>) -> Option<usize> {
     raw.get("_group").and_then(|idx| idx.parse::<usize>().ok())
 }
 
-#[cfg(feature = "cli")]
-fn local_oauth_complete_page() -> &'static str {
-    "<!doctype html><meta charset=\"utf-8\"><title>SFAE OAuth</title>\
-     <body style=\"font-family:system-ui;margin:3rem;line-height:1.5\">\
-     <h1>Authorization complete</h1><p>You can return to the SFAE credential window.</p></body>"
-}
-
-/// Collect a secret from the user via a local web page opened in the default browser.
+/// Collect a secret through a local browser page and return the submitted value.
 ///
-/// - `label` — heading shown on the page (e.g., "Enter API_KEY for github.com").
-/// - `url`   — optional link displayed on the page to help the user find where to create the secret.
-///
-/// Starts a temporary HTTP server on `127.0.0.1` (random port), opens the browser,
-/// waits for the user to submit the form, then returns the secret.
-/// There is no built-in timeout.
+/// Starts a temporary HTTP server, opens the browser, and waits without a built-in timeout.
 #[cfg(feature = "cli")]
 pub fn browser_prompt(args: BrowserPromptArgs<'_>) -> Result<String, SfaeError> {
     let BrowserPromptArgs { label, url } = args;

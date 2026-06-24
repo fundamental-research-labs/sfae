@@ -11,7 +11,6 @@ pub struct RunArgs<'a> {
 pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
     let RunArgs { domain, username } = args;
     let store = create_store();
-
     if store.supports_credential_sets() {
         let sets = store.list_credential_sets(domain)?;
         let filtered: Vec<_> = if let Some(user) = username {

@@ -144,6 +144,13 @@ fn prompt_help_explains_spec_and_secret_handling() {
         assert!(stdout.contains("Ask for any scope required by the user's task"));
         assert!(stdout.contains("choose the narrowest set"));
         assert!(stdout.contains("SFAE or the provider may reject unknown"));
+        assert!(stdout.contains("SCOPE UPGRADES / RE-AUTHORIZATION:"));
+        assert!(stdout.contains("re-run `sfae prompt` with the same domain/label"));
+        assert!(stdout.contains("stores fresh credentials with a new UUID"));
+        assert!(stdout.contains("forgets older same-account credential entries"));
+        assert!(stdout.contains("without reading or purging keychain secrets"));
+        assert!(stdout.contains("older credential sets remain until you run `sfae delete <uuid>`"));
+        assert!(stdout.contains("sfae request --cred <uuid>"));
         assert!(!stdout.contains("SFAE_OAUTH_BROKER_URL"));
         assert!(!stdout.contains("SFAE_STORE_URL"));
         assert!(stdout.contains("OAuth requires browser mode"));
@@ -186,9 +193,22 @@ fn credentials_help_explains_output_and_label_filter() {
     let stdout = help_output(&["credentials", "--help"]);
     assert!(stdout.contains("--label <LABEL>"));
     assert!(stdout.contains("<uuid>  <domain>  <label-or->  [KEY, ...]"));
+    assert!(stdout.contains("sfae show <uuid>"));
     assert!(stdout.contains("domain filter is exact"));
     assert!(stdout.contains("legacy alias"));
     assert!(stdout.contains("sfae credentials github.com --label Work"));
+    assert!(!stdout.contains("sfae credentials show"));
+}
+
+#[test]
+fn show_help_explains_metadata_without_secret_blob_access() {
+    let stdout = help_output(&["show", "--help"]);
+    assert!(stdout.contains("Show non-secret metadata for one credential set"));
+    assert!(stdout.contains("sfae show 550e8400-e29b-41d4-a716-446655440000"));
+    assert!(
+        stdout.contains("does not read credential values from the keychain-backed secret blob")
+    );
+    assert!(stdout.contains("Older credentials may show empty metadata"));
 }
 
 #[test]
@@ -209,7 +229,10 @@ fn request_help_explains_placeholders_lookup_and_output() {
 #[test]
 fn destructive_command_help_explains_scope_and_dry_run() {
     let delete_stdout = help_output(&["delete", "--help"]);
-    assert!(delete_stdout.contains("Delete by UUID"));
+    assert!(delete_stdout.contains("Default deletion is prompt-free"));
+    assert!(delete_stdout.contains("Use --purge only for manual cleanup"));
+    assert!(delete_stdout.contains("may prompt for password"));
+    assert!(delete_stdout.contains("--purge"));
     assert!(delete_stdout.contains("Domain deletion is for legacy flat credentials"));
     assert!(delete_stdout.contains("--label <LABEL>"));
     assert!(delete_stdout.contains("ACCESS_TOKEN"));

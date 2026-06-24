@@ -1,4 +1,4 @@
-//! `sfae delete`: remove a credential set by UUID or legacy flat credentials.
+//! `sfae delete`: forget a credential set by UUID or legacy flat credentials.
 
 use sfae_core::credential::{CredentialKey, CredentialType, credential_key};
 use sfae_core::store::{SecretStore, parse_structured_credential_set};
@@ -27,6 +27,7 @@ pub struct RunArgs<'a> {
     pub target: &'a str,
     pub cred_type_str: Option<&'a str>,
     pub username: Option<&'a str>,
+    pub purge: bool,
 }
 
 pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
@@ -34,6 +35,7 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         target,
         cred_type_str,
         username,
+        purge,
     } = args;
     let mut store = create_store();
 
@@ -42,11 +44,16 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         if cred_type_str.is_some() || username.is_some() {
             anyhow::bail!("--type and --label/--user flags are not used with UUID deletion");
         }
-        if !uses_remote_store() {
+        if purge && !uses_remote_store() {
             revoke_hosted_oauth_if_needed(&*store, target);
         }
-        store.delete_credential_set(target)?;
-        eprintln!("Deleted credential set: {target}");
+        if purge {
+            store.delete_credential_set(target)?;
+            eprintln!("Purged credential set: {target}");
+        } else {
+            store.forget_credential_set(target)?;
+            eprintln!("Forgot credential set: {target}");
+        }
         return Ok(());
     }
 
@@ -60,8 +67,13 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
             username,
             cred_type,
         });
-        store.delete(&key)?;
-        eprintln!("Deleted: {key}");
+        if purge {
+            store.delete(&key)?;
+            eprintln!("Purged: {key}");
+        } else {
+            store.forget(&key)?;
+            eprintln!("Forgot: {key}");
+        }
     } else {
         let mut deleted = 0;
         for ct in CredentialType::all() {
@@ -70,8 +82,14 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
                 username,
                 cred_type: *ct,
             });
-            if store.delete(&key).is_ok() {
-                eprintln!("Deleted: {key}");
+            let result = if purge {
+                store.delete(&key)
+            } else {
+                store.forget(&key)
+            };
+            if result.is_ok() {
+                let verb = if purge { "Purged" } else { "Forgot" };
+                eprintln!("{verb}: {key}");
                 deleted += 1;
             }
         }
