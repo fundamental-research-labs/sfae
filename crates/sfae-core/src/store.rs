@@ -21,6 +21,13 @@ pub struct CredentialSetInfo {
     pub keys: Vec<String>,
 }
 
+/// Non-secret metadata for inspecting a stored credential set.
+#[derive(Debug, Clone)]
+pub struct CredentialSetMetadata {
+    pub info: CredentialSetInfo,
+    pub metadata: HashMap<String, String>,
+}
+
 /// A single `(key, value)` pair to persist via `SecretStore::set`.
 pub struct StoreEntry<'a> {
     pub key: &'a str,
@@ -236,6 +243,29 @@ pub fn parse_injectable_credential_values(
     let mut values = parse_structured_credential_set(blob)?.values;
     values.retain(|key, _| !internal_only_key(key));
     Ok(values)
+}
+
+/// Load one credential set's index fields and structured metadata by UUID.
+// xtask: allow-multi-param - helper pairs selected store with credential id
+pub fn load_credential_set_metadata(
+    store: &dyn SecretStore,
+    id: &str,
+) -> Result<CredentialSetMetadata, SfaeError> {
+    if !store.supports_credential_sets() {
+        return Err(SfaeError::Other(
+            "credential set operations not supported by this store".into(),
+        ));
+    }
+    let info = store
+        .list_credential_sets(None)?
+        .into_iter()
+        .find(|set| set.id == id)
+        .ok_or_else(|| SfaeError::CredentialNotFound(id.to_string()))?;
+    let data = parse_structured_credential_set(&store.get(id)?)?;
+    Ok(CredentialSetMetadata {
+        info,
+        metadata: data.metadata,
+    })
 }
 
 // xtask: allow-multi-param - merge helper pairs current data with update input
