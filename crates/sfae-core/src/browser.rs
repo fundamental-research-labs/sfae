@@ -75,10 +75,7 @@ impl LocalServer {
         Ok(())
     }
 
-    /// Accept one HTTP request. Returns (method, path, headers, body).
-    ///
-    /// The caller is responsible for cancelling the process if it should stop waiting.
-    /// The caller is responsible for sending a response via `send_response`.
+    /// Accept one HTTP request; the caller sends the response and owns cancellation.
     pub fn accept_request(&self) -> Result<HttpRequest, SfaeError> {
         let (stream, _addr) = self.listener.accept().map_err(|e| match e.kind() {
             std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => SfaeError::Cancelled,
@@ -243,8 +240,7 @@ fn read_http_request(read: RequestRead) -> Result<HttpRequest, SfaeError> {
         }
     }
 
-    // Read body if present. Code-request callers pass a cap to avoid
-    // unbounded local POST bodies; existing prompt callers preserve old behavior.
+    // Code-request callers pass a body cap; prompt callers preserve old behavior.
     let mut body = String::new();
     if content_length > 0 {
         let read_len = max_body_len
@@ -694,69 +690,22 @@ pub fn browser_prompt_spec(
                 req.respond_json(&json);
             }
             ("POST", "/") => {
-                let raw = parse_form_fields(&req.body);
-
-                // Determine expected fields: common fields first, then
-                // the active group's fields.  The HTML used opaque names
-                // `_f0`, `_f1`, … — the index matches this ordered list.
-                let common = collect_common_fields(spec);
-                let mut expected = common.clone();
-                let selected_group_idx = selected_group_idx(&raw);
-                let selected_oauth = selected_group_idx
-                    .and_then(|idx| groups.get(idx).map(|group| (idx, group.oauth.is_some())));
-                if let Some((idx, false)) = selected_oauth
-                    && let Some(fields) = groups.get(idx).and_then(|group| group.fields.as_ref())
-                {
-                    expected.extend(fields.iter().cloned());
-                }
-
-                // Map opaque `_fN` keys back to real field names.
-                // Common fields: _f0 … _f(common.len()-1)
-                // Group fields:  _f(common.len()) … _f(common.len()+group.len()-1)
-                let mut values: HashMap<String, String> = HashMap::new();
-                for (i, field) in common.iter().enumerate() {
-                    if let Some(v) = raw.get(&format!("_f{i}")) {
-                        values.insert(field.name.clone(), v.clone());
-                    }
-                }
-                let offset = common.len();
-                for (i, field) in expected.iter().skip(offset).enumerate() {
-                    if let Some(v) = raw.get(&format!("_f{}", offset + i)) {
-                        values.insert(field.name.clone(), v.clone());
-                    }
-                }
-                // Validate no empty values for expected required fields.
-                for field in &expected {
-                    if field.is_optional() {
-                        continue;
-                    }
-                    let val = values.get(&field.name).map(|s| s.as_str()).unwrap_or("");
-                    if val.is_empty() {
-                        let message =
-                            format!("credential value for {} cannot be empty", field.name);
+                let submitted = match submitted_form_fields(FormFieldsCtx {
+                    body: &req.body,
+                    spec,
+                    groups,
+                }) {
+                    Ok(submitted) => submitted,
+                    Err(message) => {
                         req.respond(Reply {
                             status: 400,
                             html: &message,
                         });
                         return Err(SfaeError::Other(message));
                     }
-                }
+                };
 
-                // Return expected field values. Omit empty optional fields.
-                let result: HashMap<String, String> = expected
-                    .iter()
-                    .filter_map(|f| {
-                        values.remove(&f.name).and_then(|v| {
-                            if v.is_empty() && f.is_optional() {
-                                None
-                            } else {
-                                Some((f.name.clone(), v))
-                            }
-                        })
-                    })
-                    .collect();
-
-                if let Some((group_idx, true)) = selected_oauth {
+                if let Some((group_idx, true)) = submitted.selected_oauth {
                     let Some(flow) = hosted_oauth.as_mut() else {
                         req.respond(Reply {
                             status: 400,
@@ -784,7 +733,7 @@ pub fn browser_prompt_spec(
                             "OAuth authorization has not completed".into(),
                         ));
                     }
-                    if !result.is_empty() {
+                    if !submitted.result.is_empty() {
                         req.respond(Reply {
                             status: 400,
                             html: "Hosted OAuth cannot store local form fields in this phase",
@@ -826,7 +775,7 @@ pub fn browser_prompt_spec(
                     status: 200,
                     html: &build_done_page(),
                 });
-                return Ok(BrowserPromptResult::Values(result));
+                return Ok(BrowserPromptResult::Values(submitted.result));
             }
             _ => {
                 req.respond(Reply {
@@ -836,6 +785,79 @@ pub fn browser_prompt_spec(
             }
         }
     }
+}
+
+#[cfg(feature = "cli")]
+struct FormFieldsCtx<'a> {
+    body: &'a str,
+    spec: &'a PromptSpec,
+    groups: &'a [crate::spec::GroupSpec],
+}
+
+#[cfg(feature = "cli")]
+struct SubmittedFields {
+    result: HashMap<String, String>,
+    selected_oauth: Option<(usize, bool)>,
+}
+
+#[cfg(feature = "cli")]
+fn submitted_form_fields(ctx: FormFieldsCtx<'_>) -> Result<SubmittedFields, String> {
+    let FormFieldsCtx { body, spec, groups } = ctx;
+    let raw = parse_form_fields(body);
+
+    let common = collect_common_fields(spec);
+    let mut expected = common.clone();
+    let selected_group_idx = selected_group_idx(&raw);
+    let selected_oauth = selected_group_idx
+        .and_then(|idx| groups.get(idx).map(|group| (idx, group.oauth.is_some())));
+    if let Some((idx, false)) = selected_oauth
+        && let Some(fields) = groups.get(idx).and_then(|group| group.fields.as_ref())
+    {
+        expected.extend(fields.iter().cloned());
+    }
+
+    let mut values: HashMap<String, String> = HashMap::new();
+    for (i, field) in common.iter().enumerate() {
+        if let Some(v) = raw.get(&format!("_f{i}")) {
+            values.insert(field.name.clone(), v.clone());
+        }
+    }
+    let offset = common.len();
+    for (i, field) in expected.iter().skip(offset).enumerate() {
+        if let Some(v) = raw.get(&format!("_f{}", offset + i)) {
+            values.insert(field.name.clone(), v.clone());
+        }
+    }
+    for field in &expected {
+        if field.is_optional() {
+            continue;
+        }
+        let val = values.get(&field.name).map(|s| s.as_str()).unwrap_or("");
+        if val.is_empty() {
+            return Err(format!(
+                "credential value for {} cannot be empty",
+                field.name
+            ));
+        }
+    }
+
+    let result = expected
+        .iter()
+        .filter_map(|f| {
+            values.remove(&f.name).and_then(|v| {
+                if v.is_empty() && f.is_optional() {
+                    None
+                } else {
+                    Some((f.name.clone(), v))
+                }
+            })
+        })
+        .collect();
+
+    Ok(SubmittedFields {
+        result,
+        selected_oauth,
+    })
 }
 
 #[cfg(feature = "cli")]
@@ -934,14 +956,9 @@ fn selected_group_idx(raw: &HashMap<String, String>) -> Option<usize> {
     raw.get("_group").and_then(|idx| idx.parse::<usize>().ok())
 }
 
-/// Collect a secret from the user via a local web page opened in the default browser.
+/// Collect a secret through a local browser page and return the submitted value.
 ///
-/// - `label` — heading shown on the page (e.g., "Enter API_KEY for github.com").
-/// - `url`   — optional link displayed on the page to help the user find where to create the secret.
-///
-/// Starts a temporary HTTP server on `127.0.0.1` (random port), opens the browser,
-/// waits for the user to submit the form, then returns the secret.
-/// There is no built-in timeout.
+/// Starts a temporary HTTP server, opens the browser, and waits without a built-in timeout.
 #[cfg(feature = "cli")]
 pub fn browser_prompt(args: BrowserPromptArgs<'_>) -> Result<String, SfaeError> {
     let BrowserPromptArgs { label, url } = args;
