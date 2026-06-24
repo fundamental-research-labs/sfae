@@ -31,18 +31,18 @@ SFAE is private/pre-release. The current path to an open-source-ready release is
 
 ## Installation
 
-SFAE is for agent workflows, so the main install path is the skill. Install the
-skill in the current project first:
+SFAE is for agent workflows, so the main install path is the skill. Just install
+the SFAE skill in the current project:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex
+curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --codex
 ```
 
 Use `--claude`, `--grok`, or `--all` for other agent targets. To install every
 default target:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --all
+curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --all
 ```
 
 The skill includes a bundled `install.sh` support script. If an agent tries to
@@ -51,7 +51,7 @@ trying Homebrew first, then npm, then the direct release installer. To install
 the CLI immediately while installing the skill:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex --install-cli
+curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --codex --install-cli
 ```
 
 When `sfae` is already available, refresh or install the bundled skill from the
@@ -83,13 +83,13 @@ binary. The package name is a placeholder until the npm account/scope exists.
 Or use the direct installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install.sh | sh
+curl -fsSL https://sfae.io/install.sh | sh
 ```
 
 By default this installs to `/usr/local/bin/sfae`. To choose another location:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install.sh | env SFAE_INSTALL_DIR="$HOME/.local/bin" sh
+curl -fsSL https://sfae.io/install.sh | env SFAE_INSTALL_DIR="$HOME/.local/bin" sh
 ```
 
 Update through the owning install method:

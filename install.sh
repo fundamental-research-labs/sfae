@@ -2,9 +2,16 @@
 set -eu
 
 repo="${SFAE_REPO:-fundamental-research-labs/sfae}"
-install_url="https://raw.githubusercontent.com/$repo/main/install.sh"
 install_dir="${SFAE_INSTALL_DIR:-/usr/local/bin}"
 version="${SFAE_VERSION:-latest}"
+
+if [ -n "${SFAE_INSTALL_URL:-}" ]; then
+  install_url="$SFAE_INSTALL_URL"
+elif [ "$repo" = "fundamental-research-labs/sfae" ]; then
+  install_url="https://sfae.io/install.sh"
+else
+  install_url="https://raw.githubusercontent.com/$repo/main/install.sh"
+fi
 
 case "$(uname -s)" in
   Darwin) os="macos" ;;

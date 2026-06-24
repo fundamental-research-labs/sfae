@@ -30,6 +30,14 @@ jobs:
           VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "dev")
           sed -i "s/__VERSION__/${VERSION}/g" docs/index.html
 
+      - name: Publish installer entrypoints
+        run: |
+          cp install.sh docs/install.sh
+          cp install-skill.sh docs/install-skill.sh
+          mkdir -p docs/skill
+          cp skill/SKILL.md docs/skill/SKILL.md
+          cp skill/install.sh docs/skill/install.sh
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3

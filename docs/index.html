@@ -140,8 +140,24 @@
       border-top: 1px solid var(--border);
     }
 
+    .install-methods li.recommended {
+      padding: 20px 16px;
+      margin-bottom: 12px;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      background: var(--accent-light);
+    }
+
     .install-methods li:last-child {
       border-bottom: 1px solid var(--border);
+    }
+
+    .method-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
     }
 
     .method-title {
@@ -149,6 +165,22 @@
       font-weight: 600;
       color: var(--text);
       margin-bottom: 8px;
+    }
+
+    .method-heading .method-title {
+      margin-bottom: 0;
+    }
+
+    .method-badge {
+      flex: 0 0 auto;
+      padding: 2px 7px;
+      border: 1px solid var(--accent);
+      border-radius: 999px;
+      color: var(--accent);
+      font-size: 0.62rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
     }
 
     .method-desc {
@@ -209,80 +241,6 @@
       font-family: 'JetBrains Mono', monospace;
     }
 
-    /* CTA */
-    .cta {
-      padding: 64px 0;
-      text-align: center;
-    }
-
-    .cta-install {
-      display: inline-flex;
-      align-items: center;
-      gap: 0;
-      background: var(--text);
-      border-radius: 4px;
-      margin-bottom: 24px;
-    }
-
-    .cta-install pre {
-      display: inline-block;
-      margin: 0;
-      font-size: 0.85rem;
-      background: none;
-      color: var(--bg);
-      border: none;
-      padding: 16px 0 16px 24px;
-      border-radius: 0;
-    }
-
-    .cta-install .copy-btn {
-      background: none;
-      border: none;
-      color: var(--text-tertiary);
-      cursor: pointer;
-      padding: 16px 20px 16px 16px;
-      display: flex;
-      align-items: center;
-      transition: color 0.15s;
-    }
-
-    .cta-install .copy-btn:hover {
-      color: var(--bg);
-    }
-
-    .cta-install .copy-btn.copied {
-      color: #4ade80;
-    }
-
-    .cta-install .copy-btn svg {
-      width: 16px;
-      height: 16px;
-    }
-
-    .cta-github {
-      margin-top: 4px;
-    }
-
-    .cta-github a {
-      color: var(--text-tertiary);
-      text-decoration: none;
-      transition: color 0.15s;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.8rem;
-      font-weight: 400;
-    }
-
-    .cta-github a:hover {
-      color: var(--text);
-    }
-
-    .cta-github svg {
-      width: 16px;
-      height: 16px;
-    }
-
     /* Footer */
     footer {
       padding: 32px 0;
@@ -325,18 +283,10 @@
         padding: 10px 12px;
       }
 
-      .cta pre {
-        padding: 12px 20px;
-        font-size: 0.78rem;
-      }
-
-      .cta-install {
-        max-width: 100%;
-      }
-
-      .cta-install pre {
-        white-space: pre-wrap;
-        text-align: left;
+      .method-heading {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 6px;
       }
     }
   </style>
@@ -384,27 +334,25 @@
     <section>
       <h2 class="section-title">Install</h2>
       <ul class="install-methods">
-        <li>
-          <div class="method-title">Skill first</div>
-          <p class="method-desc">Install the agent skill in the current project. The skill carries its own CLI installer for agents that need SFAE later.</p>
-          <pre><code>curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex</code></pre>
+        <li class="recommended">
+          <div class="method-heading">
+            <div class="method-title">Just install the SFAE skill</div>
+            <div class="method-badge">Recommended</div>
+          </div>
+          <p class="method-desc">Adds the agent skill to the current Codex project. The skill carries its own CLI installer for requests that need SFAE.</p>
+          <pre><code>curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --codex</code></pre>
         </li>
         <li>
           <div class="method-title">Skill plus CLI</div>
           <p class="method-desc">Install the skill and immediately install the CLI through Homebrew, npm, or the direct release installer.</p>
-          <pre><code>curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex --install-cli</code></pre>
+          <pre><code>curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --codex --install-cli</code></pre>
         </li>
         <li>
           <div class="method-title">CLI only</div>
           <p class="method-desc">Use Homebrew first. npm is a placeholder package until the npm scope is claimed; the direct installer is the fallback.</p>
           <pre><code>brew install fundamental-research-labs/tap/sfae
 npm install -g @fundamental-research-labs/sfae
-curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install.sh | sh</code></pre>
-        </li>
-        <li>
-          <div class="method-title">Update</div>
-          <p class="method-desc">SFAE updates through the package manager or installer that owns the current binary.</p>
-          <pre><code>sfae update</code></pre>
+curl -fsSL https://sfae.io/install.sh | sh</code></pre>
         </li>
       </ul>
     </section>
@@ -441,30 +389,6 @@ curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main
       </ol>
     </section>
 
-    <!-- CTA -->
-    <section class="cta">
-      <div class="cta-install">
-        <pre><code>curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex</code></pre>
-        <button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy to clipboard">
-          <svg class="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="9" y="9" width="13" height="13" rx="2"/>
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-          </svg>
-          <svg class="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:none">
-            <polyline points="4 12 9 17 20 6"/>
-          </svg>
-        </button>
-      </div>
-      <div class="cta-github">
-        <a href="https://github.com/fundamental-research-labs/sfae">
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
-          </svg>
-          <span>GitHub</span>
-        </a>
-      </div>
-    </section>
-
     <!-- Footer -->
     <footer>
       <div><a href="https://github.com/fundamental-research-labs/sfae">SFAE</a> — Speak Friend, and Enter 🧙‍♂️</div>
@@ -472,20 +396,5 @@ curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main
     </footer>
 
   </div>
-  <script>
-    function copyInstall(btn) {
-      navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex');
-      var copy = btn.querySelector('.icon-copy');
-      var check = btn.querySelector('.icon-check');
-      copy.style.display = 'none';
-      check.style.display = 'block';
-      btn.classList.add('copied');
-      setTimeout(function() {
-        check.style.display = 'none';
-        copy.style.display = 'block';
-        btn.classList.remove('copied');
-      }, 2000);
-    }
-  </script>
 </body>
 </html>
