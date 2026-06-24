@@ -1,0 +1,35 @@
+version: 1
+rules:
+  max-function-parameters:
+    enabled: true
+    max: 4
+  source-file-header:
+    required: true
+    min-length: 40
+    max-length: 0
+  max-source-file-lines:
+    max: 1000
+  max-function-body-lines:
+    max: 0
+  function-docstring:
+    policy: optional
+  indent:
+    type: spaces
+    width: 4
+  casing:
+    enabled: true
+    functions: language-default
+    variables: language-default
+    types: language-default
+    constants: language-default
+    ignore-names:
+      - _
+    ignore-patterns:
+      - "^_"
+languages:
+  rust:
+    files:
+      - crates/*/src/...
+      - crates/*/tests/...
+    exclude:
+      - "**/fixtures/**"
