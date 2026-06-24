@@ -92,10 +92,16 @@ impl HostedOAuthBroker for MockHostedOAuthBroker {
 
 fn test_provider_registry() -> HostedOAuthProviderRegistry {
     HostedOAuthProviderRegistry {
-        providers: vec![HostedOAuthProvider {
-            provider: "discord".to_string(),
-            domains: vec!["discord.com".to_string()],
-        }],
+        providers: vec![
+            HostedOAuthProvider {
+                provider: "discord".to_string(),
+                domains: vec!["discord.com".to_string()],
+            },
+            HostedOAuthProvider {
+                provider: "google".to_string(),
+                domains: vec!["googleapis.com".to_string()],
+            },
+        ],
     }
 }
 
@@ -220,10 +226,41 @@ fn resolves_discord_from_subdomain() {
 }
 
 #[test]
+fn resolves_google_provider_and_googleapis_subdomains() {
+    for domain in [
+        "googleapis.com",
+        "gmail.googleapis.com",
+        "docs.googleapis.com",
+        "sheets.googleapis.com",
+        "people.googleapis.com",
+        "www.googleapis.com",
+    ] {
+        let provider = resolve_hosted_provider(HostedProviderResolve {
+            domain,
+            requested_provider: None,
+            registry: &test_provider_registry(),
+        })
+        .unwrap();
+        assert_eq!(provider, "google");
+    }
+}
+
+#[test]
+fn resolves_explicit_google_provider() {
+    let provider = resolve_hosted_provider(HostedProviderResolve {
+        domain: "example.com",
+        requested_provider: Some("google"),
+        registry: &test_provider_registry(),
+    })
+    .unwrap();
+    assert_eq!(provider, "google");
+}
+
+#[test]
 fn rejects_unknown_provider() {
     let err = resolve_hosted_provider(HostedProviderResolve {
         domain: "example.com",
-        requested_provider: Some("google"),
+        requested_provider: Some("slack"),
         registry: &test_provider_registry(),
     })
     .unwrap_err();
@@ -241,7 +278,10 @@ fn rejects_unknown_domain_without_provider() {
         registry: &test_provider_registry(),
     })
     .unwrap_err();
-    assert!(err.to_string().contains("supported providers: discord"));
+    assert!(
+        err.to_string()
+            .contains("supported providers: discord, google")
+    );
 }
 
 #[test]

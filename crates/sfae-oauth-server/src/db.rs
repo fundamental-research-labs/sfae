@@ -2,10 +2,18 @@
 
 use sqlx::{Executor, PgPool};
 
+const MIGRATION_LOCK_ID: i64 = 0x5fae_0a11;
+
 /// Apply idempotent schema SQL on service startup.
 pub(crate) async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
-    pool.execute(sqlx::raw_sql(include_str!("../migrations/001_init.sql")))
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(MIGRATION_LOCK_ID)
+        .execute(&mut *tx)
         .await?;
+    tx.execute(sqlx::raw_sql(include_str!("../migrations/001_init.sql")))
+        .await?;
+    tx.commit().await?;
     Ok(())
 }
 

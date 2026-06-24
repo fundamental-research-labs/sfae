@@ -208,38 +208,14 @@ impl<'a> RetryCtx<'a> {
             }
         };
 
-        let Some(provider) = resolved.data.metadata.get("OAUTH_PROVIDER") else {
-            if verbose {
-                eprintln!("< 401 (credential set is not hosted OAuth)");
+        let material = match local_refresh_material(&resolved.data) {
+            Ok(material) => material,
+            Err(reason) => {
+                if verbose {
+                    eprintln!("< 401 ({reason})");
+                }
+                return Ok(original_response);
             }
-            return Ok(original_response);
-        };
-        if provider != "discord" {
-            if verbose {
-                eprintln!("< 401 (hosted OAuth provider '{provider}' cannot be refreshed)");
-            }
-            return Ok(original_response);
-        }
-        let Some(refresh_token) = resolved.data.internal.get("OAUTH_REFRESH_TOKEN") else {
-            if verbose {
-                eprintln!("< 401 (local OAuth credential has no internal refresh token)");
-            }
-            return Ok(original_response);
-        };
-        let Some(broker_credential_id) = resolved.data.metadata.get("OAUTH_BROKER_CREDENTIAL_ID")
-        else {
-            if verbose {
-                eprintln!("< 401 (local OAuth credential has no broker credential id)");
-            }
-            return Ok(original_response);
-        };
-        let Some(broker_credential_secret) =
-            resolved.data.internal.get("OAUTH_BROKER_CREDENTIAL_SECRET")
-        else {
-            if verbose {
-                eprintln!("< 401 (local OAuth credential has no broker credential secret)");
-            }
-            return Ok(original_response);
         };
 
         if verbose {
@@ -256,10 +232,10 @@ impl<'a> RetryCtx<'a> {
         };
         let manager = sfae_core::oauth::OAuthCredentialManager::new(&broker);
         let refreshed = match manager.refresh_credential(sfae_core::oauth::HostedOAuthRefresh {
-            provider,
-            broker_credential_id,
-            broker_credential_secret,
-            refresh_token,
+            provider: material.provider,
+            broker_credential_id: material.broker_credential_id,
+            broker_credential_secret: material.broker_credential_secret,
+            refresh_token: material.refresh_token,
         }) {
             Ok(credential) => credential,
             Err(e) => {
@@ -379,6 +355,36 @@ impl<'a> RetryCtx<'a> {
 
         Ok(retry_response)
     }
+}
+
+struct LocalRefreshMaterial<'a> {
+    provider: &'a str,
+    refresh_token: &'a str,
+    broker_credential_id: &'a str,
+    broker_credential_secret: &'a str,
+}
+
+fn local_refresh_material(
+    data: &CredentialSetData,
+) -> Result<LocalRefreshMaterial<'_>, &'static str> {
+    let Some(provider) = data.metadata.get("OAUTH_PROVIDER") else {
+        return Err("credential set is not hosted OAuth");
+    };
+    let Some(refresh_token) = data.internal.get("OAUTH_REFRESH_TOKEN") else {
+        return Err("local OAuth credential has no internal refresh token");
+    };
+    let Some(broker_credential_id) = data.metadata.get("OAUTH_BROKER_CREDENTIAL_ID") else {
+        return Err("local OAuth credential has no broker credential id");
+    };
+    let Some(broker_credential_secret) = data.internal.get("OAUTH_BROKER_CREDENTIAL_SECRET") else {
+        return Err("local OAuth credential has no broker credential secret");
+    };
+    Ok(LocalRefreshMaterial {
+        provider,
+        refresh_token,
+        broker_credential_id,
+        broker_credential_secret,
+    })
 }
 
 struct SelectedCredentialSet {
@@ -502,4 +508,42 @@ fn mask_placeholders(text: &str) -> String {
         result = result.replace(&format!("{{{key}}}"), "***");
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    #[test]
+    fn local_oauth_refresh_material_accepts_google_provider() {
+        let data = CredentialSetData {
+            values: HashMap::from([("OAUTH_ACCESS_TOKEN".to_string(), "access-token".to_string())]),
+            internal: HashMap::from([
+                (
+                    "OAUTH_REFRESH_TOKEN".to_string(),
+                    "refresh-token".to_string(),
+                ),
+                (
+                    "OAUTH_BROKER_CREDENTIAL_SECRET".to_string(),
+                    "broker-secret".to_string(),
+                ),
+            ]),
+            metadata: HashMap::from([
+                ("OAUTH_PROVIDER".to_string(), "google".to_string()),
+                (
+                    "OAUTH_BROKER_CREDENTIAL_ID".to_string(),
+                    "broker-id".to_string(),
+                ),
+            ]),
+        };
+
+        let material = local_refresh_material(&data).unwrap();
+
+        assert_eq!(material.provider, "google");
+        assert_eq!(material.refresh_token, "refresh-token");
+        assert_eq!(material.broker_credential_id, "broker-id");
+        assert_eq!(material.broker_credential_secret, "broker-secret");
+    }
 }

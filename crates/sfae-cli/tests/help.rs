@@ -248,9 +248,14 @@ fn request_help_explains_placeholders_lookup_and_output() {
 #[test]
 fn destructive_command_help_explains_scope_and_dry_run() {
     let delete_stdout = help_output(&["delete", "--help"]);
-    assert!(delete_stdout.contains("Default deletion is prompt-free"));
+    assert!(
+        delete_stdout
+            .contains("Default UUID deletion attempts broker-mediated hosted OAuth revoke")
+    );
+    assert!(delete_stdout.contains("does not delete keychain secret material"));
     assert!(delete_stdout.contains("Use --purge only for manual cleanup"));
     assert!(delete_stdout.contains("may prompt for password"));
+    assert!(delete_stdout.contains("hosted OAuth revoke is attempted for UUID deletes either way"));
     assert!(delete_stdout.contains("--purge"));
     assert!(delete_stdout.contains("Domain deletion is for legacy flat credentials"));
     assert!(delete_stdout.contains("--label <LABEL>"));

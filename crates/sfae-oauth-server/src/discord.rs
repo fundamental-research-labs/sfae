@@ -1,6 +1,7 @@
 //! Discord OAuth provider descriptor, token exchange, and identity lookup.
 
 use crate::config::Config;
+use crate::provider::{ProviderToken, ProviderUser};
 use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 
@@ -25,6 +26,19 @@ pub(crate) struct DiscordToken {
 }
 
 impl DiscordToken {
+    /// Convert Discord token material into the provider-neutral broker shape.
+    pub(crate) fn into_provider_token(self, requested: &[String]) -> ProviderToken {
+        let scopes = self.scopes(requested);
+        let expires_at = self.expires_at();
+        ProviderToken {
+            access_token: self.access_token,
+            refresh_token: self.refresh_token,
+            token_type: self.token_type,
+            scopes,
+            expires_at,
+        }
+    }
+
     /// Compute the absolute access-token expiry when Discord returns `expires_in`.
     pub(crate) fn expires_at(&self) -> Option<DateTime<Utc>> {
         self.expires_in
@@ -60,6 +74,16 @@ impl DiscordUser {
     /// Prefer Discord display name and fall back to username.
     pub(crate) fn display_name(&self) -> Option<String> {
         self.global_name.clone().or_else(|| self.username.clone())
+    }
+
+    /// Convert Discord profile data into the provider-neutral broker shape.
+    pub(crate) fn into_provider_user(self) -> ProviderUser {
+        let display_name = self.display_name();
+        ProviderUser {
+            subject: self.id,
+            display_name,
+            email: self.email,
+        }
     }
 }
 
@@ -109,16 +133,16 @@ pub(crate) async fn exchange_code(args: DiscordTokenRequest<'_>) -> Result<Disco
         .form(&params)
         .send()
         .await
-        .map_err(|e| format!("discord token request failed: {e}"))?;
+        .map_err(|e| format!("provider token request failed: {e}"))?;
     if !response.status().is_success() {
         let status = response.status();
         tracing::warn!("Discord token exchange rejected: {status}");
-        return Err(format!("discord_token_status_{status}"));
+        return Err(format!("provider_token_status_{status}"));
     }
     response
         .json::<DiscordToken>()
         .await
-        .map_err(|e| format!("discord token response parse failed: {e}"))
+        .map_err(|e| format!("provider token response parse failed: {e}"))
 }
 
 /// Inputs for a Discord token exchange.
@@ -148,16 +172,16 @@ pub(crate) async fn refresh_token(args: DiscordRefreshRequest<'_>) -> Result<Dis
         .form(&params)
         .send()
         .await
-        .map_err(|e| format!("discord refresh request failed: {e}"))?;
+        .map_err(|e| format!("provider refresh request failed: {e}"))?;
     if !response.status().is_success() {
         let status = response.status();
         tracing::warn!("Discord token refresh rejected: {status}");
-        return Err(format!("discord_refresh_status_{status}"));
+        return Err(format!("provider_refresh_status_{status}"));
     }
     response
         .json::<DiscordToken>()
         .await
-        .map_err(|e| format!("discord refresh response parse failed: {e}"))
+        .map_err(|e| format!("provider refresh response parse failed: {e}"))
 }
 
 /// Inputs for a Discord token refresh.
@@ -185,11 +209,11 @@ pub(crate) async fn revoke_token(args: DiscordRevokeRequest<'_>) -> Result<(), S
         .form(&params)
         .send()
         .await
-        .map_err(|e| format!("discord revoke request failed: {e}"))?;
+        .map_err(|e| format!("provider revoke request failed: {e}"))?;
     if !response.status().is_success() {
         let status = response.status();
         tracing::warn!("Discord token revoke rejected: {status}");
-        return Err(format!("discord_revoke_status_{status}"));
+        return Err(format!("provider_revoke_status_{status}"));
     }
     Ok(())
 }
@@ -214,15 +238,15 @@ pub(crate) async fn fetch_user(args: DiscordUserRequest<'_>) -> Result<DiscordUs
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| format!("discord user request failed: {e}"))?;
+        .map_err(|e| format!("provider identity request failed: {e}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        return Err(format!("discord_user_status_{status}"));
+        return Err(format!("provider_identity_status_{status}"));
     }
     response
         .json::<DiscordUser>()
         .await
-        .map_err(|e| format!("discord user response parse failed: {e}"))
+        .map_err(|e| format!("provider identity response parse failed: {e}"))
 }
 
 /// Inputs for loading Discord user identity.
@@ -272,6 +296,14 @@ mod tests {
             discord_token_revoke_url: Url::parse("https://discord.com/api/oauth2/token/revoke")
                 .unwrap(),
             discord_userinfo_url: Url::parse("https://discord.com/api/v10/users/@me").unwrap(),
+            google_client_id: "google-client-id".to_string(),
+            google_client_secret: "google-client-secret".to_string(),
+            google_authorize_url: Url::parse("https://accounts.google.com/o/oauth2/v2/auth")
+                .unwrap(),
+            google_token_url: Url::parse("https://oauth2.googleapis.com/token").unwrap(),
+            google_revoke_url: Url::parse("https://oauth2.googleapis.com/revoke").unwrap(),
+            google_userinfo_url: Url::parse("https://openidconnect.googleapis.com/v1/userinfo")
+                .unwrap(),
             base_url: Url::parse("https://oauth.sfae.io").unwrap(),
             allowed_return_origins: HashSet::new(),
             port: 3100,
@@ -324,7 +356,7 @@ mod tests {
         assert_eq!(pairs["client_id"], "client-id");
         assert_eq!(
             pairs["redirect_uri"],
-            "https://oauth.sfae.io/v1/callback/discord"
+            "https://oauth.sfae.io/oauth/callback"
         );
         assert_eq!(pairs["scope"], "identify scope.read");
         assert_eq!(pairs["state"], "state-value");

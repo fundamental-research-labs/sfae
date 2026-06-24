@@ -8,10 +8,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use url::Url;
 
 const INTERNAL_AUTH: &str = "mock-provider-test-internal";
@@ -23,7 +24,7 @@ async fn broker_callback_completes_against_mock_oauth_provider() {
         return;
     };
 
-    let provider = MockProvider::start();
+    let provider = MockProvider::start(2);
     let broker = BrokerProcess::start(BrokerStart {
         database_url,
         provider_base_url: provider.base_url.clone(),
@@ -52,7 +53,7 @@ async fn broker_callback_completes_against_mock_oauth_provider() {
 
     let state = oauth_state_from_authorization_url(&session.authorization_url);
     let callback = format!(
-        "{}/v1/callback/discord?code=mock-code&state={state}",
+        "{}/oauth/callback?code=mock-code&state={state}",
         broker.base_url
     );
     let callback_resp = http.get(callback).send().await.unwrap();
@@ -85,7 +86,7 @@ async fn broker_callback_completes_against_mock_oauth_provider() {
     assert_eq!(token_body["code"], "mock-code");
     assert_eq!(
         token_body["redirect_uri"],
-        format!("{}/v1/callback/discord", broker.base_url)
+        format!("{}/oauth/callback", broker.base_url)
     );
     assert_eq!(token_body["client_id"], "mock-client-id");
     assert_eq!(token_body["client_secret"], "mock-client-secret");
@@ -95,6 +96,166 @@ async fn broker_callback_completes_against_mock_oauth_provider() {
         provider_requests[1].header("authorization"),
         Some("Bearer mock-access-token")
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn google_local_handoff_refresh_and_revoke_use_generic_callback() {
+    let Some(database_url) = std::env::var("SFAE_OAUTH_TEST_DATABASE_URL").ok() else {
+        eprintln!("skipping mock provider integration test: SFAE_OAUTH_TEST_DATABASE_URL is unset");
+        return;
+    };
+
+    let provider = MockProvider::start(4);
+    let broker = BrokerProcess::start(BrokerStart {
+        database_url: database_url.clone(),
+        provider_base_url: provider.base_url.clone(),
+    });
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    wait_for_health(HealthProbe {
+        http: &http,
+        base_url: &broker.base_url,
+    })
+    .await;
+
+    let redeem_verifier = "redeem-verifier-with-enough-entropy-for-test";
+    let local = create_google_local_session(CreateLocalSession {
+        http: &http,
+        base_url: &broker.base_url,
+        redeem_challenge: &redeem_challenge(redeem_verifier),
+    })
+    .await;
+    let authorize_url = Url::parse(&local.authorization_url).unwrap();
+    let authorize_pairs: HashMap<_, _> = authorize_url.query_pairs().into_owned().collect();
+    assert_eq!(
+        authorize_pairs["redirect_uri"],
+        format!("{}/oauth/callback", broker.base_url)
+    );
+    assert_eq!(authorize_pairs["access_type"], "offline");
+    assert_eq!(authorize_pairs["include_granted_scopes"], "true");
+    assert!(authorize_pairs["scope"].contains("openid"));
+    assert!(authorize_pairs["scope"].contains("email"));
+    assert!(authorize_pairs["scope"].contains("profile"));
+    assert!(
+        authorize_pairs["scope"]
+            .contains("https://www.googleapis.com/auth/drive.metadata.readonly")
+    );
+
+    let state = oauth_state_from_authorization_url(&local.authorization_url);
+    let callback = format!(
+        "{}/oauth/callback?code=google-code&state={state}&provider=discord",
+        broker.base_url
+    );
+    let callback_resp = http.get(callback).send().await.unwrap();
+    assert_eq!(callback_resp.status(), StatusCode::SEE_OTHER);
+    let location = callback_resp
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(location.contains("status=success"));
+    let completion_verifier = query_value(location, "completion_verifier");
+
+    let redeemed = redeem_local_session(RedeemLocalSession {
+        http: &http,
+        base_url: &broker.base_url,
+        session_id: &local.session_id,
+        redeem_verifier,
+        completion_verifier: &completion_verifier,
+    })
+    .await;
+    assert_eq!(
+        redeemed.values["OAUTH_ACCESS_TOKEN"],
+        "mock-google-access-token"
+    );
+    assert!(!redeemed.values.contains_key("OAUTH_REFRESH_TOKEN"));
+    assert_eq!(
+        redeemed.internal["OAUTH_REFRESH_TOKEN"],
+        "mock-google-refresh-token"
+    );
+    assert!(
+        redeemed
+            .internal
+            .contains_key("OAUTH_BROKER_CREDENTIAL_SECRET")
+    );
+    assert_eq!(redeemed.metadata["OAUTH_PROVIDER"], "google");
+    assert_eq!(
+        redeemed.metadata["OAUTH_PROVIDER_SUBJECT"],
+        "mock-google-sub"
+    );
+    assert_eq!(redeemed.metadata["OAUTH_DISPLAY_NAME"], "Mock Google User");
+
+    let refreshed = refresh_google_local_credential(RefreshLocalCredential {
+        http: &http,
+        base_url: &broker.base_url,
+        credential_id: &redeemed.metadata["OAUTH_BROKER_CREDENTIAL_ID"],
+        credential_secret: &redeemed.internal["OAUTH_BROKER_CREDENTIAL_SECRET"],
+        refresh_token: &redeemed.internal["OAUTH_REFRESH_TOKEN"],
+    })
+    .await;
+    assert_eq!(
+        refreshed.values["OAUTH_ACCESS_TOKEN"],
+        "mock-google-refreshed-access-token"
+    );
+    assert!(!refreshed.internal.contains_key("OAUTH_REFRESH_TOKEN"));
+    assert_eq!(refreshed.metadata["OAUTH_PROVIDER"], "google");
+    assert!(!refreshed.metadata.contains_key("OAUTH_SCOPES"));
+
+    revoke_google_local_credential(RevokeLocalCredential {
+        http: &http,
+        base_url: &broker.base_url,
+        credential_id: &redeemed.metadata["OAUTH_BROKER_CREDENTIAL_ID"],
+        credential_secret: &redeemed.internal["OAUTH_BROKER_CREDENTIAL_SECRET"],
+        refresh_token: &redeemed.internal["OAUTH_REFRESH_TOKEN"],
+    })
+    .await;
+
+    let pool = sqlx::PgPool::connect(&database_url).await.unwrap();
+    let (grant_provider, grant_status) = sqlx::query_as::<_, (String, String)>(
+        "SELECT provider, status FROM local_oauth_grants WHERE id = $1::uuid",
+    )
+    .bind(&redeemed.metadata["OAUTH_BROKER_CREDENTIAL_ID"])
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(grant_provider, "google");
+    assert_eq!(grant_status, "revoked");
+
+    let provider_requests = provider.finish();
+    assert_eq!(provider_requests.len(), 4);
+    let token_body = parse_urlencoded(&provider_requests[0].body);
+    assert_eq!(provider_requests[0].method, "POST");
+    assert_eq!(provider_requests[0].target, "/token");
+    assert_eq!(token_body["grant_type"], "authorization_code");
+    assert_eq!(token_body["code"], "google-code");
+    assert_eq!(
+        token_body["redirect_uri"],
+        format!("{}/oauth/callback", broker.base_url)
+    );
+    assert_eq!(token_body["client_id"], "mock-google-client-id");
+    assert_eq!(token_body["client_secret"], "mock-google-client-secret");
+    assert_eq!(provider_requests[1].method, "GET");
+    assert_eq!(provider_requests[1].target, "/userinfo");
+    assert_eq!(
+        provider_requests[1].header("authorization"),
+        Some("Bearer mock-google-access-token")
+    );
+
+    let refresh_body = parse_urlencoded(&provider_requests[2].body);
+    assert_eq!(provider_requests[2].target, "/token");
+    assert_eq!(refresh_body["grant_type"], "refresh_token");
+    assert_eq!(refresh_body["refresh_token"], "mock-google-refresh-token");
+    assert_eq!(refresh_body["client_id"], "mock-google-client-id");
+    assert_eq!(refresh_body["client_secret"], "mock-google-client-secret");
+
+    let revoke_body = parse_urlencoded(&provider_requests[3].body);
+    assert_eq!(provider_requests[3].target, "/revoke");
+    assert_eq!(revoke_body["token"], "mock-google-refresh-token");
+    assert!(!revoke_body.contains_key("token_type_hint"));
 }
 
 #[derive(Deserialize)]
@@ -108,6 +269,19 @@ struct SessionState {
     status: String,
     provider_subject: Option<String>,
     credential_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CreatedLocalSession {
+    session_id: String,
+    authorization_url: String,
+}
+
+#[derive(Deserialize)]
+struct RedeemedCredential {
+    values: HashMap<String, String>,
+    internal: HashMap<String, String>,
+    metadata: HashMap<String, String>,
 }
 
 struct CreateSession<'a> {
@@ -134,6 +308,113 @@ async fn create_session(args: CreateSession<'_>) -> CreatedSession {
         .json()
         .await
         .unwrap()
+}
+
+struct CreateLocalSession<'a> {
+    http: &'a reqwest::Client,
+    base_url: &'a str,
+    redeem_challenge: &'a str,
+}
+
+async fn create_google_local_session(args: CreateLocalSession<'_>) -> CreatedLocalSession {
+    args.http
+        .post(format!("{}/v1/local/oauth/sessions", args.base_url))
+        .json(&json!({
+            "provider": "google",
+            "domain": "googleapis.com",
+            "label": "mock-google",
+            "scopes": ["https://www.googleapis.com/auth/drive.metadata.readonly"],
+            "redeem_challenge": args.redeem_challenge,
+            "redeem_challenge_method": "S256",
+            "return_url": format!("{}/oauth-complete", args.base_url)
+        }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+struct RedeemLocalSession<'a> {
+    http: &'a reqwest::Client,
+    base_url: &'a str,
+    session_id: &'a str,
+    redeem_verifier: &'a str,
+    completion_verifier: &'a str,
+}
+
+async fn redeem_local_session(args: RedeemLocalSession<'_>) -> RedeemedCredential {
+    args.http
+        .post(format!(
+            "{}/v1/local/oauth/sessions/{}/redeem",
+            args.base_url, args.session_id
+        ))
+        .json(&json!({
+            "redeem_verifier": args.redeem_verifier,
+            "completion_verifier": args.completion_verifier
+        }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+struct RefreshLocalCredential<'a> {
+    http: &'a reqwest::Client,
+    base_url: &'a str,
+    credential_id: &'a str,
+    credential_secret: &'a str,
+    refresh_token: &'a str,
+}
+
+async fn refresh_google_local_credential(args: RefreshLocalCredential<'_>) -> RedeemedCredential {
+    args.http
+        .post(format!("{}/v1/local/oauth/refresh", args.base_url))
+        .json(&json!({
+            "provider": "google",
+            "broker_credential_id": args.credential_id,
+            "broker_credential_secret": args.credential_secret,
+            "refresh_token": args.refresh_token
+        }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+struct RevokeLocalCredential<'a> {
+    http: &'a reqwest::Client,
+    base_url: &'a str,
+    credential_id: &'a str,
+    credential_secret: &'a str,
+    refresh_token: &'a str,
+}
+
+async fn revoke_google_local_credential(args: RevokeLocalCredential<'_>) {
+    let response = args
+        .http
+        .post(format!("{}/v1/local/oauth/revoke", args.base_url))
+        .json(&json!({
+            "provider": "google",
+            "broker_credential_id": args.credential_id,
+            "broker_credential_secret": args.credential_secret,
+            "refresh_token": args.refresh_token
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
 
 struct SessionStatus<'a> {
@@ -191,6 +472,20 @@ fn oauth_state_from_authorization_url(raw: &str) -> String {
         .unwrap()
 }
 
+// xtask: allow-multi-param - test helper pairs URL with query key
+fn query_value(raw: &str, key: &str) -> String {
+    Url::parse(raw)
+        .unwrap()
+        .query_pairs()
+        .find_map(|pair| (pair.0 == key).then(|| pair.1.into_owned()))
+        .unwrap()
+}
+
+fn redeem_challenge(verifier: &str) -> String {
+    let digest = Sha256::digest(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
+}
+
 struct BrokerStart {
     database_url: String,
     provider_base_url: String,
@@ -212,6 +507,8 @@ impl BrokerProcess {
             .env("SFAE_OAUTH_TOKEN_ENCRYPTION_KEY", key)
             .env("DISCORD_CLIENT_ID", "mock-client-id")
             .env("DISCORD_CLIENT_SECRET", "mock-client-secret")
+            .env("GOOGLE_CLIENT_ID", "mock-google-client-id")
+            .env("GOOGLE_CLIENT_SECRET", "mock-google-client-secret")
             .env("BASE_URL", &base_url)
             .env("SFAE_SERVER_PORT", port.to_string())
             .env("SFAE_OAUTH_ALLOW_TEST_PROVIDER_URLS", "1")
@@ -229,6 +526,22 @@ impl BrokerProcess {
             )
             .env(
                 "DISCORD_USERINFO_URL",
+                format!("{}/userinfo", args.provider_base_url),
+            )
+            .env(
+                "GOOGLE_AUTHORIZE_URL",
+                format!("{}/authorize", args.provider_base_url),
+            )
+            .env(
+                "GOOGLE_TOKEN_URL",
+                format!("{}/token", args.provider_base_url),
+            )
+            .env(
+                "GOOGLE_REVOKE_URL",
+                format!("{}/revoke", args.provider_base_url),
+            )
+            .env(
+                "GOOGLE_USERINFO_URL",
                 format!("{}/userinfo", args.provider_base_url),
             )
             .stdout(Stdio::null())
@@ -257,11 +570,11 @@ struct MockProvider {
 }
 
 impl MockProvider {
-    fn start() -> Self {
+    fn start(expected_requests: usize) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
-        let handle = thread::spawn(move || collect_provider_requests(listener));
+        let handle = thread::spawn(move || collect_provider_requests(listener, expected_requests));
         Self { base_url, handle }
     }
 
@@ -270,16 +583,21 @@ impl MockProvider {
     }
 }
 
-fn collect_provider_requests(listener: TcpListener) -> Vec<ProviderRequest> {
+// xtask: allow-multi-param - test helper pairs listener with expected request count
+fn collect_provider_requests(
+    listener: TcpListener,
+    expected_requests: usize,
+) -> Vec<ProviderRequest> {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut requests = Vec::new();
-    while requests.len() < 2 && Instant::now() < deadline {
+    while requests.len() < expected_requests && Instant::now() < deadline {
         match listener.accept() {
             Ok((mut stream, _)) => {
                 let request = read_http_request(&mut stream);
                 respond_to_provider_request(ProviderResponse {
                     stream: &mut stream,
                     target: &request.target,
+                    body: &request.body,
                 });
                 requests.push(request);
             }
@@ -360,17 +678,32 @@ fn content_length_from_headers(headers: &str) -> usize {
 struct ProviderResponse<'a> {
     stream: &'a mut TcpStream,
     target: &'a str,
+    body: &'a str,
 }
 
 fn respond_to_provider_request(args: ProviderResponse<'_>) {
     match args.target {
-        "/token" => write_json_response(ResponseBody {
-            stream: args.stream,
-            body: r#"{"access_token":"mock-access-token","refresh_token":"mock-refresh-token","token_type":"Bearer","scope":"identify scope.read scope.write","expires_in":3600}"#,
-        }),
+        "/token" => {
+            let body = parse_urlencoded(args.body);
+            let response = if body.get("grant_type").map(String::as_str) == Some("refresh_token") {
+                r#"{"access_token":"mock-google-refreshed-access-token","token_type":"Bearer","expires_in":1800}"#
+            } else if body.get("client_id").map(String::as_str) == Some("mock-google-client-id") {
+                r#"{"access_token":"mock-google-access-token","refresh_token":"mock-google-refresh-token","token_type":"Bearer","scope":"email profile https://www.googleapis.com/auth/drive.metadata.readonly","expires_in":3600}"#
+            } else {
+                r#"{"access_token":"mock-access-token","refresh_token":"mock-refresh-token","token_type":"Bearer","scope":"identify scope.read scope.write","expires_in":3600}"#
+            };
+            write_json_response(ResponseBody {
+                stream: args.stream,
+                body: response,
+            });
+        }
         "/userinfo" => write_json_response(ResponseBody {
             stream: args.stream,
-            body: r#"{"id":"mock-user-123","username":"mockuser","global_name":"Mock User","email":"mock@example.test"}"#,
+            body: r#"{"id":"mock-user-123","username":"mockuser","global_name":"Mock User","sub":"mock-google-sub","name":"Mock Google User","email":"mock@example.test"}"#,
+        }),
+        "/revoke" => write_json_response(ResponseBody {
+            stream: args.stream,
+            body: r#"{}"#,
         }),
         _ => write_not_found(args.stream),
     }
