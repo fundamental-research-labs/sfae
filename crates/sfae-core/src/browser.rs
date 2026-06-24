@@ -619,28 +619,50 @@ pub fn browser_prompt_spec(
                 req.redirect(&authorization_url);
             }
             ("GET", "/oauth-complete") => {
-                if let Some(flow) = hosted_oauth.as_mut() {
-                    let session_id = extract_query_param(QueryLookup {
-                        path: &req.path,
-                        key: "session_id",
+                let Some(flow) = hosted_oauth.as_mut() else {
+                    req.respond(Reply {
+                        status: 400,
+                        html: "OAuth authorization has not started",
                     });
-                    let status = extract_query_param(QueryLookup {
-                        path: &req.path,
-                        key: "status",
+                    return Err(SfaeError::Other(
+                        "OAuth authorization has not started".into(),
+                    ));
+                };
+                if let Err(err) = capture_hosted_oauth_callback(HostedOAuthCallback {
+                    path: &req.path,
+                    flow,
+                }) {
+                    let message = err.to_string();
+                    req.respond(Reply {
+                        status: 400,
+                        html: &message,
                     });
-                    if session_id.as_deref() == Some(flow.session_id.as_str()) {
-                        if let Some(status) = status {
-                            flow.status = status;
-                        }
-                        flow.completion_verifier = extract_query_param(QueryLookup {
-                            path: &req.path,
-                            key: "completion_verifier",
-                        });
-                    }
+                    return Err(err);
                 }
+                let credential_id = match oauth_manager
+                    .as_mut()
+                    .ok_or_else(|| SfaeError::ConfigError("hosted OAuth is not configured".into()))
+                    .and_then(|manager| {
+                        complete_hosted_oauth(flow, manager, &mut oauth_credential_sink)
+                    }) {
+                    Ok(credential_id) => credential_id,
+                    Err(err) => {
+                        let status = hosted_oauth_error_status(&err);
+                        let message = err.to_string();
+                        req.respond(Reply {
+                            status,
+                            html: &message,
+                        });
+                        return Err(err);
+                    }
+                };
                 req.respond(Reply {
                     status: 200,
-                    html: local_oauth_complete_page(),
+                    html: &build_done_page(),
+                });
+                return Ok(BrowserPromptResult::HostedOAuth {
+                    session_id: flow.session_id.clone(),
+                    credential_id,
                 });
             }
             ("GET", "/oauth-status") => {
@@ -735,7 +757,7 @@ pub fn browser_prompt_spec(
                     .collect();
 
                 if let Some((group_idx, true)) = selected_oauth {
-                    let Some(flow) = hosted_oauth.as_ref() else {
+                    let Some(flow) = hosted_oauth.as_mut() else {
                         req.respond(Reply {
                             status: 400,
                             html: "OAuth authorization has not started",
@@ -771,29 +793,24 @@ pub fn browser_prompt_spec(
                             "hosted OAuth cannot store local form fields in this phase".into(),
                         ));
                     }
-                    let credential = oauth_manager
+                    let credential_id = match oauth_manager
                         .as_mut()
                         .ok_or_else(|| {
                             SfaeError::ConfigError("hosted OAuth is not configured".into())
-                        })?
-                        .redeem_session(
-                            &flow.session_id,
-                            flow.redeem_verifier.as_deref(),
-                            flow.completion_verifier.as_deref(),
-                        )?;
-                    let credential_id = if let Some(credential) = credential {
-                        let Some(sink) = oauth_credential_sink.as_mut() else {
+                        })
+                        .and_then(|manager| {
+                            complete_hosted_oauth(flow, manager, &mut oauth_credential_sink)
+                        }) {
+                        Ok(credential_id) => credential_id,
+                        Err(err) => {
+                            let status = hosted_oauth_error_status(&err);
+                            let message = err.to_string();
                             req.respond(Reply {
-                                status: 500,
-                                html: "OAuth credential storage is not configured",
+                                status,
+                                html: &message,
                             });
-                            return Err(SfaeError::ConfigError(
-                                "OAuth credential storage is not configured".into(),
-                            ));
-                        };
-                        Some(sink(credential)?)
-                    } else {
-                        flow.credential_id.clone()
+                            return Err(err);
+                        }
                     };
                     req.respond(Reply {
                         status: 200,
@@ -822,15 +839,99 @@ pub fn browser_prompt_spec(
 }
 
 #[cfg(feature = "cli")]
-fn selected_group_idx(raw: &HashMap<String, String>) -> Option<usize> {
-    raw.get("_group").and_then(|idx| idx.parse::<usize>().ok())
+struct HostedOAuthCallback<'a> {
+    path: &'a str,
+    flow: &'a mut HostedOAuthFlow,
 }
 
 #[cfg(feature = "cli")]
-fn local_oauth_complete_page() -> &'static str {
-    "<!doctype html><meta charset=\"utf-8\"><title>SFAE OAuth</title>\
-     <body style=\"font-family:system-ui;margin:3rem;line-height:1.5\">\
-     <h1>Authorization complete</h1><p>You can return to the SFAE credential window.</p></body>"
+fn capture_hosted_oauth_callback(args: HostedOAuthCallback<'_>) -> Result<(), SfaeError> {
+    let HostedOAuthCallback { path, flow } = args;
+    let session_id = extract_query_param(QueryLookup {
+        path,
+        key: "session_id",
+    });
+    if session_id.as_deref() != Some(flow.session_id.as_str()) {
+        return Err(SfaeError::Other(
+            "OAuth callback did not match the active authorization session".into(),
+        ));
+    }
+    if let Some(status) = extract_query_param(QueryLookup {
+        path,
+        key: "status",
+    }) {
+        flow.status = status;
+    }
+    flow.completion_verifier = extract_query_param(QueryLookup {
+        path,
+        key: "completion_verifier",
+    });
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+// xtask: allow-multi-param - helper coordinates flow state, OAuth manager, and storage sink
+fn complete_hosted_oauth(
+    flow: &mut HostedOAuthFlow,
+    manager: &crate::oauth::OAuthCredentialManager<'_>,
+    oauth_credential_sink: &mut Option<&mut OAuthCredentialSink<'_>>,
+) -> Result<Option<String>, SfaeError> {
+    let status = manager.session_status(&flow.session_id)?;
+    if status.session_id != flow.session_id {
+        return Err(SfaeError::Other(
+            "OAuth status did not match the active authorization session".into(),
+        ));
+    }
+    flow.status = status.status.clone();
+    flow.credential_id = status.credential_id.clone();
+    if status.is_error() {
+        let detail = status
+            .error_code
+            .as_deref()
+            .map(|code| format!(": {code}"))
+            .unwrap_or_default();
+        return Err(SfaeError::Other(format!(
+            "OAuth authorization failed{detail}"
+        )));
+    }
+    if !status.is_success() {
+        return Err(SfaeError::Other(
+            "OAuth authorization has not completed".into(),
+        ));
+    }
+    if flow.redeem_verifier.is_some() && flow.completion_verifier.is_none() {
+        return Err(SfaeError::Other(
+            "OAuth completion verifier is missing".into(),
+        ));
+    }
+
+    let credential = manager.redeem_session(
+        &flow.session_id,
+        flow.redeem_verifier.as_deref(),
+        flow.completion_verifier.as_deref(),
+    )?;
+    if let Some(credential) = credential {
+        let Some(sink) = oauth_credential_sink.as_mut() else {
+            return Err(SfaeError::ConfigError(
+                "OAuth credential storage is not configured".into(),
+            ));
+        };
+        return Ok(Some(sink(credential)?));
+    }
+    Ok(flow.credential_id.clone())
+}
+
+#[cfg(feature = "cli")]
+fn hosted_oauth_error_status(err: &SfaeError) -> u16 {
+    match err {
+        SfaeError::ConfigError(_) | SfaeError::StoreError(_) => 500,
+        _ => 400,
+    }
+}
+
+#[cfg(feature = "cli")]
+fn selected_group_idx(raw: &HashMap<String, String>) -> Option<usize> {
+    raw.get("_group").and_then(|idx| idx.parse::<usize>().ok())
 }
 
 /// Collect a secret from the user via a local web page opened in the default browser.

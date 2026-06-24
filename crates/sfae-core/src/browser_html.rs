@@ -293,7 +293,7 @@ impl<'a> OAuthPanel<'a> {
             r#"<p class="oauth-scope">Scope: <code>{scope}</code></p>"#,
         ));
         html.push_str(&format!(
-            r#"<a href="/auth?group={group_idx}" target="_blank" class="oauth-btn" id="oauth-btn-{group_idx}">Authorize</a>"#,
+            r#"<a href="/auth?group={group_idx}" class="oauth-btn" id="oauth-btn-{group_idx}">Authorize</a>"#,
         ));
         html.push_str(&format!(
             r#"<div class="oauth-status" id="oauth-status-{group_idx}" style="display:none">&#10003; Authorized</div>"#,
@@ -375,4 +375,27 @@ fn url_decode(s: &str) -> String {
         }
     }
     String::from_utf8_lossy(&result).into_owned()
+}
+
+#[cfg(all(test, feature = "cli"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oauth_authorize_link_reuses_current_tab() {
+        let panel = OAuthPanel {
+            oauth: &OAuthSpec {
+                provider: Some("discord".to_string()),
+                scope: Some("identify email".to_string()),
+                scopes: vec![],
+            },
+            group_idx: 0,
+        };
+
+        let html = panel.render();
+
+        assert!(html.contains(r#"href="/auth?group=0""#));
+        assert!(html.contains(r#"class="oauth-btn""#));
+        assert!(!html.contains("target="));
+    }
 }
