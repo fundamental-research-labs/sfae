@@ -10,7 +10,7 @@ rules:
   max-source-file-lines:
     max: 1000
   max-function-body-lines:
-    max: 0
+    max: 300
   function-docstring:
     policy: optional
   indent:
