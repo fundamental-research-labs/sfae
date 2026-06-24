@@ -216,6 +216,12 @@ OAUTH:
   SFAE or the provider may reject unknown, unavailable, or app-restricted scopes.
   --terminal supports field prompts only; OAuth requires browser mode.
 
+SCOPE UPGRADES / RE-AUTHORIZATION:
+  To request broader OAuth access, re-run `sfae prompt` with the same domain/label and a spec containing the full required scope set.
+  Local OAuth re-authorization stores fresh credentials with a new UUID. When SFAE can prove the authorized provider account is the same as an existing set, it forgets older same-account credential entries from SFAE's index without reading or purging keychain secrets.
+  If SFAE cannot prove the same account, or for non-OAuth credentials, older credential sets remain until you run `sfae delete <uuid>`.
+  If multiple credential sets remain for a domain, list them with `sfae credentials <domain>` and pass `sfae request --cred <uuid>` or `--label <label>` to select the intended set.
+
 EXAMPLES:
   Personal access token:
     sfae prompt github.com --spec '{

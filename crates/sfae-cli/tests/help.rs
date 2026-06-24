@@ -144,6 +144,13 @@ fn prompt_help_explains_spec_and_secret_handling() {
         assert!(stdout.contains("Ask for any scope required by the user's task"));
         assert!(stdout.contains("choose the narrowest set"));
         assert!(stdout.contains("SFAE or the provider may reject unknown"));
+        assert!(stdout.contains("SCOPE UPGRADES / RE-AUTHORIZATION:"));
+        assert!(stdout.contains("re-run `sfae prompt` with the same domain/label"));
+        assert!(stdout.contains("stores fresh credentials with a new UUID"));
+        assert!(stdout.contains("forgets older same-account credential entries"));
+        assert!(stdout.contains("without reading or purging keychain secrets"));
+        assert!(stdout.contains("older credential sets remain until you run `sfae delete <uuid>`"));
+        assert!(stdout.contains("sfae request --cred <uuid>"));
         assert!(!stdout.contains("SFAE_OAUTH_BROKER_URL"));
         assert!(!stdout.contains("SFAE_STORE_URL"));
         assert!(stdout.contains("OAuth requires browser mode"));

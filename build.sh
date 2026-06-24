@@ -49,11 +49,21 @@ case "$target" in
     ;;
 esac
 
-if [[ -e sfae && ! -L sfae ]]; then
-  echo "error: ./sfae exists and is not a symlink; refusing to overwrite it" >&2
+link_name="sfae"
+tmp_link=".$link_name.tmp.$$"
+
+cleanup() {
+  rm -f "$tmp_link"
+}
+trap cleanup EXIT
+
+if [[ ( -e "$link_name" || -L "$link_name" ) && ! -L "$link_name" ]]; then
+  echo "error: ./$link_name exists and is not a symlink; refusing to overwrite it" >&2
   exit 1
 fi
 
-ln -sfn "$built_binary" sfae
+ln -s "$built_binary" "$tmp_link"
+rm -f "$link_name"
+mv "$tmp_link" "$link_name"
 echo "Built $built_binary"
-echo "Symlink: ./sfae -> $built_binary"
+echo "Symlink: ./$link_name -> $built_binary"

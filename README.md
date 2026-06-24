@@ -82,13 +82,15 @@ sfae request GET "https://discord.com/api/v10/users/@me" \
   -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}"
 ```
 
+To upgrade OAuth scopes, re-run `sfae prompt` with the same domain/label and the full required scope set. Local OAuth re-authorization stores fresh credentials with a new UUID; when SFAE can prove the provider account is the same, it forgets older same-account entries from its index without reading or purging keychain secrets. If SFAE cannot prove the same account, or for non-OAuth credentials, older sets remain until `sfae delete <uuid>`. When multiple sets remain for a domain, select one with `sfae request --cred <uuid>` or `--label <label>`.
+
 ## CLI reference
 
 - `sfae credentials [domain] [--label <label>]` lists credential sets as `<uuid> <domain> <label-or-> [KEY, ...]`.
 - `sfae prompt <domain> --spec '<JSON>' [--label <label>]` opens the human-paced browser flow and stores a credential set.
 - `sfae code <domain> [--label <label>] [--message <text>] [--help-url <url>] [--format digits|alnum|text] [--length <n> | --min-length <n> --max-length <n>] [--timeout <seconds>]` requests a transient 2FA/MFA code and prints it to stdout without storing it.
 - `sfae request <METHOD> <URL> [-H "Header: {KEY}"] [-d BODY] [--domain <domain>] [--cred <uuid>] [--label <label>] [--dry-run] [--verbose]` sends HTTP requests with `{KEY}` placeholders resolved from the selected credential set.
-- `sfae delete <uuid>` removes one credential set. Domain deletion and `--type` are legacy flat-key paths.
+- `sfae delete <uuid>` forgets one credential set from SFAE's index; add `--purge` only when keychain/password prompts are acceptable. Domain deletion and `--type` are legacy flat-key paths.
 - `sfae flush --dry-run` previews a local full wipe; `sfae flush` deletes every locally indexed credential.
 
 `--user` is still accepted as a compatibility alias for `--label`.
