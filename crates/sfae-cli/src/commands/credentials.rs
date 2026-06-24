@@ -1,7 +1,7 @@
 //! `sfae credentials`: list stored credential sets or inspect non-secret metadata.
 
 use crate::store_factory::create_store;
-use sfae_core::store::{CredentialSetMetadata, SecretStore, load_credential_set_metadata};
+use sfae_core::store::{CredentialSetInfo, SecretStore, load_credential_set_metadata};
 
 /// Operation requested by the `credentials` command.
 pub enum RunAction<'a> {
@@ -96,8 +96,7 @@ fn show_credential(store: &dyn SecretStore, id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn format_credential_set_metadata(metadata: &CredentialSetMetadata) -> String {
-    let info = &metadata.info;
+fn format_credential_set_metadata(info: &CredentialSetInfo) -> String {
     let label = info.label.as_deref().unwrap_or("-");
     let mut output = format!(
         "id: {id}\ndomain: {domain}\nlabel: {label}\nkeys:\n",
@@ -114,7 +113,7 @@ fn format_credential_set_metadata(metadata: &CredentialSetMetadata) -> String {
     }
 
     output.push_str("metadata:\n");
-    let mut entries: Vec<_> = metadata.metadata.iter().collect();
+    let mut entries: Vec<_> = info.metadata.iter().collect();
     entries.sort_by(|(left, _), (right, _)| left.cmp(right));
     if entries.is_empty() {
         output.push_str("  -\n");

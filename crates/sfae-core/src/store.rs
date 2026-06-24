@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::SfaeError;
 
-/// Metadata about a stored credential set (one JSON blob of related fields).
+/// Public index data about a stored credential set.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CredentialSetInfo {
     pub id: String,
@@ -19,12 +19,7 @@ pub struct CredentialSetInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub keys: Vec<String>,
-}
-
-/// Non-secret metadata for inspecting a stored credential set.
-#[derive(Debug, Clone)]
-pub struct CredentialSetMetadata {
-    pub info: CredentialSetInfo,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
 }
 
@@ -245,27 +240,22 @@ pub fn parse_injectable_credential_values(
     Ok(values)
 }
 
-/// Load one credential set's index fields and structured metadata by UUID.
+/// Load one credential set's public index fields and metadata by UUID.
 // xtask: allow-multi-param - helper pairs selected store with credential id
 pub fn load_credential_set_metadata(
     store: &dyn SecretStore,
     id: &str,
-) -> Result<CredentialSetMetadata, SfaeError> {
+) -> Result<CredentialSetInfo, SfaeError> {
     if !store.supports_credential_sets() {
         return Err(SfaeError::Other(
             "credential set operations not supported by this store".into(),
         ));
     }
-    let info = store
+    store
         .list_credential_sets(None)?
         .into_iter()
         .find(|set| set.id == id)
-        .ok_or_else(|| SfaeError::CredentialNotFound(id.to_string()))?;
-    let data = parse_structured_credential_set(&store.get(id)?)?;
-    Ok(CredentialSetMetadata {
-        info,
-        metadata: data.metadata,
-    })
+        .ok_or_else(|| SfaeError::CredentialNotFound(id.to_string()))
 }
 
 // xtask: allow-multi-param - merge helper pairs current data with update input
@@ -543,6 +533,7 @@ mod keyring_store {
                 domain: domain.to_string(),
                 label: label.map(String::from),
                 keys,
+                metadata: HashMap::new(),
             });
             index.version = 2;
             write_credential_index(&index)?;
@@ -568,6 +559,7 @@ mod keyring_store {
                 domain: input.domain.to_string(),
                 label: input.label.map(String::from),
                 keys,
+                metadata: input.metadata.cloned().unwrap_or_default(),
             });
             index.version = 2;
             write_credential_index(&index)?;
@@ -600,6 +592,7 @@ mod keyring_store {
 
             index.sets[set_index].keys = data.values.keys().cloned().collect();
             index.sets[set_index].keys.sort();
+            index.sets[set_index].metadata = data.metadata;
             index.version = 2;
             write_credential_index(&index)?;
             Ok(())
@@ -739,6 +732,7 @@ mod keyring_store {
                 domain: domain.to_string(),
                 label: label.map(String::from),
                 keys,
+                metadata: HashMap::new(),
             });
             index.version = 2;
             write_credential_index(&index)?;
@@ -766,6 +760,7 @@ mod keyring_store {
                 domain: input.domain.to_string(),
                 label: input.label.map(String::from),
                 keys,
+                metadata: input.metadata.cloned().unwrap_or_default(),
             });
             index.version = 2;
             write_credential_index(&index)?;
@@ -792,6 +787,7 @@ mod keyring_store {
 
             index.sets[set_index].keys = data.values.keys().cloned().collect();
             index.sets[set_index].keys.sort();
+            index.sets[set_index].metadata = data.metadata;
             index.version = 2;
             write_credential_index(&index)?;
             Ok(())
@@ -893,6 +889,7 @@ impl SecretStore for InMemoryStore {
             domain: domain.to_string(),
             label: label.map(String::from),
             keys,
+            metadata: HashMap::new(),
         });
 
         Ok(id)
@@ -914,6 +911,7 @@ impl SecretStore for InMemoryStore {
             domain: input.domain.to_string(),
             label: input.label.map(String::from),
             keys,
+            metadata: input.metadata.cloned().unwrap_or_default(),
         });
 
         Ok(id)
@@ -934,6 +932,7 @@ impl SecretStore for InMemoryStore {
 
         self.credential_sets[set_index].keys = data.values.keys().cloned().collect();
         self.credential_sets[set_index].keys.sort();
+        self.credential_sets[set_index].metadata = data.metadata;
         Ok(())
     }
 
