@@ -130,6 +130,34 @@
       font-weight: 300;
     }
 
+    /* Install */
+    .install-methods {
+      list-style: none;
+    }
+
+    .install-methods li {
+      padding: 20px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .install-methods li:last-child {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .method-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .method-desc {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      font-weight: 300;
+      margin-bottom: 12px;
+    }
+
     /* How it works */
     .steps {
       list-style: none;
@@ -301,6 +329,15 @@
         padding: 12px 20px;
         font-size: 0.78rem;
       }
+
+      .cta-install {
+        max-width: 100%;
+      }
+
+      .cta-install pre {
+        white-space: pre-wrap;
+        text-align: left;
+      }
     }
   </style>
 </head>
@@ -343,6 +380,35 @@
       </ul>
     </section>
 
+    <!-- Install -->
+    <section>
+      <h2 class="section-title">Install</h2>
+      <ul class="install-methods">
+        <li>
+          <div class="method-title">Skill first</div>
+          <p class="method-desc">Install the agent skill in the current project. The skill carries its own CLI installer for agents that need SFAE later.</p>
+          <pre><code>curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex</code></pre>
+        </li>
+        <li>
+          <div class="method-title">Skill plus CLI</div>
+          <p class="method-desc">Install the skill and immediately install the CLI through Homebrew, npm, or the direct release installer.</p>
+          <pre><code>curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex --install-cli</code></pre>
+        </li>
+        <li>
+          <div class="method-title">CLI only</div>
+          <p class="method-desc">Use Homebrew first. npm is a placeholder package until the npm scope is claimed; the direct installer is the fallback.</p>
+          <pre><code>brew install fundamental-research-labs/tap/sfae
+npm install -g @fundamental-research-labs/sfae
+curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install.sh | sh</code></pre>
+        </li>
+        <li>
+          <div class="method-title">Update</div>
+          <p class="method-desc">SFAE updates through the package manager or installer that owns the current binary.</p>
+          <pre><code>sfae update</code></pre>
+        </li>
+      </ul>
+    </section>
+
     <!-- How it works -->
     <section>
       <h2 class="section-title">How it works</h2>
@@ -378,7 +444,7 @@
     <!-- CTA -->
     <section class="cta">
       <div class="cta-install">
-        <pre><code>cargo build --bin sfae --release</code></pre>
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex</code></pre>
         <button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy to clipboard">
           <svg class="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="9" y="9" width="13" height="13" rx="2"/>
@@ -408,7 +474,7 @@
   </div>
   <script>
     function copyInstall(btn) {
-      navigator.clipboard.writeText('cargo build --bin sfae --release');
+      navigator.clipboard.writeText('curl -fsSL https://raw.githubusercontent.com/fundamental-research-labs/sfae/main/install-skill.sh | sh -s -- --codex');
       var copy = btn.querySelector('.icon-copy');
       var check = btn.querySelector('.icon-check');
       copy.style.display = 'none';

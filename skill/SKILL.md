@@ -19,6 +19,14 @@ description: Use the SFAE CLI when an agent needs to call external APIs that req
 
 Use `sfae` from `PATH` when available.
 
+If `sfae` is not available and this skill folder contains `install.sh`, run that
+script to install the CLI. The support installer tries Homebrew first, then npm,
+then the direct release installer:
+
+```bash
+sh ./install.sh
+```
+
 In this repository, build it if needed:
 
 ```bash
@@ -150,6 +158,8 @@ sfae code github.com \
 
 ## Maintenance Commands
 
+- `sfae update` updates the CLI through the installation method that owns it.
+- `sfae install-skill --codex` installs or refreshes the bundled skill in a project.
 - `sfae show <uuid>` inspects public metadata for a credential set.
 - `sfae delete <uuid>` forgets one credential set from SFAE's index.
 - `sfae delete <uuid> --purge` may trigger OS credential-store prompts; use only when that is acceptable.
