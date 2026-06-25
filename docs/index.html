@@ -158,7 +158,7 @@
     }
 
     .install-methods li.recommended {
-      padding: 20px 16px;
+      padding: 16px;
       margin-bottom: 12px;
       border: 1px solid var(--accent);
       border-radius: 6px;
@@ -333,8 +333,13 @@
       font-weight: 300;
     }
 
+    .target-command {
+      color: var(--text-tertiary);
+      overflow-wrap: anywhere;
+    }
+
     .typewriter {
-      color: var(--text-secondary);
+      color: var(--text);
       border-right: 1px solid var(--steel-dark);
       padding-right: 2px;
     }
@@ -547,7 +552,7 @@
         </li>
         <li>
           <strong>Communication protocols</strong><br>
-          <span>HTTP, Postgres, ClickHouse, and Redis.</span>
+          <span>HTTP, Postgres, ClickHouse, and Redis today, with more integrations planned.</span>
         </li>
       </ul>
     </section>
@@ -561,7 +566,7 @@
             <div class="method-title">Just install the SFAE skill</div>
             <div class="method-badge steel">Recommended</div>
           </div>
-          <p class="method-desc">Adds the agent skill to the current project for default agent targets. The skill carries its own CLI installer for requests that need SFAE.</p>
+          <p class="method-desc">Adds the SFAE skill to this project. It can install the CLI when needed.</p>
           <div class="command-row">
             <pre><code>curl -fsSL https://sfae.io/install-skill.sh | sh</code></pre>
             <button class="copy-button" type="button" data-copy="curl -fsSL https://sfae.io/install-skill.sh | sh" aria-label="Copy skill install command">
@@ -574,7 +579,7 @@
               </svg>
             </button>
           </div>
-          <p class="target-hint">Target one agent with <span class="typewriter" data-typewriter>--codex</span></p>
+          <p class="target-hint">Install for only one agent with:<br><span class="target-command">curl -fsSL https://sfae.io/install-skill.sh | sh -s -- <span class="typewriter" data-typewriter>--codex</span></span></p>
         </li>
         <li>
           <div class="method-title">Skill plus CLI</div>
@@ -714,10 +719,10 @@
     }
 
     const typewriter = document.querySelector('[data-typewriter]');
-    const flags = ['--codex', '--claude', '--grok', '--target ./agent/skills/sfae'];
+    const flags = ['--codex', '--grok', '--claude'];
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (typewriter && reducedMotion) {
-      typewriter.textContent = flags.slice(0, 3).join(', ');
+      typewriter.textContent = flags[0];
     } else if (typewriter) {
       let flagIndex = 0;
       let charIndex = flags[0].length;
