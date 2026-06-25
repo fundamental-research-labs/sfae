@@ -107,9 +107,22 @@ jobs:
           echo "update_homebrew=$update_homebrew" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
+  ci:
+    name: CI
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
+  vet:
+    name: Vet
+    needs: validate
+    uses: ./.github/workflows/vet.yml
+
   build-assets:
     name: Build ${{ matrix.name }}
-    needs: validate
+    needs:
+      - validate
+      - ci
+      - vet
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -308,7 +321,6 @@ jobs:
       - github-release
     if: needs.validate.outputs.update_homebrew == 'true'
     runs-on: ubuntu-latest
-    environment: production
     permissions:
       contents: read
 
@@ -412,7 +424,6 @@ jobs:
       - github-release
     if: needs.validate.outputs.npm_mode != 'skip'
     runs-on: ubuntu-latest
-    environment: production
     permissions:
       contents: read
       id-token: write
@@ -425,7 +436,7 @@ jobs:
           node-version: "24"
           package-manager-cache: false
 
-      - name: Use npm with stage support
+      - name: Use npm with trusted publishing support
         run: npm install -g npm@11.17.0
 
       - name: Check npm wrapper scripts
@@ -484,3 +495,26 @@ jobs:
 
           echo "Unknown npm_mode: $MODE" >&2
           exit 1
+
+  deploy-website:
+    name: Deploy website
+    needs:
+      - validate
+      - github-release
+      - homebrew
+      - npm
+    if: >-
+      ${{
+        always() &&
+        needs.github-release.result == 'success' &&
+        (needs.homebrew.result == 'success' || needs.homebrew.result == 'skipped') &&
+        (needs.npm.result == 'success' || needs.npm.result == 'skipped')
+      }}
+    uses: ./.github/workflows/pages.yml
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
+    with:
+      release_url: ${{ needs.github-release.outputs.url }}
+      version: ${{ needs.validate.outputs.tag }}

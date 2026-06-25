@@ -26,19 +26,16 @@ GitHub Actions provenance via `npm publish --provenance --access public`.
 
 2. Create a GitHub App for release automation, install it on
    `fundamental-research-labs/homebrew-tap`, and grant it repository
-   `Contents: read and write` permission. Store its credentials as
-   `production` environment secrets on this repo:
+   `Contents: read and write` permission. Store its credentials as repository
+   secrets on this repo:
 
    - `HOMEBREW_RELEASE_APP_CLIENT_ID`
    - `HOMEBREW_RELEASE_APP_PRIVATE_KEY`
 
-3. Add `production` environment secret `NPM_TOKEN`, a temporary npm token with
-   publish access, required only for the first npm publication.
+3. Add repository secret `NPM_TOKEN`, a temporary npm token with publish access,
+   required only for the first npm publication.
 
-4. In GitHub, use the `production` environment for release publishing. Add
-   required reviewers if the repository plan supports protected environments.
-
-5. Create and push the release tag:
+4. Create and push the release tag:
 
    ```bash
    git tag -a v1.2.3 -m v1.2.3
@@ -49,21 +46,21 @@ GitHub Actions provenance via `npm publish --provenance --access public`.
    `.github/workflows/release.yml`; for the first publication it uses
    `NPM_TOKEN` because the npm package does not exist yet.
 
-6. On npm, open `@fundamental-research-labs/sfae` package settings and add a
+5. On npm, open `@fundamental-research-labs/sfae` package settings and add a
    Trusted Publisher:
 
    - Provider: GitHub Actions
    - Repository owner: `fundamental-research-labs`
    - Repository name: `sfae`
    - Workflow filename: `release.yml`
-   - Environment: `production`
+   - Environment: leave unset
    - Allowed action: `npm publish`
 
-7. In package settings, set Publishing access to "Require two-factor
+6. In package settings, set Publishing access to "Require two-factor
    authentication and disallow tokens".
 
-8. Revoke and remove `NPM_TOKEN` from the `production` environment; it is
-   required only for the first npm publication.
+7. Revoke and remove `NPM_TOKEN`; it is required only for the first npm
+   publication.
 
 ## Future publications
 
