@@ -58,6 +58,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
+          registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
       - name: Validate version and branch
@@ -457,10 +458,6 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          clean_npmrc="$(mktemp)"
-          printf '%s\n' 'registry=https://registry.npmjs.org/' > "$clean_npmrc"
-          export NPM_CONFIG_USERCONFIG="$clean_npmrc"
-          unset NODE_AUTH_TOKEN
 
           package_name="$(node -p "require('./package.json').name")"
           if npm view "$package_name@$VERSION" version >/dev/null 2>&1; then
@@ -488,8 +485,7 @@ jobs:
               echo "Missing NPM_TOKEN secret. It is required only for the first npm publication before Trusted Publishing can be configured." >&2
               exit 1
             fi
-            printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" >> "$NPM_CONFIG_USERCONFIG"
-            npm publish --access public --provenance
+            NODE_AUTH_TOKEN="$NPM_TOKEN" npm publish --access public --provenance
             exit 0
           fi
 

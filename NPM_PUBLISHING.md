@@ -27,7 +27,7 @@ GitHub Actions provenance via `npm publish --provenance --access public`.
 2. Create a GitHub App for release automation, install it on
    `fundamental-research-labs/homebrew-tap`, and grant it repository
    `Contents: read and write` permission. Store its credentials as repository
-   secrets on this repo:
+   secrets on this repo, not only as environment secrets:
 
    - `HOMEBREW_RELEASE_APP_CLIENT_ID`
    - `HOMEBREW_RELEASE_APP_PRIVATE_KEY`
