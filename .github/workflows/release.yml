@@ -279,7 +279,20 @@ jobs:
           set -euo pipefail
           files=(dist/"$TAG"/sfae-*.tar.gz dist/"$TAG"/sfae-*.tar.gz.sha256)
 
-          if gh release view "$TAG" --repo "$SFAE_REPO" >/dev/null 2>&1; then
+          release_json="$(gh release view "$TAG" --repo "$SFAE_REPO" --json databaseId,isDraft,url 2>/dev/null || true)"
+          if [[ -n "$release_json" ]]; then
+            release_id="$(jq -r .databaseId <<<"$release_json")"
+            release_is_draft="$(jq -r .isDraft <<<"$release_json")"
+            release_url="$(jq -r .url <<<"$release_json")"
+
+            if [[ "$release_is_draft" == "true" || "$release_url" == *"/untagged-"* ]]; then
+              echo "Deleting stale release for $TAG at $release_url before recreating it."
+              gh api -X DELETE "repos/$SFAE_REPO/releases/$release_id"
+              release_json=""
+            fi
+          fi
+
+          if [[ -n "$release_json" ]]; then
             gh release upload "$TAG" "${files[@]}" --repo "$SFAE_REPO" --clobber
           else
             prerelease_flag=()
@@ -294,7 +307,12 @@ jobs:
               "${prerelease_flag[@]}"
           fi
 
-          echo "url=$(gh release view "$TAG" --repo "$SFAE_REPO" --json url --jq .url)" >> "$GITHUB_OUTPUT"
+          release_url="$(gh release view "$TAG" --repo "$SFAE_REPO" --json url --jq .url)"
+          if [[ "$release_url" == *"/untagged-"* ]]; then
+            echo "Release URL is stale after publishing: $release_url" >&2
+            exit 1
+          fi
+          echo "url=$release_url" >> "$GITHUB_OUTPUT"
 
   homebrew:
     name: Update Homebrew tap
