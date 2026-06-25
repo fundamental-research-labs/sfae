@@ -7,7 +7,14 @@ skill_name="${SFAE_SKILL_NAME:-sfae}"
 targets="${SFAE_SKILL_TARGETS:-}"
 mode="install"
 install_cli="${SFAE_INSTALL_CLI:-0}"
-base_url="https://raw.githubusercontent.com/$repo/$ref/skill"
+
+if [ -n "${SFAE_SKILL_BASE_URL:-}" ]; then
+  base_url="$SFAE_SKILL_BASE_URL"
+elif [ "$repo" = "fundamental-research-labs/sfae" ] && [ "$ref" = "main" ]; then
+  base_url="https://sfae.io/skill"
+else
+  base_url="https://raw.githubusercontent.com/$repo/$ref/skill"
+fi
 
 err() {
   printf '%s\n' "$*" >&2

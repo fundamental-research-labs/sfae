@@ -144,7 +144,11 @@ fn latest_package(package: String) -> OsString {
 fn update_direct() -> anyhow::Result<()> {
     let repo =
         std::env::var("SFAE_REPO").unwrap_or_else(|_| "fundamental-research-labs/sfae".to_string());
-    let url = format!("https://raw.githubusercontent.com/{repo}/main/install.sh");
+    let url = match std::env::var("SFAE_INSTALL_URL") {
+        Ok(url) if !url.is_empty() => url,
+        _ if repo == "fundamental-research-labs/sfae" => "https://sfae.io/install.sh".to_string(),
+        _ => format!("https://raw.githubusercontent.com/{repo}/main/install.sh"),
+    };
     let script_path = temp_script_path();
     let install_dir = current_install_dir()?;
 
