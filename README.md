@@ -202,7 +202,12 @@ MIT
 
 ## Release
 
-`release.sh` handles local release orchestration:
+Use the **Release** GitHub Actions workflow for public releases. Run it from
+`main` with the target version, for example `0.1.0`. The workflow builds all
+native archives, creates or updates the GitHub release, updates the Homebrew tap,
+and handles npm.
+
+`release.sh` remains available for local release work:
 
 ```bash
 ./release.sh 0.1.0
@@ -219,19 +224,11 @@ the npm package. Use step-only flags when releasing in stages:
 ./release.sh 0.1.0 --npm-only
 ```
 
-For the first npm publication, create the GitHub release assets first and then
-publish the prepared package directly with a 2FA-enabled npm account:
-
-```bash
-scripts/prepare-npm-package.sh 0.1.0
-npm pack --dry-run dist/v0.1.0/npm
-npm publish dist/v0.1.0/npm --access public
-```
-
-After the package exists, configure npm Trusted Publishing for the
-`npm-publish.yml` workflow and prefer that workflow for future npm releases. It
-uses OIDC to stage the package; a maintainer then approves the staged package on
-npm with 2FA.
+For the first npm publication, add a temporary `NPM_TOKEN` repository secret and
+run the Release workflow with `npm_mode=token`. After the package exists,
+configure npm Trusted Publishing for `release.yml`, then use `npm_mode=auto` or
+`npm_mode=stage` for future releases. Future npm releases use OIDC to stage the
+package; a maintainer then approves the staged package on npm with 2FA.
 
 The default Homebrew tap and npm package are
 `fundamental-research-labs/homebrew-tap` and `@fundamental-research-labs/sfae`.
