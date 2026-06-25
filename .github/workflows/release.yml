@@ -58,7 +58,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
-          registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
       - name: Validate version and branch
@@ -322,6 +321,7 @@ jobs:
       - github-release
     if: needs.validate.outputs.update_homebrew == 'true'
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
 
@@ -425,6 +425,7 @@ jobs:
       - github-release
     if: needs.validate.outputs.npm_mode != 'skip'
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
       id-token: write
@@ -435,6 +436,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
+          registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
       - name: Use npm with trusted publishing support
