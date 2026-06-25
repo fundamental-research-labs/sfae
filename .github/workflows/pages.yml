@@ -1,9 +1,18 @@
 name: Deploy to GitHub Pages
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label to display on the website"
+        required: false
+        type: string
+        default: ""
+      release_url:
+        description: "GitHub release URL for the displayed version"
+        required: false
+        type: string
+        default: ""
   workflow_call:
     inputs:
       version:
