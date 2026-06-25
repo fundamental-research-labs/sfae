@@ -275,8 +275,8 @@ jobs:
       - uses: actions/create-github-app-token@v3
         id: tap-token
         with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          client-id: ${{ vars.HOMEBREW_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOMEBREW_RELEASE_APP_PRIVATE_KEY }}
           owner: fundamental-research-labs
           repositories: homebrew-tap
           permission-contents: write
