@@ -101,6 +101,10 @@ fn test_provider_registry() -> HostedOAuthProviderRegistry {
                 provider: "google".to_string(),
                 domains: vec!["googleapis.com".to_string()],
             },
+            HostedOAuthProvider {
+                provider: "github".to_string(),
+                domains: vec!["github.com".to_string()],
+            },
         ],
     }
 }
@@ -257,6 +261,17 @@ fn resolves_explicit_google_provider() {
 }
 
 #[test]
+fn resolves_github_provider() {
+    let provider = resolve_hosted_provider(HostedProviderResolve {
+        domain: "api.github.com",
+        requested_provider: None,
+        registry: &test_provider_registry(),
+    })
+    .unwrap();
+    assert_eq!(provider, "github");
+}
+
+#[test]
 fn rejects_unknown_provider() {
     let err = resolve_hosted_provider(HostedProviderResolve {
         domain: "example.com",
@@ -280,7 +295,7 @@ fn rejects_unknown_domain_without_provider() {
     .unwrap_err();
     assert!(
         err.to_string()
-            .contains("supported providers: discord, google")
+            .contains("supported providers: discord, github, google")
     );
 }
 

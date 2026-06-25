@@ -647,6 +647,14 @@ mod tests {
                 "https://openidconnect.googleapis.com/v1/userinfo",
             )
             .unwrap(),
+            github_client_id: "github-client-id".to_string(),
+            github_client_secret: "github-client-secret".to_string(),
+            github_authorize_url: url::Url::parse("https://github.com/login/oauth/authorize")
+                .unwrap(),
+            github_token_url: url::Url::parse("https://github.com/login/oauth/access_token")
+                .unwrap(),
+            github_api_url: url::Url::parse("https://api.github.com").unwrap(),
+            github_userinfo_url: url::Url::parse("https://api.github.com/user").unwrap(),
             base_url: url::Url::parse("https://oauth.sfae.io").unwrap(),
             allowed_return_origins: std::collections::HashSet::new(),
             port: 3100,

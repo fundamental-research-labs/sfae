@@ -25,7 +25,7 @@ async fn broker_callback_completes_against_mock_oauth_provider() {
     };
 
     let provider = MockProvider::start(2);
-    let broker = BrokerProcess::start(BrokerStart {
+    let mut broker = BrokerProcess::start(BrokerStart {
         database_url,
         provider_base_url: provider.base_url.clone(),
     });
@@ -36,7 +36,7 @@ async fn broker_callback_completes_against_mock_oauth_provider() {
 
     wait_for_health(HealthProbe {
         http: &http,
-        base_url: &broker.base_url,
+        broker: &mut broker,
     })
     .await;
 
@@ -106,7 +106,7 @@ async fn google_local_handoff_refresh_and_revoke_use_generic_callback() {
     };
 
     let provider = MockProvider::start(4);
-    let broker = BrokerProcess::start(BrokerStart {
+    let mut broker = BrokerProcess::start(BrokerStart {
         database_url: database_url.clone(),
         provider_base_url: provider.base_url.clone(),
     });
@@ -117,7 +117,7 @@ async fn google_local_handoff_refresh_and_revoke_use_generic_callback() {
 
     wait_for_health(HealthProbe {
         http: &http,
-        base_url: &broker.base_url,
+        broker: &mut broker,
     })
     .await;
 
@@ -442,17 +442,17 @@ async fn session_status(args: SessionStatus<'_>) -> SessionState {
 
 struct HealthProbe<'a> {
     http: &'a reqwest::Client,
-    base_url: &'a str,
+    broker: &'a mut BrokerProcess,
 }
 
 async fn wait_for_health(args: HealthProbe<'_>) {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let HealthProbe { http, broker } = args;
     loop {
-        let response = args
-            .http
-            .get(format!("{}/health", args.base_url))
-            .send()
-            .await;
+        if let Some(status) = broker.child.try_wait().unwrap() {
+            panic!("OAuth broker exited before becoming healthy: {status}");
+        }
+        let response = http.get(format!("{}/health", broker.base_url)).send().await;
         if response.is_ok_and(|response| response.status().is_success()) {
             return;
         }
@@ -509,6 +509,8 @@ impl BrokerProcess {
             .env("DISCORD_CLIENT_SECRET", "mock-client-secret")
             .env("GOOGLE_CLIENT_ID", "mock-google-client-id")
             .env("GOOGLE_CLIENT_SECRET", "mock-google-client-secret")
+            .env("GITHUB_CLIENT_ID", "mock-github-client-id")
+            .env("GITHUB_CLIENT_SECRET", "mock-github-client-secret")
             .env("BASE_URL", &base_url)
             .env("SFAE_SERVER_PORT", port.to_string())
             .env("SFAE_OAUTH_ALLOW_TEST_PROVIDER_URLS", "1")
@@ -545,7 +547,7 @@ impl BrokerProcess {
                 format!("{}/userinfo", args.provider_base_url),
             )
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
         Self { base_url, child }

@@ -143,6 +143,17 @@ sfae request GET "https://discord.com/api/v10/users/@me" \
 
 To request broader OAuth access, re-run `sfae prompt` with the same domain and label plus the full required scope set. If multiple credential sets remain, select one explicitly with `--cred` or `--label`.
 
+GitHub OAuth example:
+
+```bash
+sfae prompt github.com --spec '{
+  "groups": [{
+    "label": "OAuth",
+    "oauth": {"provider": "github", "scopes": ["read:user"]}
+  }]
+}'
+```
+
 ## Verification Codes
 
 Use `sfae code` only for active, short-lived MFA or verification challenges that the agent must submit immediately:

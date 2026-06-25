@@ -4,7 +4,7 @@
 
 *Pronounced "safe."* &nbsp; [sfae.io](https://sfae.io)
 
-SFAE lets AI coding agents make authenticated API calls without ever seeing credentials. Agents read the target service's official API/auth docs, ask the human for any missing credentials through SFAE, then write placeholders like `{ACCESS_TOKEN}` or `{API_KEY}` in requests. SFAE resolves them from the local OS credential store or an authenticated SFAE backend at execution time. Supports static tokens, API keys, and hosted OAuth handoff for Discord and Google APIs.
+SFAE lets AI coding agents make authenticated API calls without ever seeing credentials. Agents read the target service's official API/auth docs, ask the human for any missing credentials through SFAE, then write placeholders like `{ACCESS_TOKEN}` or `{API_KEY}` in requests. SFAE resolves them from the local OS credential store or an authenticated SFAE backend at execution time. Supports static tokens, API keys, and hosted OAuth handoff for Discord, Google APIs, and GitHub.
 
 ## Features
 
@@ -139,7 +139,7 @@ Agents should treat `sfae prompt` as a blocking step. Wait indefinitely until th
 
 Agents should use `sfae code` only for active, short-lived verification challenges. Unlike `sfae prompt`, the submitted code is intentionally returned to stdout so the agent can complete the challenge, and SFAE does not store it.
 
-For hosted OAuth, the hosted broker currently supports Discord and Google APIs. Use `googleapis.com` as the credential domain for Google API credentials so parent-domain fallback can resolve the same token for hosts such as `gmail.googleapis.com`, `docs.googleapis.com`, `sheets.googleapis.com`, and `www.googleapis.com`.
+For hosted OAuth, the hosted broker currently supports Discord, Google APIs, and GitHub. Use `googleapis.com` as the credential domain for Google API credentials so parent-domain fallback can resolve the same token for hosts such as `gmail.googleapis.com`, `docs.googleapis.com`, `sheets.googleapis.com`, and `www.googleapis.com`. Use `github.com` as the credential domain for GitHub credentials so parent-domain fallback can resolve the same token for `api.github.com`.
 
 ```bash
 # No SFAE_STORE_URL or SFAE_STORE_TOKEN required for local CLI OAuth.
@@ -168,6 +168,22 @@ sfae prompt googleapis.com --spec '{
 sfae request GET "https://www.googleapis.com/drive/v3/files?pageSize=10" \
   --domain googleapis.com \
   -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}"
+
+# GitHub OAuth supports GitHub OAuth App scopes.
+sfae prompt github.com --spec '{
+  "groups": [{
+    "label": "OAuth",
+    "oauth": {
+      "provider": "github",
+      "scopes": ["read:user"]
+    }
+  }]
+}'
+
+sfae request GET "https://api.github.com/user" \
+  --domain github.com \
+  -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}" \
+  -H "User-Agent: sfae"
 ```
 
 To upgrade OAuth scopes, re-run `sfae prompt` with the same domain/label and the full required scope set. Local OAuth re-authorization stores fresh credentials with a new UUID; when SFAE can prove the provider account is the same, it forgets older same-account entries from its index without reading or purging keychain secrets. If SFAE cannot prove the same account, or for non-OAuth credentials, older sets remain until `sfae delete <uuid>`. When multiple sets remain for a domain, select one with `sfae request --cred <uuid>` or `--label <label>`.

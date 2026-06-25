@@ -24,6 +24,12 @@ pub(crate) struct Config {
     pub(crate) google_token_url: Url,
     pub(crate) google_revoke_url: Url,
     pub(crate) google_userinfo_url: Url,
+    pub(crate) github_client_id: String,
+    pub(crate) github_client_secret: String,
+    pub(crate) github_authorize_url: Url,
+    pub(crate) github_token_url: Url,
+    pub(crate) github_api_url: Url,
+    pub(crate) github_userinfo_url: Url,
     pub(crate) base_url: Url,
     pub(crate) allowed_return_origins: HashSet<String>,
     pub(crate) port: u16,
@@ -65,6 +71,19 @@ impl Config {
             "GOOGLE_USERINFO_URL",
             "https://openidconnect.googleapis.com/v1/userinfo",
         );
+        let github_client_id = required_env("GITHUB_CLIENT_ID");
+        let github_client_secret = required_env("GITHUB_CLIENT_SECRET");
+        let github_authorize_url = provider_url(
+            "GITHUB_AUTHORIZE_URL",
+            "https://github.com/login/oauth/authorize",
+        );
+        let github_token_url = provider_url(
+            "GITHUB_TOKEN_URL",
+            "https://github.com/login/oauth/access_token",
+        );
+        let github_api_url = provider_url("SFAE_GITHUB_API_URL", "https://api.github.com");
+        let github_userinfo_url =
+            provider_url("GITHUB_USERINFO_URL", "https://api.github.com/user");
         let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:3100".into());
         let base_url = Url::parse(base_url.trim_end_matches('/')).expect("BASE_URL must be a URL");
         let port = std::env::var("SFAE_SERVER_PORT")
@@ -102,6 +121,12 @@ impl Config {
             google_token_url,
             google_revoke_url,
             google_userinfo_url,
+            github_client_id,
+            github_client_secret,
+            github_authorize_url,
+            github_token_url,
+            github_api_url,
+            github_userinfo_url,
             base_url,
             allowed_return_origins,
             port,
@@ -127,6 +152,13 @@ impl Config {
             .join("/v1/done")
             .expect("valid done path")
             .to_string()
+    }
+
+    /// Build GitHub's OAuth grant deletion endpoint from the configured API base URL.
+    pub(crate) fn github_grant_url(&self) -> Url {
+        self.github_api_url
+            .join(&format!("/applications/{}/grant", self.github_client_id))
+            .expect("valid GitHub grant path")
     }
 
     /// Check whether a browser return URL is in the configured origin allowlist.
