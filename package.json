@@ -1,6 +1,6 @@
 {
   "name": "@fundamental-research-labs/sfae",
-  "version": "0.0.3",
+  "version": "0.0.0",
   "description": "Credential gateway CLI for agents making authenticated API requests",
   "license": "MIT",
   "homepage": "https://sfae.io",

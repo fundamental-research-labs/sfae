@@ -11,7 +11,9 @@ organization.
 ## First publication
 
 The release workflow handles the GitHub release assets, Homebrew tap update, and
-npm package handling from GitHub Actions.
+npm package handling from GitHub Actions. The release version comes from the
+`v*` tag; checked-in manifests use a development placeholder and are stamped in
+the workflow.
 
 Staged publishing requires an existing npm package. For the first publication,
 provide an `NPM_TOKEN` secret with publish access. The tag-triggered workflow
@@ -39,11 +41,11 @@ GitHub Actions provenance via `npm publish --provenance --access public`.
 5. Create and push the release tag:
 
    ```bash
-   git tag -a v0.0.3 -m v0.0.3
-   git push origin v0.0.3
+   git tag -a v1.2.3 -m v1.2.3
+   git push origin v1.2.3
    ```
 
-   Release tags must use the `v0.0.3` form. The tag push triggers
+   Release tags must use the `v1.2.3` form. The tag push triggers
    `.github/workflows/release.yml`; for the first publication it uses
    `NPM_TOKEN` because the npm package does not exist yet.
 

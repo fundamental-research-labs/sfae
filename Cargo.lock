@@ -2094,7 +2094,7 @@ dependencies = [
 
 [[package]]
 name = "sfae-cli"
-version = "0.0.3"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2107,7 +2107,7 @@ dependencies = [
 
 [[package]]
 name = "sfae-core"
-version = "0.0.3"
+version = "0.0.0"
 dependencies = [
  "base64",
  "dirs",
@@ -2126,7 +2126,7 @@ dependencies = [
 
 [[package]]
 name = "sfae-oauth-server"
-version = "0.0.3"
+version = "0.0.0"
 dependencies = [
  "axum",
  "base64",
@@ -2149,7 +2149,7 @@ dependencies = [
 
 [[package]]
 name = "sfae-server"
-version = "0.0.3"
+version = "0.0.0"
 dependencies = [
  "axum",
  "chrono",

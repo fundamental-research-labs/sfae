@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release tag, for example v0.0.3"
+        description: "Release tag, for example v1.2.3"
         required: true
         type: string
       npm_mode:
@@ -96,26 +96,10 @@ jobs:
           fi
 
           if [[ ! "$release_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Release tags must use v-prefixed semver, such as v0.0.3. Got: $release_tag" >&2
+            echo "Release tags must use v-prefixed semver, such as v1.2.3. Got: $release_tag" >&2
             exit 1
           fi
           version="${release_tag#v}"
-
-          cargo_version="$(awk '
-            /^\[workspace.package\]/ {in_workspace=1; next}
-            /^\[/ {in_workspace=0}
-            in_workspace && /^version =/ {gsub(/"/, "", $3); print $3; exit}
-          ' Cargo.toml)"
-          package_version="$(node -p "require('./package.json').version")"
-
-          if [[ "$cargo_version" != "$version" ]]; then
-            echo "Cargo workspace version is $cargo_version, expected $version" >&2
-            exit 1
-          fi
-          if [[ "$package_version" != "$version" ]]; then
-            echo "package.json version is $package_version, expected $version" >&2
-            exit 1
-          fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
@@ -152,6 +136,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Stamp Cargo version
+        run: scripts/stamp-cargo-version.sh "${{ needs.validate.outputs.version }}"
 
       - uses: dtolnay/rust-toolchain@master
         with:
