@@ -20,6 +20,7 @@
       --accent: #2a6b4a;
       --accent-light: #e8f5ee;
       --code-bg: #f0f0f0;
+      --steel-dark: #4d5559;
     }
 
     * {
@@ -76,9 +77,25 @@
     .hero h1 {
       font-size: 1.5rem;
       font-weight: 600;
-      letter-spacing: -0.02em;
+      letter-spacing: 0;
       margin-bottom: 16px;
       color: var(--text);
+    }
+
+    @supports ((background-clip: text) or (-webkit-background-clip: text)) {
+      .hero h1 {
+        color: transparent;
+        background-image:
+          radial-gradient(ellipse 150px 90px at 18% 38%, rgba(134, 152, 178, 0.56), rgba(86, 103, 128, 0.18) 36%, rgba(86, 103, 128, 0) 64%),
+          radial-gradient(ellipse 210px 110px at 76% 62%, rgba(143, 118, 156, 0.4), rgba(104, 88, 123, 0.12) 44%, rgba(104, 88, 123, 0) 70%),
+          linear-gradient(112deg, #101315 0%, #1b2227 16%, #34424b 31%, #687a86 43%, #96a5ad 50%, #7d7f9d 56%, #65778a 64%, #29343b 78%, #101315 100%);
+        background-size: 360px 140%, 460px 150%, 360px 100%;
+        background-position: 0 50%, 120px 50%, 0 50%;
+        background-repeat: repeat-x;
+        background-clip: text;
+        -webkit-background-clip: text;
+        animation: hero-steel-loop 8s ease-in-out infinite;
+      }
     }
 
     .hero .subheadline {
@@ -183,11 +200,143 @@
       letter-spacing: 0.08em;
     }
 
+    .method-badge.steel {
+      position: relative;
+      border-color: #9aa0a4;
+      color: #3f484d;
+    }
+
+    @supports ((background-clip: text) or (-webkit-background-clip: text)) {
+      .method-badge.steel {
+        color: transparent;
+        background-image:
+          radial-gradient(ellipse 48px 28px at 20% 38%, rgba(118, 137, 164, 0.52), rgba(88, 104, 130, 0.1) 58%, rgba(88, 104, 130, 0) 72%),
+          linear-gradient(112deg, #2f383d 0%, #53636d 34%, #8d98a6 49%, #686b8f 58%, #344047 100%);
+        background-size: 96px 120%, 110px 100%;
+        background-position: 0 50%, 0 50%;
+        background-repeat: repeat-x;
+        background-clip: text;
+        -webkit-background-clip: text;
+        animation: badge-titanium-loop 7s ease-in-out infinite;
+      }
+    }
+
+    @supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) {
+      .method-badge.steel {
+        border-color: transparent;
+      }
+
+      .method-badge.steel::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        padding: 1px;
+        pointer-events: none;
+        background-image: linear-gradient(112deg, #758189 0%, #a2adb4 28%, #aaaec3 48%, #7e8ca0 60%, #758189 100%);
+        background-size: 180px 100%;
+        animation: steel-border-loop 7s ease-in-out infinite;
+        -webkit-mask:
+          linear-gradient(#000 0 0) content-box,
+          linear-gradient(#000 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+      }
+    }
+
     .method-desc {
       font-size: 0.78rem;
       color: var(--text-secondary);
       font-weight: 300;
       margin-bottom: 12px;
+    }
+
+    .command-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .command-item {
+      display: grid;
+      gap: 5px;
+    }
+
+    .command-label {
+      font-size: 0.68rem;
+      color: var(--text-tertiary);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .command-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 38px;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .command-row pre {
+      min-width: 0;
+      margin: 0;
+    }
+
+    .copy-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      min-height: 44px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+    }
+
+    .copy-button:hover,
+    .copy-button:focus-visible {
+      border-color: #b8b8b8;
+      background: #f7f7f7;
+      color: var(--text);
+      outline: none;
+    }
+
+    .copy-button svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .copy-button .check-icon {
+      display: none;
+    }
+
+    .copy-button.copied .copy-icon {
+      display: none;
+    }
+
+    .copy-button.copied .check-icon {
+      display: block;
+    }
+
+    .target-hint {
+      min-height: 1.4em;
+      margin-top: 10px;
+      font-size: 0.7rem;
+      color: var(--text-tertiary);
+      font-weight: 300;
+    }
+
+    .typewriter {
+      color: var(--text-secondary);
+      border-right: 1px solid var(--steel-dark);
+      padding-right: 2px;
     }
 
     /* How it works */
@@ -295,6 +444,41 @@
     }
 
     /* Responsive */
+    @keyframes hero-steel-loop {
+      from { background-position: 0 50%, 120px 50%, 0 50%; }
+      18% { background-position: 74px 30%, 188px 72%, 82px 50%; }
+      43% { background-position: 156px 66%, 302px 34%, 176px 50%; }
+      68% { background-position: 248px 38%, 432px 78%, 276px 50%; }
+      84% { background-position: 314px 58%, 512px 44%, 332px 50%; }
+      to { background-position: 360px 50%, 580px 50%, 360px 50%; }
+    }
+
+    @keyframes badge-titanium-loop {
+      from { background-position: 0 50%, 0 50%; }
+      30% { background-position: 28px 32%, 36px 50%; }
+      62% { background-position: 70px 70%, 78px 50%; }
+      to { background-position: 96px 50%, 110px 50%; }
+    }
+
+    @keyframes steel-border-loop {
+      from { background-position: 0 50%; }
+      35% { background-position: 68px 50%; }
+      72% { background-position: 132px 50%; }
+      to { background-position: 180px 50%; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .hero h1,
+      .method-badge.steel,
+      .method-badge.steel::before {
+        animation: none;
+      }
+
+      .typewriter {
+        border-right: 0;
+      }
+    }
+
     @media (max-width: 480px) {
       .hero {
         padding: 64px 0 48px;
@@ -318,6 +502,14 @@
         flex-direction: column;
         gap: 6px;
       }
+
+      .command-row {
+        grid-template-columns: minmax(0, 1fr) 36px;
+      }
+
+      .copy-button {
+        width: 36px;
+      }
     }
   </style>
 </head>
@@ -336,7 +528,7 @@
       </div>
       <h1>Your agent makes API calls.<br>It never sees your keys.</h1>
       <p class="subheadline">
-        Credentials stay in Passwords on macOS. Agents use placeholders.
+        Credentials stay in your secret storage. Agents use placeholders.
         Secrets never hit the context window.
       </p>
     </section>
@@ -355,7 +547,7 @@
         </li>
         <li>
           <strong>Communication protocols</strong><br>
-          <span>HTTP today; Postgres and other protocols are planned.</span>
+          <span>HTTP, Postgres, ClickHouse, and Redis.</span>
         </li>
       </ul>
     </section>
@@ -367,22 +559,89 @@
         <li class="recommended">
           <div class="method-heading">
             <div class="method-title">Just install the SFAE skill</div>
-            <div class="method-badge">Recommended</div>
+            <div class="method-badge steel">Recommended</div>
           </div>
-          <p class="method-desc">Adds the agent skill to the current Codex project. The skill carries its own CLI installer for requests that need SFAE.</p>
-          <pre><code>curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --codex</code></pre>
+          <p class="method-desc">Adds the agent skill to the current project for default agent targets. The skill carries its own CLI installer for requests that need SFAE.</p>
+          <div class="command-row">
+            <pre><code>curl -fsSL https://sfae.io/install-skill.sh | sh</code></pre>
+            <button class="copy-button" type="button" data-copy="curl -fsSL https://sfae.io/install-skill.sh | sh" aria-label="Copy skill install command">
+              <svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              <svg class="check-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 6 9 17l-5-5"/>
+              </svg>
+            </button>
+          </div>
+          <p class="target-hint">Target one agent with <span class="typewriter" data-typewriter>--codex</span></p>
         </li>
         <li>
           <div class="method-title">Skill plus CLI</div>
           <p class="method-desc">Install the skill and immediately install the CLI through Homebrew, npm, or the direct release installer.</p>
-          <pre><code>curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --codex --install-cli</code></pre>
+          <div class="command-row">
+            <pre><code>curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --install-cli</code></pre>
+            <button class="copy-button" type="button" data-copy="curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --install-cli" aria-label="Copy skill and CLI install command">
+              <svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              <svg class="check-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 6 9 17l-5-5"/>
+              </svg>
+            </button>
+          </div>
         </li>
         <li>
           <div class="method-title">CLI only</div>
           <p class="method-desc">Use Homebrew first. npm installs the same native CLI through the published package; the direct installer is the fallback.</p>
-          <pre><code>brew install fundamental-research-labs/tap/sfae
-npm install -g @fundamental-research-labs/sfae
-curl -fsSL https://sfae.io/install.sh | sh</code></pre>
+          <div class="command-list">
+            <div class="command-item">
+              <div class="command-label">Homebrew</div>
+              <div class="command-row">
+                <pre><code>brew install fundamental-research-labs/tap/sfae</code></pre>
+                <button class="copy-button" type="button" data-copy="brew install fundamental-research-labs/tap/sfae" aria-label="Copy Homebrew install command">
+                  <svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="9" y="9" width="11" height="11" rx="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  <svg class="check-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 6 9 17l-5-5"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="command-item">
+              <div class="command-label">npm</div>
+              <div class="command-row">
+                <pre><code>npm install -g @fundamental-research-labs/sfae</code></pre>
+                <button class="copy-button" type="button" data-copy="npm install -g @fundamental-research-labs/sfae" aria-label="Copy npm install command">
+                  <svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="9" y="9" width="11" height="11" rx="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  <svg class="check-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 6 9 17l-5-5"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="command-item">
+              <div class="command-label">Direct</div>
+              <div class="command-row">
+                <pre><code>curl -fsSL https://sfae.io/install.sh | sh</code></pre>
+                <button class="copy-button" type="button" data-copy="curl -fsSL https://sfae.io/install.sh | sh" aria-label="Copy direct install command">
+                  <svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="9" y="9" width="11" height="11" rx="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  <svg class="check-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 6 9 17l-5-5"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
         </li>
       </ul>
     </section>
@@ -393,21 +652,16 @@ curl -fsSL https://sfae.io/install.sh | sh</code></pre>
       <ol class="steps">
         <li>
           <div class="step-label">Check</div>
-          <p class="step-desc">Agent reads the service's official API/auth docs, then checks what credentials exist for a domain.</p>
+          <p class="step-desc">Agent reads the service's official API/auth docs and checks what credentials exist for a domain.</p>
           <pre><code>sfae credentials github.com</code></pre>
         </li>
         <li>
           <div class="step-label">Prompt</div>
-          <p class="step-desc">Human provides what's missing via a browser form. The agent keeps this command running and waits until it exits; credential collection is human-paced and should have no agent-side timeout.</p>
+          <p class="step-desc">Human is offered to provide credentials through a web form.</p>
           <pre><code>sfae prompt github.com --spec '{
   "help_url": "https://github.com/settings/tokens",
   "fields": ["ACCESS_TOKEN"]
 }'</code></pre>
-        </li>
-        <li>
-          <div class="step-label">Code</div>
-          <p class="step-desc">If a workflow asks for a short-lived 2FA/MFA code, SFAE opens a transient browser form and prints the code for immediate submission without storing it.</p>
-          <pre><code>sfae code github.com --label Work --length 6</code></pre>
         </li>
         <li>
           <div class="step-label">Request</div>
@@ -435,5 +689,65 @@ curl -fsSL https://sfae.io/install.sh | sh</code></pre>
     </footer>
 
   </div>
+  <script>
+    const copyButtons = document.querySelectorAll('[data-copy]');
+    for (const button of copyButtons) {
+      button.addEventListener('click', async () => {
+        const text = button.getAttribute('data-copy');
+        try {
+          await navigator.clipboard.writeText(text);
+          button.classList.add('copied');
+          button.setAttribute('aria-label', 'Copied');
+          window.setTimeout(() => {
+            button.classList.remove('copied');
+            button.setAttribute('aria-label', button.dataset.originalLabel || 'Copy command');
+          }, 1400);
+        } catch {
+          const range = document.createRange();
+          range.selectNodeContents(button.previousElementSibling);
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      });
+      button.dataset.originalLabel = button.getAttribute('aria-label');
+    }
+
+    const typewriter = document.querySelector('[data-typewriter]');
+    const flags = ['--codex', '--claude', '--grok', '--target ./agent/skills/sfae'];
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (typewriter && reducedMotion) {
+      typewriter.textContent = flags.slice(0, 3).join(', ');
+    } else if (typewriter) {
+      let flagIndex = 0;
+      let charIndex = flags[0].length;
+      let deleting = true;
+
+      const tick = () => {
+        const current = flags[flagIndex];
+        typewriter.textContent = current.slice(0, charIndex);
+
+        if (deleting) {
+          charIndex -= 1;
+          if (charIndex < 0) {
+            deleting = false;
+            flagIndex = (flagIndex + 1) % flags.length;
+            charIndex = 0;
+          }
+        } else {
+          charIndex += 1;
+          if (charIndex > flags[flagIndex].length) {
+            deleting = true;
+            window.setTimeout(tick, 1200);
+            return;
+          }
+        }
+
+        window.setTimeout(tick, deleting ? 45 : 75);
+      };
+
+      window.setTimeout(tick, 1200);
+    }
+  </script>
 </body>
 </html>

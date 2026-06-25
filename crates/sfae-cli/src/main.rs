@@ -192,11 +192,14 @@ AUTO-REFRESH:
   Normal sfae commands silently refresh existing project-local sfae skill folders from the embedded copy. They do not create missing skill folders. Set SFAE_SKILL_AUTO_UPDATE=off to disable that refresh.
 
 EXAMPLES:
-  Install the Codex skill in this project:
+  Install the default agent skill folders in this project:
+    sfae install-skill
+
+  Install one target:
     sfae install-skill --codex
 
-  Install every default target and immediately install the CLI if needed:
-    sfae install-skill --all --install-cli"#;
+  Install the default targets and immediately install the CLI if needed:
+    sfae install-skill --install-cli"#;
 
 const UPDATE_AFTER_HELP: &str = r#"INSTALL METHOD:
   Updates delegate to the installation method that owns the current sfae binary.

@@ -1,221 +1,63 @@
 [![CI](https://github.com/fundamental-research-labs/sfae/actions/workflows/ci.yml/badge.svg)](https://github.com/fundamental-research-labs/sfae/actions/workflows/ci.yml)
 
-# 🏔️ SFAE — Speak Friend, and Enter
+# SFAE — Speak Friend, and Enter
 
 *Pronounced "safe."* &nbsp; [sfae.io](https://sfae.io)
 
-SFAE lets AI coding agents make authenticated API calls without ever seeing credentials. Agents read the target service's official API/auth docs, ask the human for any missing credentials through SFAE, then write placeholders like `{ACCESS_TOKEN}` or `{API_KEY}` in requests. SFAE resolves them from the local OS credential store or an authenticated SFAE backend at execution time. Supports static tokens, API keys, and hosted OAuth handoff for Discord, Google APIs, and GitHub.
+SFAE lets AI coding agents make authenticated API calls without ever seeing your credentials. Agents use placeholders such as `{ACCESS_TOKEN}` or `{API_KEY}`. SFAE resolves them from secret storage at execution time, so secrets stay out of chat and out of the context window.
 
 ## Features
 
-- **Keychain-native storage** — macOS Keychain, Windows Credential Manager, Linux Secret Service. Not env vars.
-- **All sorts of credentials** — Basic Auth, API Key, hosted OAuth, and more.
-- **Communication protocols** — HTTP today; Postgres and other protocols are planned.
+- **Secret-manager storage** — macOS Keychain, Windows Credential Manager, Linux Secret Service, or an authenticated SFAE backend.
+- **Credentials agents can request safely** — API keys, Basic Auth, OAuth 2.0, and more.
+- **Communication protocols** — HTTP, Postgres, ClickHouse, and Redis.
 
-## Roadmap
+## Install
 
-SFAE is in early release. The current release-readiness roadmap is tracked in GitHub issues:
+Install the SFAE skill in the current project:
 
-| Priority | Area | Work | Issue |
-| --- | --- | --- | --- |
-| P0 | OAuth | Make hosted OAuth release-ready: live-path validation, refresh/revoke coverage, failure UX, and the `oauth.sfae.io` operations runbook. | [#25](https://github.com/fundamental-research-labs/sfae/issues/25) |
-| P0 | Release | Prepare the public release checklist: audit secrets/history, finish public-facing docs, confirm CI from a clean checkout, and decide release timing. | [#26](https://github.com/fundamental-research-labs/sfae/issues/26) |
-| P0 | Distribution | Publish the SFAE CLI after the release checklist is satisfied. | [#13](https://github.com/fundamental-research-labs/sfae/issues/13) |
-| P1 | Authentication | Support x.509 certificate authentication for mTLS without exposing private keys to agents. | [#27](https://github.com/fundamental-research-labs/sfae/issues/27) |
-| P1 | OAuth | Expand hosted OAuth providers with provider adapters, app setup, approval tracking, smoke tests, and public docs. | [#28](https://github.com/fundamental-research-labs/sfae/issues/28) |
-| P1 | OAuth | Centralize multi-provider OAuth app config for hosted provider client IDs and secrets. | [#10](https://github.com/fundamental-research-labs/sfae/issues/10) |
-| P2 | Protocols | Add a protocol adapter architecture that keeps HTTP working while adding a typed execution boundary for native protocols. | [#29](https://github.com/fundamental-research-labs/sfae/issues/29) |
-| P2 | Protocols | Support native Postgres execution without leaking database credentials. | [#30](https://github.com/fundamental-research-labs/sfae/issues/30) |
-| P2 | Protocols | Support native ClickHouse execution with masked credentials and integration coverage. | [#31](https://github.com/fundamental-research-labs/sfae/issues/31) |
-| P2 | Product | Add a credential management UI for reviewing and managing stored credential sets and secrets outside the CLI. | [#12](https://github.com/fundamental-research-labs/sfae/issues/12) |
+```bash
+curl -fsSL https://sfae.io/install-skill.sh | sh
+```
 
-## Installation
-
-SFAE is for agent workflows, so the main install path is the skill. Just install
-the SFAE skill in the current project:
+By default this installs the skill for supported agent targets. To target one agent, pass a flag such as `--codex`, `--claude`, or `--grok`.
 
 ```bash
 curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --codex
 ```
 
-Use `--claude`, `--grok`, or `--all` for other agent targets. To install every
-default target:
+The skill includes a small CLI installer. When an agent needs SFAE and the `sfae` command is not available yet, it can install the CLI through the bundled helper. CLI-only installation and command details live in [docs/cli.md](docs/cli.md).
 
-```bash
-curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --all
+## Quick Start
+
+You normally do not need to run SFAE commands yourself. Install the skill, then ask your agent to use SFAE for authenticated work:
+
+```text
+Use SFAE to call the GitHub API and tell me who I am. If credentials are missing, open the SFAE browser form. Do not ask me to paste secrets into chat.
 ```
 
-The skill includes a bundled `install.sh` support script. If an agent tries to
-use the skill before `sfae` is installed, that script can install the CLI by
-trying Homebrew first, then npm, then the direct release installer. To install
-the CLI immediately while installing the skill:
-
-```bash
-curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --codex --install-cli
+```text
+Use SFAE for the API call in this repo. Read the service's official API/auth docs first, collect credentials through SFAE if needed, then make the request with placeholders.
 ```
 
-When `sfae` is already available, refresh or install the bundled skill from the
-binary:
+The agent checks which credentials exist, opens a web form when something is missing, and makes the authenticated request with placeholders. You provide secrets only in the browser form, not in chat.
 
-```bash
-sfae install-skill --codex
-```
+## How It Works
 
-Normal `sfae` commands silently refresh existing project-local SFAE skill folders
-from the embedded copy, without creating missing skill folders. Set
-`SFAE_SKILL_AUTO_UPDATE=off` to disable that refresh.
+1. The agent reads the service's official API/auth docs and checks for stored credentials.
+2. SFAE offers you a web form for anything missing.
+3. The agent makes requests with placeholders, and SFAE resolves them from secret storage.
 
-To install only the CLI, prefer Homebrew:
+## Roadmap
 
-```bash
-brew install fundamental-research-labs/tap/sfae
-```
-
-Or npm:
-
-```bash
-npm install -g @fundamental-research-labs/sfae
-```
-
-The npm package is only a thin wrapper that downloads and runs the native Rust
-binary.
-
-Or use the direct installer:
-
-```bash
-curl -fsSL https://sfae.io/install.sh | sh
-```
-
-By default this installs to `/usr/local/bin/sfae`. To choose another location:
-
-```bash
-curl -fsSL https://sfae.io/install.sh | env SFAE_INSTALL_DIR="$HOME/.local/bin" sh
-```
-
-Update through the owning install method:
-
-```bash
-sfae update
-```
-
-Homebrew installs run `brew update` and `brew upgrade sfae`; npm installs run
-`npm install -g @fundamental-research-labs/sfae@latest`; direct installs rerun
-the direct installer for the current binary directory.
-
-To build from source:
-
-```
-cargo build --bin sfae --release
-```
-
-The binary is produced at `./target/release/sfae`.
-
-On macOS, local credentials are stored in Passwords/login keychain. Hosted OAuth uses `oauth.sfae.io` for provider authorization and stores redeemed token material locally; it does not require `SFAE_STORE_URL`, `SFAE_STORE_TOKEN`, or a running `sfae-server`. When those remote-store variables are set, the CLI uses the authenticated SFAE backend instead. Agents can list credential set IDs and field names, but secret values stay out of chat.
-
-## Quick start
-
-```bash
-# 1. Check if credentials already exist for a domain
-sfae credentials github.com
-
-# 2. If not, prompt the human to provide one (opens a browser page).
-# Keep this command running and wait until it exits; credential collection is human-paced.
-sfae prompt github.com --spec '{
-  "help_url": "https://github.com/settings/tokens",
-  "fields": ["ACCESS_TOKEN"]
-}'
-
-# 3. Make an authenticated request using placeholders
-sfae request GET "https://api.github.com/user" \
-  -H "Authorization: Bearer {ACCESS_TOKEN}" \
-  -H "User-Agent: sfae"
-
-# If a workflow asks for a short-lived 2FA/MFA code, request it from the human.
-# The code is printed to stdout for immediate use and is not stored.
-sfae code github.com --label Work --message "Enter the 6-digit GitHub authentication code." --length 6
-```
-
-Agents should treat `sfae prompt` as a blocking step. Wait indefinitely until the process exits, and only continue to `sfae request` after it prints a stored or connected credential message. Do not ask the human to paste secrets into chat or use `--terminal`.
-
-Agents should use `sfae code` only for active, short-lived verification challenges. Unlike `sfae prompt`, the submitted code is intentionally returned to stdout so the agent can complete the challenge, and SFAE does not store it.
-
-For hosted OAuth, the hosted broker currently supports Discord, Google APIs, and GitHub. Use `googleapis.com` as the credential domain for Google API credentials so parent-domain fallback can resolve the same token for hosts such as `gmail.googleapis.com`, `docs.googleapis.com`, `sheets.googleapis.com`, and `www.googleapis.com`. Use `github.com` as the credential domain for GitHub credentials so parent-domain fallback can resolve the same token for `api.github.com`.
-
-```bash
-# No SFAE_STORE_URL or SFAE_STORE_TOKEN required for local CLI OAuth.
-sfae prompt discord.com --spec '{
-  "groups": [{
-    "label": "OAuth",
-    "oauth": {"provider": "discord", "scopes": ["identify"]}
-  }]
-}'
-
-# Then make requests as usual
-sfae request GET "https://discord.com/api/v10/users/@me" \
-  -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}"
-
-# Google API OAuth uses the same spec shape.
-sfae prompt googleapis.com --spec '{
-  "groups": [{
-    "label": "OAuth",
-    "oauth": {
-      "provider": "google",
-      "scopes": ["https://www.googleapis.com/auth/drive.metadata.readonly"]
-    }
-  }]
-}'
-
-sfae request GET "https://www.googleapis.com/drive/v3/files?pageSize=10" \
-  --domain googleapis.com \
-  -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}"
-
-# GitHub OAuth supports GitHub OAuth App scopes.
-sfae prompt github.com --spec '{
-  "groups": [{
-    "label": "OAuth",
-    "oauth": {
-      "provider": "github",
-      "scopes": ["read:user"]
-    }
-  }]
-}'
-
-sfae request GET "https://api.github.com/user" \
-  --domain github.com \
-  -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}" \
-  -H "User-Agent: sfae"
-```
-
-To upgrade OAuth scopes, re-run `sfae prompt` with the same domain/label and the full required scope set. Local OAuth re-authorization stores fresh credentials with a new UUID; when SFAE can prove the provider account is the same, it forgets older same-account entries from its index without reading or purging keychain secrets. If SFAE cannot prove the same account, or for non-OAuth credentials, older sets remain until `sfae delete <uuid>`. When multiple sets remain for a domain, select one with `sfae request --cred <uuid>` or `--label <label>`.
-
-## CLI reference
-
-- `sfae credentials [domain] [--label <label>]` lists credential sets as `<uuid> <domain> <label-or-> [KEY, ...]`.
-- `sfae prompt <domain> --spec '<JSON>' [--label <label>]` opens the human-paced browser flow and stores a credential set.
-- `sfae code <domain> [--label <label>] [--message <text>] [--help-url <url>] [--format digits|alnum|text] [--length <n> | --min-length <n> --max-length <n>] [--timeout <seconds>]` requests a transient 2FA/MFA code and prints it to stdout without storing it.
-- `sfae request <METHOD> <URL> [-H "Header: {KEY}"] [-d BODY] [--domain <domain>] [--cred <uuid>] [--label <label>] [--dry-run] [--verbose]` sends HTTP requests with `{KEY}` placeholders resolved from the selected credential set.
-- `sfae install-skill [--codex] [--claude] [--grok] [--all] [--target <path>] [--install-cli]` writes the bundled skill and support installer into project-local agent skill folders.
-- `sfae update` updates the CLI through Homebrew, npm, or the direct installer based on how the current binary was installed.
-- `sfae delete <uuid>` forgets one credential set from SFAE's index; add `--purge` only when keychain/password prompts are acceptable. Domain deletion and `--type` are legacy flat-key paths.
-- `sfae flush --dry-run` previews a local full wipe; `sfae flush` deletes every locally indexed credential.
-
-`--user` is still accepted as a compatibility alias for `--label`.
-
-## Project structure
-
-```
-crates/
-  sfae-core/   # Core library — secrets management, keychain, HTTP, hosted OAuth handoff
-  sfae-cli/    # CLI binary
-  sfae-server/ # Authenticated SFAE credential backend
-  sfae-oauth-server/ # Hosted OAuth broker
-  xtask/       # Build tasks
-```
+| Area | Work |
+| --- | --- |
+| Authentication | [x.509 certificate authentication](https://github.com/fundamental-research-labs/sfae/issues/27) |
+| Protocols | [Support Postgres](https://github.com/fundamental-research-labs/sfae/issues/30) |
+| Protocols | [Support ClickHouse](https://github.com/fundamental-research-labs/sfae/issues/31) |
+| Protocols | [Support Redis](https://github.com/fundamental-research-labs/sfae/issues/52) |
+| Product | [Add a credential management UI](https://github.com/fundamental-research-labs/sfae/issues/12) |
 
 ## License
 
 MIT
-
----
-
-*🧙 You shall not pass.*
