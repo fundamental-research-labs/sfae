@@ -240,7 +240,7 @@ SPEC FORMAT:
 OAUTH:
   Use OAuth groups when the target service's official docs require OAuth authorization.
   Set `provider` to the OAuth provider name from the service docs. If omitted, SFAE can infer it when the prompt domain matches provider metadata.
-  Hosted OAuth currently supports Discord (`discord.com`) and Google APIs (`googleapis.com`) when reported by the broker.
+  Hosted OAuth currently supports Discord (`discord.com`), Google APIs (`googleapis.com`), and GitHub (`github.com`) when reported by the broker.
   SFAE forwards requested OAuth scopes to the provider. Ask for any scope required by the user's task, but choose the narrowest set that can satisfy the request.
   SFAE or the provider may reject unknown, unavailable, or app-restricted scopes.
   --terminal supports field prompts only; OAuth requires browser mode.
@@ -316,6 +316,17 @@ EXAMPLES:
         "oauth": {
           "provider": "google",
           "scopes": ["https://www.googleapis.com/auth/drive.metadata.readonly"]
+        }
+      }]
+    }'
+
+  GitHub OAuth:
+    sfae prompt github.com --spec '{
+      "groups": [{
+        "label": "OAuth",
+        "oauth": {
+          "provider": "github",
+          "scopes": ["read:user"]
         }
       }]
     }'"#;

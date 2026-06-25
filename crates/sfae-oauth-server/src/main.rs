@@ -19,6 +19,7 @@ mod config;
 mod crypto;
 mod db;
 mod discord;
+mod github;
 mod google;
 mod handlers;
 mod local;

@@ -3,10 +3,11 @@
 use chrono::{DateTime, Utc};
 
 use crate::config::Config;
-use crate::{discord, google};
+use crate::{discord, github, google};
 
 const DISCORD_DOMAINS: &[&str] = &["discord.com"];
 const GOOGLE_DOMAINS: &[&str] = &["googleapis.com"];
+const GITHUB_DOMAINS: &[&str] = &["github.com"];
 const PROVIDERS: &[ProviderMetadata] = &[
     ProviderMetadata {
         provider: "discord",
@@ -15,6 +16,10 @@ const PROVIDERS: &[ProviderMetadata] = &[
     ProviderMetadata {
         provider: "google",
         domains: GOOGLE_DOMAINS,
+    },
+    ProviderMetadata {
+        provider: "github",
+        domains: GITHUB_DOMAINS,
     },
 ];
 
@@ -92,6 +97,7 @@ pub(crate) struct FetchUser<'a> {
 enum Provider {
     Discord,
     Google,
+    GitHub,
 }
 
 impl Provider {
@@ -99,6 +105,7 @@ impl Provider {
         match self {
             Self::Discord => "discord",
             Self::Google => "google",
+            Self::GitHub => "github",
         }
     }
 
@@ -106,6 +113,7 @@ impl Provider {
         match self {
             Self::Discord => "discord.com",
             Self::Google => "googleapis.com",
+            Self::GitHub => "github.com",
         }
     }
 }
@@ -158,6 +166,17 @@ pub(crate) fn build_authorization(
                 authorization_url: session.authorization_url,
             })
         }
+        Provider::GitHub => {
+            let session = github::build_authorization(github::GitHubAuthorize {
+                config,
+                state,
+                requested_scopes,
+            })?;
+            Ok(ProviderAuthorization {
+                scopes: session.scopes,
+                authorization_url: session.authorization_url,
+            })
+        }
     }
 }
 
@@ -179,6 +198,11 @@ pub(crate) async fn exchange_code(args: ExchangeCode<'_>) -> Result<ProviderToke
         Provider::Google => {
             let token =
                 google::exchange_code(google::GoogleTokenRequest { http, config, code }).await?;
+            Ok(token.into_provider_token(requested_scopes))
+        }
+        Provider::GitHub => {
+            let token =
+                github::exchange_code(github::GitHubTokenRequest { http, config, code }).await?;
             Ok(token.into_provider_token(requested_scopes))
         }
     }
@@ -211,6 +235,7 @@ pub(crate) async fn refresh_token(args: RefreshToken<'_>) -> Result<ProviderToke
             .await?;
             Ok(token.into_refreshed_provider_token())
         }
+        Provider::GitHub => Err("provider_refresh_unsupported".to_string()),
     }
 }
 
@@ -235,6 +260,14 @@ pub(crate) async fn revoke_token(args: RevokeToken<'_>) -> Result<(), String> {
         }
         Provider::Google => {
             google::revoke_token(google::GoogleRevokeRequest {
+                http,
+                config,
+                token,
+            })
+            .await
+        }
+        Provider::GitHub => {
+            github::revoke_token(github::GitHubRevokeRequest {
                 http,
                 config,
                 token,
@@ -271,6 +304,15 @@ pub(crate) async fn fetch_user(args: FetchUser<'_>) -> Result<ProviderUser, Stri
             .await?;
             Ok(user.into_provider_user())
         }
+        Provider::GitHub => {
+            let user = github::fetch_user(github::GitHubUserRequest {
+                http,
+                config,
+                access_token,
+            })
+            .await?;
+            Ok(user.into_provider_user())
+        }
     }
 }
 
@@ -282,6 +324,7 @@ fn provider_by_name(provider: &str) -> Option<Provider> {
     match provider {
         "discord" => Some(Provider::Discord),
         "google" => Some(Provider::Google),
+        "github" => Some(Provider::GitHub),
         _ => None,
     }
 }
@@ -291,7 +334,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_includes_discord_and_google() {
+    fn registry_includes_discord_google_and_github() {
         let registry: Vec<_> = provider_metadata()
             .iter()
             .map(|provider| (provider.provider, provider.domains.to_vec()))
@@ -301,7 +344,8 @@ mod tests {
             registry,
             vec![
                 ("discord", vec!["discord.com"]),
-                ("google", vec!["googleapis.com"])
+                ("google", vec!["googleapis.com"]),
+                ("github", vec!["github.com"])
             ]
         );
     }
@@ -310,6 +354,7 @@ mod tests {
     fn default_domains_are_provider_specific() {
         assert_eq!(default_domain("discord"), Some("discord.com"));
         assert_eq!(default_domain("google"), Some("googleapis.com"));
+        assert_eq!(default_domain("github"), Some("github.com"));
         assert_eq!(default_domain("unknown"), None);
     }
 }

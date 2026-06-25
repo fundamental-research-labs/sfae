@@ -184,7 +184,8 @@ fn provider_registry_response() -> MockResponse {
     json_response(serde_json::json!({
         "providers": [
             {"provider": "discord", "domains": ["discord.com"]},
-            {"provider": "google", "domains": ["googleapis.com"]}
+            {"provider": "google", "domains": ["googleapis.com"]},
+            {"provider": "github", "domains": ["github.com"]}
         ]
     }))
 }
@@ -378,6 +379,11 @@ fn direct_broker_fetches_provider_registry_from_broker() {
         registry.providers[1].domains,
         vec!["googleapis.com".to_string()]
     );
+    assert_eq!(registry.providers[2].provider, "github");
+    assert_eq!(
+        registry.providers[2].domains,
+        vec!["github.com".to_string()]
+    );
     assert_eq!(requests[0].method, "GET");
     assert_eq!(requests[0].target, "/v1/oauth/providers");
 }
@@ -425,6 +431,11 @@ fn backend_proxy_fetches_provider_registry_from_backend() {
     assert_eq!(
         registry.providers[1].domains,
         vec!["googleapis.com".to_string()]
+    );
+    assert_eq!(registry.providers[2].provider, "github");
+    assert_eq!(
+        registry.providers[2].domains,
+        vec!["github.com".to_string()]
     );
     assert_eq!(requests[0].method, "GET");
     assert_eq!(requests[0].target, "/oauth/providers");

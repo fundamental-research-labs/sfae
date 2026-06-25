@@ -509,6 +509,8 @@ impl BrokerProcess {
             .env("DISCORD_CLIENT_SECRET", "mock-client-secret")
             .env("GOOGLE_CLIENT_ID", "mock-google-client-id")
             .env("GOOGLE_CLIENT_SECRET", "mock-google-client-secret")
+            .env("GITHUB_CLIENT_ID", "mock-github-client-id")
+            .env("GITHUB_CLIENT_SECRET", "mock-github-client-secret")
             .env("BASE_URL", &base_url)
             .env("SFAE_SERVER_PORT", port.to_string())
             .env("SFAE_OAUTH_ALLOW_TEST_PROVIDER_URLS", "1")
