@@ -81,7 +81,7 @@ impl Config {
             "GITHUB_TOKEN_URL",
             "https://github.com/login/oauth/access_token",
         );
-        let github_api_url = provider_url("GITHUB_API_URL", "https://api.github.com");
+        let github_api_url = provider_url("SFAE_GITHUB_API_URL", "https://api.github.com");
         let github_userinfo_url =
             provider_url("GITHUB_USERINFO_URL", "https://api.github.com/user");
         let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:3100".into());
