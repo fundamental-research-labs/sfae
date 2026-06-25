@@ -1,10 +1,13 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version, with or without a leading v"
+        description: "Release tag, for example v0.0.3"
         required: true
         type: string
       npm_mode:
@@ -29,7 +32,7 @@ on:
         type: boolean
 
 concurrency:
-  group: release-${{ inputs.version }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -45,6 +48,9 @@ jobs:
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
+      npm_mode: ${{ steps.release.outputs.npm_mode }}
+      update_homebrew: ${{ steps.release.outputs.update_homebrew }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
 
     steps:
       - uses: actions/checkout@v6
@@ -58,21 +64,42 @@ jobs:
         id: release
         shell: bash
         env:
+          EVENT_NAME: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_NPM_MODE: ${{ inputs.npm_mode }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_UPDATE_HOMEBREW: ${{ inputs.update_homebrew }}
           REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
           set -euo pipefail
 
-          if [[ "$REF_NAME" != "main" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$REF_NAME" != "main" ]]; then
             echo "Releases must be run from main. Current ref: $REF_NAME" >&2
             exit 1
           fi
 
-          version="${INPUT_VERSION#v}"
-          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid semver version: $version" >&2
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            if [[ "$REF_TYPE" != "tag" ]]; then
+              echo "Release push events must come from tags. Current ref type: $REF_TYPE" >&2
+              exit 1
+            fi
+            release_tag="$REF_NAME"
+            npm_mode="auto"
+            update_homebrew="true"
+            prerelease="false"
+          else
+            release_tag="$INPUT_VERSION"
+            npm_mode="$INPUT_NPM_MODE"
+            update_homebrew="$INPUT_UPDATE_HOMEBREW"
+            prerelease="$INPUT_PRERELEASE"
+          fi
+
+          if [[ ! "$release_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tags must use v-prefixed semver, such as v0.0.3. Got: $release_tag" >&2
             exit 1
           fi
+          version="${release_tag#v}"
 
           cargo_version="$(awk '
             /^\[workspace.package\]/ {in_workspace=1; next}
@@ -91,7 +118,10 @@ jobs:
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "npm_mode=$npm_mode" >> "$GITHUB_OUTPUT"
+          echo "update_homebrew=$update_homebrew" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
   build-assets:
     name: Build ${{ matrix.name }}
@@ -221,16 +251,21 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           head_sha="$(git rev-parse HEAD)"
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            :
+          elif git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+          else
+            git tag -a "$TAG" -m "$TAG" "$head_sha"
+            git push origin "refs/tags/$TAG"
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             tag_sha="$(git rev-list -n 1 "$TAG")"
             if [[ "$tag_sha" != "$head_sha" ]]; then
               echo "Tag $TAG already exists at $tag_sha, not current HEAD $head_sha" >&2
               exit 1
             fi
-          else
-            git tag -a "$TAG" -m "$TAG" "$head_sha"
-            git push origin "refs/tags/$TAG"
           fi
 
       - name: Create or update GitHub release
@@ -238,7 +273,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          PRERELEASE: ${{ inputs.prerelease }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
           TAG: ${{ needs.validate.outputs.tag }}
         run: |
           set -euo pipefail
@@ -266,7 +301,7 @@ jobs:
     needs:
       - validate
       - github-release
-    if: inputs.update_homebrew
+    if: needs.validate.outputs.update_homebrew == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -369,7 +404,7 @@ FORMULA
     needs:
       - validate
       - github-release
-    if: inputs.npm_mode != 'skip'
+    if: needs.validate.outputs.npm_mode != 'skip'
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:
@@ -401,7 +436,7 @@ FORMULA
         shell: bash
         working-directory: dist/${{ needs.validate.outputs.tag }}/npm
         env:
-          MODE: ${{ inputs.npm_mode }}
+          MODE: ${{ needs.validate.outputs.npm_mode }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |

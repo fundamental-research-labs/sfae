@@ -216,42 +216,6 @@ crates/
 
 MIT
 
-## Release
-
-Use the **Release** GitHub Actions workflow for public releases. Run it from
-`main` with the target version, for example `0.1.0`. The workflow builds all
-native archives, creates or updates the GitHub release, updates the Homebrew tap,
-and handles npm.
-
-`release.sh` remains available for local release work:
-
-```bash
-./release.sh 0.1.0
-```
-
-It verifies the workspace version, builds release archives, tags and pushes the
-tag, uploads GitHub release assets, updates the Homebrew tap, and can publish
-the npm package. Use step-only flags when releasing in stages:
-
-```bash
-./release.sh 0.1.0 --build-only --target x86_64-unknown-linux-gnu
-./release.sh 0.1.0 --publish-only
-./release.sh 0.1.0 --tap-only
-./release.sh 0.1.0 --npm-only
-```
-
-The workflow writes Homebrew formula updates to
-`fundamental-research-labs/homebrew-tap` through a GitHub App installed on that
-tap repo. For the first npm publication, add a temporary `NPM_TOKEN` repository
-secret and run the Release workflow with `npm_mode=token`. After the package
-exists, configure npm Trusted Publishing for `release.yml`, then use
-`npm_mode=auto` or `npm_mode=stage` for future releases. Future npm releases use
-OIDC to stage the package; a maintainer then approves the staged package on npm
-with 2FA.
-
-The default Homebrew tap and npm package are
-`fundamental-research-labs/homebrew-tap` and `@fundamental-research-labs/sfae`.
-
 ---
 
 *🧙 You shall not pass.*

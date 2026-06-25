@@ -69,4 +69,4 @@ NODE
 
 echo "Prepared npm package at $stage"
 echo "Inspect it with: npm pack --dry-run $stage"
-echo "Publish it through release.sh with: ./release.sh $version --npm-only"
+echo "Publish it through the Release workflow by pushing tag $tag"
