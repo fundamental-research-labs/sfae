@@ -240,11 +240,14 @@ the npm package. Use step-only flags when releasing in stages:
 ./release.sh 0.1.0 --npm-only
 ```
 
-For the first npm publication, add a temporary `NPM_TOKEN` repository secret and
-run the Release workflow with `npm_mode=token`. After the package exists,
-configure npm Trusted Publishing for `release.yml`, then use `npm_mode=auto` or
-`npm_mode=stage` for future releases. Future npm releases use OIDC to stage the
-package; a maintainer then approves the staged package on npm with 2FA.
+The workflow writes Homebrew formula updates to
+`fundamental-research-labs/homebrew-tap` through a GitHub App installed on that
+tap repo. For the first npm publication, add a temporary `NPM_TOKEN` repository
+secret and run the Release workflow with `npm_mode=token`. After the package
+exists, configure npm Trusted Publishing for `release.yml`, then use
+`npm_mode=auto` or `npm_mode=stage` for future releases. Future npm releases use
+OIDC to stage the package; a maintainer then approves the staged package on npm
+with 2FA.
 
 The default Homebrew tap and npm package are
 `fundamental-research-labs/homebrew-tap` and `@fundamental-research-labs/sfae`.
