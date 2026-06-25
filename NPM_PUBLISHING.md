@@ -15,7 +15,7 @@ npm package handling from GitHub Actions. The release version comes from the
 `v*` tag; checked-in manifests use a development placeholder and are stamped in
 the workflow.
 
-Staged publishing requires an existing npm package. For the first publication,
+Trusted Publishing requires an existing npm package. For the first publication,
 provide an `NPM_TOKEN` secret with publish access. The tag-triggered workflow
 uses that token only because the npm package does not exist yet, and still adds
 GitHub Actions provenance via `npm publish --provenance --access public`.
@@ -57,7 +57,7 @@ GitHub Actions provenance via `npm publish --provenance --access public`.
    - Repository name: `sfae`
    - Workflow filename: `release.yml`
    - Environment: `production`
-   - Allowed action: `npm stage publish`
+   - Allowed action: `npm publish`
 
 7. In package settings, set Publishing access to "Require two-factor
    authentication and disallow tokens".
@@ -68,6 +68,5 @@ GitHub Actions provenance via `npm publish --provenance --access public`.
 ## Future publications
 
 Push a new `v*` release tag. The workflow builds all release assets, publishes
-or updates the GitHub release, updates the Homebrew tap, and stages the npm
-package through Trusted Publishing. Review the staged package on npm and approve
-it with 2FA.
+or updates the GitHub release, updates the Homebrew tap, and publishes the npm
+package through Trusted Publishing.

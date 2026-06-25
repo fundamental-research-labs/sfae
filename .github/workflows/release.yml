@@ -11,13 +11,13 @@ on:
         required: true
         type: string
       npm_mode:
-        description: "npm handling: auto stages existing packages and token-publishes the first package if NPM_TOKEN exists"
+        description: "npm handling: auto publishes existing packages with OIDC and token-publishes the first package if NPM_TOKEN exists"
         required: true
         default: auto
         type: choice
         options:
           - auto
-          - stage
+          - publish
           - token
           - skip
       update_homebrew:
@@ -437,7 +437,7 @@ jobs:
       - name: Check package contents
         run: npm pack --dry-run "dist/${{ needs.validate.outputs.tag }}/npm"
 
-      - name: Publish or stage package
+      - name: Publish package
         shell: bash
         working-directory: dist/${{ needs.validate.outputs.tag }}/npm
         env:
@@ -462,13 +462,13 @@ jobs:
             package_exists="true"
           fi
 
-          if [[ "$MODE" == "stage" || ( "$MODE" == "auto" && "$package_exists" == "true" ) ]]; then
+          if [[ "$MODE" == "publish" || ( "$MODE" == "auto" && "$package_exists" == "true" ) ]]; then
             if [[ "$package_exists" != "true" ]]; then
-              echo "Cannot use npm stage publish for a brand-new package. Use npm_mode=token with NPM_TOKEN for the first publish." >&2
+              echo "Cannot use trusted npm publish for a brand-new package. Use npm_mode=token with NPM_TOKEN for the first publish." >&2
               exit 1
             fi
             unset NPM_TOKEN
-            npm stage publish
+            npm publish --access public
             exit 0
           fi
 
