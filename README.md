@@ -14,7 +14,7 @@ SFAE lets AI coding agents make authenticated API calls without ever seeing cred
 
 ## Roadmap
 
-SFAE is private/pre-release. The current path to an open-source-ready release is tracked in GitHub issues:
+SFAE is in early release. The current release-readiness roadmap is tracked in GitHub issues:
 
 | Priority | Area | Work | Issue |
 | --- | --- | --- | --- |
@@ -71,14 +71,14 @@ To install only the CLI, prefer Homebrew:
 brew install fundamental-research-labs/tap/sfae
 ```
 
-After the npm scope is claimed and published, npm will be:
+Or npm:
 
 ```bash
 npm install -g @fundamental-research-labs/sfae
 ```
 
 The npm package is only a thin wrapper that downloads and runs the native Rust
-binary. The package name is a placeholder until the npm account/scope exists.
+binary.
 
 Or use the direct installer:
 
@@ -194,8 +194,8 @@ MIT
 ```
 
 It verifies the workspace version, builds release archives, tags and pushes the
-tag, uploads GitHub release assets, updates the Homebrew tap, and publishes the
-npm package. Use step-only flags when releasing in stages:
+tag, uploads GitHub release assets, updates the Homebrew tap, and can publish
+the npm package. Use step-only flags when releasing in stages:
 
 ```bash
 ./release.sh 0.1.0 --build-only --target x86_64-unknown-linux-gnu
@@ -204,7 +204,21 @@ npm package. Use step-only flags when releasing in stages:
 ./release.sh 0.1.0 --npm-only
 ```
 
-The default Homebrew tap and npm package are placeholders:
+For the first npm publication, create the GitHub release assets first and then
+publish the prepared package directly with a 2FA-enabled npm account:
+
+```bash
+scripts/prepare-npm-package.sh 0.1.0
+npm pack --dry-run dist/v0.1.0/npm
+npm publish dist/v0.1.0/npm --access public
+```
+
+After the package exists, configure npm Trusted Publishing for the
+`npm-publish.yml` workflow and prefer that workflow for future npm releases. It
+uses OIDC to stage the package; a maintainer then approves the staged package on
+npm with 2FA.
+
+The default Homebrew tap and npm package are
 `fundamental-research-labs/homebrew-tap` and `@fundamental-research-labs/sfae`.
 
 ---

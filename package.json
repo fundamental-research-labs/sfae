@@ -1,6 +1,6 @@
 {
   "name": "@fundamental-research-labs/sfae",
-  "version": "0.0.0-development",
+  "version": "0.0.3",
   "description": "Credential gateway CLI for agents making authenticated API requests",
   "license": "MIT",
   "homepage": "https://sfae.io",
@@ -45,7 +45,9 @@
   "engines": {
     "node": ">=16"
   },
+  "packageManager": "npm@11.17.0",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   }
 }
