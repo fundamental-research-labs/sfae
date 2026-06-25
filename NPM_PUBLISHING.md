@@ -26,14 +26,14 @@ GitHub Actions provenance via `npm publish --provenance --access public`.
 
 2. Create a GitHub App for release automation, install it on
    `fundamental-research-labs/homebrew-tap`, and grant it repository
-   `Contents: read and write` permission. Store its credentials as repository
-   secrets on this repo:
+   `Contents: read and write` permission. Store its credentials as `production`
+   environment secrets on this repo:
 
    - `HOMEBREW_RELEASE_APP_CLIENT_ID`
    - `HOMEBREW_RELEASE_APP_PRIVATE_KEY`
 
-3. Add repository secret `NPM_TOKEN`, a temporary npm token with publish access,
-   required only for the first npm publication.
+3. Add `production` environment secret `NPM_TOKEN`, a temporary npm token with
+   publish access, required only for the first npm publication.
 
 4. Create and push the release tag:
 
@@ -53,7 +53,7 @@ GitHub Actions provenance via `npm publish --provenance --access public`.
    - Repository owner: `fundamental-research-labs`
    - Repository name: `sfae`
    - Workflow filename: `release.yml`
-   - Environment: leave unset
+   - Environment: `production`
    - Allowed action: `npm publish`
 
 6. In package settings, set Publishing access to "Require two-factor
