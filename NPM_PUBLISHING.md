@@ -14,27 +14,39 @@ The release workflow handles the GitHub release assets, Homebrew tap update, and
 npm package handling from GitHub Actions.
 
 Staged publishing requires an existing npm package. For the first publication,
-run the release workflow with `npm_mode=token` and provide an `NPM_TOKEN` secret
-with publish access. This first token publish still uses GitHub Actions
-provenance via `npm publish --provenance --access public`.
+provide an `NPM_TOKEN` secret with publish access. The tag-triggered workflow
+uses that token only because the npm package does not exist yet, and still adds
+GitHub Actions provenance via `npm publish --provenance --access public`.
 
-1. Add repository secrets:
+1. Create a public `fundamental-research-labs/homebrew-tap` repository. Homebrew
+   treats `homebrew-tap` as the `fundamental-research-labs/tap` tap, and the
+   repo can hold formulas for multiple projects under `Formula/`.
 
-   - `HOMEBREW_TAP_TOKEN`: token with contents write access to
-     `fundamental-research-labs/homebrew-tap`.
-   - `NPM_TOKEN`: temporary npm token with publish access, required only for the
-     first npm publication.
+2. Create a GitHub App for release automation, install it on
+   `fundamental-research-labs/homebrew-tap`, and grant it repository
+   `Contents: read and write` permission. Store its credentials on this repo:
 
-2. In GitHub, create an `npm-publish` environment for this repository. Add
+   - repository variable `HOMEBREW_RELEASE_APP_CLIENT_ID`
+   - repository secret `HOMEBREW_RELEASE_APP_PRIVATE_KEY`
+
+3. Add repository secret `NPM_TOKEN`, a temporary npm token with publish access,
+   required only for the first npm publication.
+
+4. In GitHub, create an `npm-publish` environment for this repository. Add
    required reviewers if the repository plan supports protected environments.
 
-3. Run `.github/workflows/release.yml` from `main`:
+5. Create and push the release tag:
 
-   - `version`: `0.0.3`
-   - `npm_mode`: `token`
-   - `update_homebrew`: `true`
+   ```bash
+   git tag -a v0.0.3 -m v0.0.3
+   git push origin v0.0.3
+   ```
 
-4. On npm, open `@fundamental-research-labs/sfae` package settings and add a
+   Release tags must use the `v0.0.3` form. The tag push triggers
+   `.github/workflows/release.yml`; for the first publication it uses
+   `NPM_TOKEN` because the npm package does not exist yet.
+
+6. On npm, open `@fundamental-research-labs/sfae` package settings and add a
    Trusted Publisher:
 
    - Provider: GitHub Actions
@@ -44,12 +56,15 @@ provenance via `npm publish --provenance --access public`.
    - Environment: `npm-publish`
    - Allowed action: `npm stage publish`
 
-5. In package settings, set Publishing access to "Require two-factor
+7. In package settings, set Publishing access to "Require two-factor
    authentication and disallow tokens".
+
+8. Revoke and remove `NPM_TOKEN`; it is required only for the first npm
+   publication.
 
 ## Future publications
 
-Run `.github/workflows/release.yml` from `main` with `npm_mode=auto` or
-`npm_mode=stage`. The workflow builds all release assets, publishes or updates
-the GitHub release, updates the Homebrew tap, and stages the npm package through
-Trusted Publishing. Review the staged package on npm and approve it with 2FA.
+Push a new `v*` release tag. The workflow builds all release assets, publishes
+or updates the GitHub release, updates the Homebrew tap, and stages the npm
+package through Trusted Publishing. Review the staged package on npm and approve
+it with 2FA.
