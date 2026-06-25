@@ -26,7 +26,7 @@ GitHub Actions provenance via `npm publish --provenance --access public`.
    `fundamental-research-labs/homebrew-tap`, and grant it repository
    `Contents: read and write` permission. Store its credentials on this repo:
 
-   - repository variable `HOMEBREW_RELEASE_APP_CLIENT_ID`
+   - repository variable `HOMEBREW_RELEASE_APP_ID`
    - repository secret `HOMEBREW_RELEASE_APP_PRIVATE_KEY`
 
 3. Add repository secret `NPM_TOKEN`, a temporary npm token with publish access,
