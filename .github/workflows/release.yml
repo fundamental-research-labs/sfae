@@ -303,6 +303,7 @@ jobs:
       - github-release
     if: needs.validate.outputs.update_homebrew == 'true'
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
 
@@ -310,7 +311,7 @@ jobs:
       - uses: actions/create-github-app-token@v3
         id: tap-token
         with:
-          client-id: ${{ vars.HOMEBREW_RELEASE_APP_CLIENT_ID }}
+          client-id: ${{ secrets.HOMEBREW_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.HOMEBREW_RELEASE_APP_PRIVATE_KEY }}
           owner: fundamental-research-labs
           repositories: homebrew-tap
@@ -406,7 +407,7 @@ jobs:
       - github-release
     if: needs.validate.outputs.npm_mode != 'skip'
     runs-on: ubuntu-latest
-    environment: npm-publish
+    environment: production
     permissions:
       contents: read
       id-token: write
