@@ -32,7 +32,7 @@ on:
         type: boolean
 
 concurrency:
-  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -65,10 +65,10 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          INPUT_VERSION: ${{ inputs.version }}
-          INPUT_NPM_MODE: ${{ inputs.npm_mode }}
-          INPUT_PRERELEASE: ${{ inputs.prerelease }}
-          INPUT_UPDATE_HOMEBREW: ${{ inputs.update_homebrew }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_NPM_MODE: ${{ github.event.inputs.npm_mode }}
+          INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
+          INPUT_UPDATE_HOMEBREW: ${{ github.event.inputs.update_homebrew }}
           REF_NAME: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
         run: |
@@ -310,7 +310,7 @@ jobs:
       - uses: actions/create-github-app-token@v3
         id: tap-token
         with:
-          client-id: ${{ vars.HOMEBREW_RELEASE_APP_CLIENT_ID }}
+          app-id: ${{ vars.HOMEBREW_RELEASE_APP_ID }}
           private-key: ${{ secrets.HOMEBREW_RELEASE_APP_PRIVATE_KEY }}
           owner: fundamental-research-labs
           repositories: homebrew-tap
@@ -339,46 +339,46 @@ jobs:
           }
 
           mkdir -p tap/Formula
-          cat > tap/Formula/sfae.rb <<FORMULA
-class Sfae < Formula
-  desc "Credential gateway for agents making authenticated API requests"
-  homepage "https://sfae.io"
-  version "$VERSION"
-  license "MIT"
-
-  on_macos do
-    on_arm do
-      url "https://github.com/$SFAE_REPO/releases/download/$TAG/sfae-macos-arm64.tar.gz"
-      sha256 "$(sha sfae-macos-arm64.tar.gz)"
-    end
-
-    on_intel do
-      url "https://github.com/$SFAE_REPO/releases/download/$TAG/sfae-macos-x86_64.tar.gz"
-      sha256 "$(sha sfae-macos-x86_64.tar.gz)"
-    end
-  end
-
-  on_linux do
-    on_arm do
-      url "https://github.com/$SFAE_REPO/releases/download/$TAG/sfae-linux-arm64.tar.gz"
-      sha256 "$(sha sfae-linux-arm64.tar.gz)"
-    end
-
-    on_intel do
-      url "https://github.com/$SFAE_REPO/releases/download/$TAG/sfae-linux-x86_64.tar.gz"
-      sha256 "$(sha sfae-linux-x86_64.tar.gz)"
-    end
-  end
-
-  def install
-    bin.install "sfae"
-  end
-
-  test do
-    assert_match version.to_s, shell_output("#{bin}/sfae --version")
-  end
-end
-FORMULA
+          {
+            printf '%s\n' 'class Sfae < Formula'
+            printf '%s\n' '  desc "Credential gateway for agents making authenticated API requests"'
+            printf '%s\n' '  homepage "https://sfae.io"'
+            printf '  version "%s"\n' "$VERSION"
+            printf '%s\n' '  license "MIT"'
+            printf '\n'
+            printf '%s\n' '  on_macos do'
+            printf '%s\n' '    on_arm do'
+            printf '      url "https://github.com/%s/releases/download/%s/sfae-macos-arm64.tar.gz"\n' "$SFAE_REPO" "$TAG"
+            printf '      sha256 "%s"\n' "$(sha sfae-macos-arm64.tar.gz)"
+            printf '%s\n' '    end'
+            printf '\n'
+            printf '%s\n' '    on_intel do'
+            printf '      url "https://github.com/%s/releases/download/%s/sfae-macos-x86_64.tar.gz"\n' "$SFAE_REPO" "$TAG"
+            printf '      sha256 "%s"\n' "$(sha sfae-macos-x86_64.tar.gz)"
+            printf '%s\n' '    end'
+            printf '%s\n' '  end'
+            printf '\n'
+            printf '%s\n' '  on_linux do'
+            printf '%s\n' '    on_arm do'
+            printf '      url "https://github.com/%s/releases/download/%s/sfae-linux-arm64.tar.gz"\n' "$SFAE_REPO" "$TAG"
+            printf '      sha256 "%s"\n' "$(sha sfae-linux-arm64.tar.gz)"
+            printf '%s\n' '    end'
+            printf '\n'
+            printf '%s\n' '    on_intel do'
+            printf '      url "https://github.com/%s/releases/download/%s/sfae-linux-x86_64.tar.gz"\n' "$SFAE_REPO" "$TAG"
+            printf '      sha256 "%s"\n' "$(sha sfae-linux-x86_64.tar.gz)"
+            printf '%s\n' '    end'
+            printf '%s\n' '  end'
+            printf '\n'
+            printf '%s\n' '  def install'
+            printf '%s\n' '    bin.install "sfae"'
+            printf '%s\n' '  end'
+            printf '\n'
+            printf '%s\n' '  test do'
+            printf '%s\n' '    assert_match version.to_s, shell_output("#{bin}/sfae --version")'
+            printf '%s\n' '  end'
+            printf '%s\n' 'end'
+          } > tap/Formula/sfae.rb
 
       - name: Commit formula
         shell: bash
