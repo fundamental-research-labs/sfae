@@ -17,9 +17,9 @@ Examples:
   ./release.sh 0.1.0 --tap-only
   ./release.sh 0.1.0 --npm-only
 
-The first npm publication must be done directly with 2FA. After npm Trusted
-Publishing is configured, prefer .github/workflows/npm-publish.yml for npm
-releases so CI stages the package with OIDC and a maintainer approves it.
+Prefer .github/workflows/release.yml for public releases. It builds all
+platform assets, publishes the GitHub release, updates Homebrew, and handles npm
+from GitHub Actions.
 USAGE
 }
 

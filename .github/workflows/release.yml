@@ -1,0 +1,437 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, with or without a leading v"
+        required: true
+        type: string
+      npm_mode:
+        description: "npm handling: auto stages existing packages and token-publishes the first package if NPM_TOKEN exists"
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - stage
+          - token
+          - skip
+      update_homebrew:
+        description: "Update fundamental-research-labs/homebrew-tap"
+        required: true
+        default: true
+        type: boolean
+      prerelease:
+        description: "Create the GitHub release as a prerelease"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  SFAE_REPO: fundamental-research-labs/sfae
+
+jobs:
+  validate:
+    name: Validate release input
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Validate version and branch
+        id: release
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$REF_NAME" != "main" ]]; then
+            echo "Releases must be run from main. Current ref: $REF_NAME" >&2
+            exit 1
+          fi
+
+          version="${INPUT_VERSION#v}"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid semver version: $version" >&2
+            exit 1
+          fi
+
+          cargo_version="$(awk '
+            /^\[workspace.package\]/ {in_workspace=1; next}
+            /^\[/ {in_workspace=0}
+            in_workspace && /^version =/ {gsub(/"/, "", $3); print $3; exit}
+          ' Cargo.toml)"
+          package_version="$(node -p "require('./package.json').version")"
+
+          if [[ "$cargo_version" != "$version" ]]; then
+            echo "Cargo workspace version is $cargo_version, expected $version" >&2
+            exit 1
+          fi
+          if [[ "$package_version" != "$version" ]]; then
+            echo "package.json version is $package_version, expected $version" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  build-assets:
+    name: Build ${{ matrix.name }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            asset: sfae-linux-x86_64.tar.gz
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset: sfae-linux-arm64.tar.gz
+          - name: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            asset: sfae-macos-x86_64.tar.gz
+          - name: macos-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+            asset: sfae-macos-arm64.tar.gz
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build binary
+        run: cargo build --release --bin sfae --target "${{ matrix.target }}"
+
+      - name: Package asset
+        shell: bash
+        env:
+          ASSET: ${{ matrix.asset }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          binary="target/$TARGET/release/sfae"
+          stage="dist/$TAG/$TARGET"
+          mkdir -p "$stage"
+          cp "$binary" "$stage/sfae"
+          strip "$stage/sfae" 2>/dev/null || true
+
+          "$stage/sfae" --version | grep -Fx "sfae $VERSION"
+
+          tar -C "$stage" -czf "dist/$TAG/$ASSET" sfae
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "dist/$TAG/$ASSET" | awk '{print $1}' > "dist/$TAG/$ASSET.sha256"
+          else
+            shasum -a 256 "dist/$TAG/$ASSET" | awk '{print $1}' > "dist/$TAG/$ASSET.sha256"
+          fi
+
+          tar -tzf "dist/$TAG/$ASSET" | grep -Fx sfae
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: |
+            dist/${{ needs.validate.outputs.tag }}/${{ matrix.asset }}
+            dist/${{ needs.validate.outputs.tag }}/${{ matrix.asset }}.sha256
+          if-no-files-found: error
+
+  github-release:
+    name: Publish GitHub release
+    needs:
+      - validate
+      - build-assets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      url: ${{ steps.publish.outputs.url }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist/${{ needs.validate.outputs.tag }}
+
+      - name: Verify all release assets
+        shell: bash
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          expected=(
+            sfae-linux-x86_64.tar.gz
+            sfae-linux-arm64.tar.gz
+            sfae-macos-x86_64.tar.gz
+            sfae-macos-arm64.tar.gz
+          )
+          for asset in "${expected[@]}"; do
+            test -s "dist/$TAG/$asset"
+            test -s "dist/$TAG/$asset.sha256"
+            tar -tzf "dist/$TAG/$asset" | grep -Fx sfae >/dev/null
+            grep -Eq '^[a-f0-9]{64}$' "dist/$TAG/$asset.sha256"
+          done
+
+      - name: Create or verify tag
+        shell: bash
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          head_sha="$(git rev-parse HEAD)"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+            tag_sha="$(git rev-list -n 1 "$TAG")"
+            if [[ "$tag_sha" != "$head_sha" ]]; then
+              echo "Tag $TAG already exists at $tag_sha, not current HEAD $head_sha" >&2
+              exit 1
+            fi
+          else
+            git tag -a "$TAG" -m "$TAG" "$head_sha"
+            git push origin "refs/tags/$TAG"
+          fi
+
+      - name: Create or update GitHub release
+        id: publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          files=(dist/"$TAG"/sfae-*.tar.gz dist/"$TAG"/sfae-*.tar.gz.sha256)
+
+          if gh release view "$TAG" --repo "$SFAE_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --repo "$SFAE_REPO" --clobber
+          else
+            prerelease_flag=()
+            if [[ "$PRERELEASE" == "true" ]]; then
+              prerelease_flag=(--prerelease)
+            fi
+            gh release create "$TAG" "${files[@]}" \
+              --repo "$SFAE_REPO" \
+              --title "$TAG" \
+              --notes "Prebuilt sfae binaries for $TAG" \
+              --verify-tag \
+              "${prerelease_flag[@]}"
+          fi
+
+          echo "url=$(gh release view "$TAG" --repo "$SFAE_REPO" --json url --jq .url)" >> "$GITHUB_OUTPUT"
+
+  homebrew:
+    name: Update Homebrew tap
+    needs:
+      - validate
+      - github-release
+    if: inputs.update_homebrew
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check tap token
+        shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
+            echo "Missing HOMEBREW_TAP_TOKEN secret with write access to fundamental-research-labs/homebrew-tap." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          repository: fundamental-research-labs/homebrew-tap
+          path: tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Write formula
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          checksums="$(mktemp -d)"
+          gh release download "$TAG" --repo "$SFAE_REPO" --pattern '*.sha256' --dir "$checksums" --clobber
+
+          sha() {
+            awk '{print $1}' "$checksums/$1.sha256"
+          }
+
+          mkdir -p tap/Formula
+          cat > tap/Formula/sfae.rb <<FORMULA
+class Sfae < Formula
+  desc "Credential gateway for agents making authenticated API requests"
+  homepage "https://sfae.io"
+  version "$VERSION"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/$SFAE_REPO/releases/download/$TAG/sfae-macos-arm64.tar.gz"
+      sha256 "$(sha sfae-macos-arm64.tar.gz)"
+    end
+
+    on_intel do
+      url "https://github.com/$SFAE_REPO/releases/download/$TAG/sfae-macos-x86_64.tar.gz"
+      sha256 "$(sha sfae-macos-x86_64.tar.gz)"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/$SFAE_REPO/releases/download/$TAG/sfae-linux-arm64.tar.gz"
+      sha256 "$(sha sfae-linux-arm64.tar.gz)"
+    end
+
+    on_intel do
+      url "https://github.com/$SFAE_REPO/releases/download/$TAG/sfae-linux-x86_64.tar.gz"
+      sha256 "$(sha sfae-linux-x86_64.tar.gz)"
+    end
+  end
+
+  def install
+    bin.install "sfae"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/sfae --version")
+  end
+end
+FORMULA
+
+      - name: Commit formula
+        shell: bash
+        working-directory: tap
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/sfae.rb
+          if git diff --cached --quiet; then
+            echo "Homebrew formula already up to date."
+            exit 0
+          fi
+          git commit -m "sfae ${{ needs.validate.outputs.tag }}"
+          git push
+
+  npm:
+    name: Publish npm package
+    needs:
+      - validate
+      - github-release
+    if: inputs.npm_mode != 'skip'
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Use npm with stage support
+        run: npm install -g npm@11.17.0
+
+      - name: Check npm wrapper scripts
+        run: npm run test:npm
+
+      - name: Prepare package
+        run: scripts/prepare-npm-package.sh "${{ needs.validate.outputs.version }}"
+
+      - name: Check package contents
+        run: npm pack --dry-run "dist/${{ needs.validate.outputs.tag }}/npm"
+
+      - name: Publish or stage package
+        shell: bash
+        working-directory: dist/${{ needs.validate.outputs.tag }}/npm
+        env:
+          MODE: ${{ inputs.npm_mode }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          package_name="$(node -p "require('./package.json').name")"
+          if npm view "$package_name@$VERSION" version >/dev/null 2>&1; then
+            echo "$package_name@$VERSION is already published."
+            exit 0
+          fi
+
+          package_exists="false"
+          if npm view "$package_name" name >/dev/null 2>&1; then
+            package_exists="true"
+          fi
+
+          if [[ "$MODE" == "stage" || ( "$MODE" == "auto" && "$package_exists" == "true" ) ]]; then
+            if [[ "$package_exists" != "true" ]]; then
+              echo "Cannot use npm stage publish for a brand-new package. Use npm_mode=token with NPM_TOKEN for the first publish." >&2
+              exit 1
+            fi
+            npm stage publish
+            exit 0
+          fi
+
+          if [[ "$MODE" == "token" || "$MODE" == "auto" ]]; then
+            if [[ -z "${NPM_TOKEN:-}" ]]; then
+              echo "Missing NPM_TOKEN secret. It is required only for the first npm publication before Trusted Publishing can be configured." >&2
+              exit 1
+            fi
+            npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+            npm publish --access public --provenance
+            exit 0
+          fi
+
+          echo "Unknown npm_mode: $MODE" >&2
+          exit 1
