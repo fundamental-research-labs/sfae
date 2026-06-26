@@ -54,14 +54,14 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         if cred_type_str.is_some() || username.is_some() {
             anyhow::bail!("--type and --label/--user flags are not used with --all");
         }
-        return delete_all_credentials(
-            &mut *store,
-            BulkDeleteOpts {
+        return delete_all_credentials(BulkDeleteRequest {
+            store: &mut *store,
+            opts: BulkDeleteOpts {
                 purge,
                 dry_run,
                 remote_store: uses_remote_store(),
             },
-        );
+        });
     }
 
     if dry_run {
@@ -143,6 +143,11 @@ struct BulkDeleteOpts {
     remote_store: bool,
 }
 
+struct BulkDeleteRequest<'a> {
+    store: &'a mut dyn SecretStore,
+    opts: BulkDeleteOpts,
+}
+
 struct BulkTargets {
     credential_sets: Vec<CredentialSetInfo>,
     legacy_keys: Vec<String>,
@@ -168,7 +173,8 @@ fn collect_bulk_targets(store: &dyn SecretStore) -> anyhow::Result<BulkTargets> 
     })
 }
 
-fn delete_all_credentials(store: &mut dyn SecretStore, opts: BulkDeleteOpts) -> anyhow::Result<()> {
+fn delete_all_credentials(request: BulkDeleteRequest<'_>) -> anyhow::Result<()> {
+    let BulkDeleteRequest { store, opts } = request;
     let targets = collect_bulk_targets(store)?;
     let total = targets.credential_sets.len() + targets.legacy_keys.len();
 
@@ -389,14 +395,14 @@ mod tests {
             })
             .unwrap();
 
-        delete_all_credentials(
-            &mut store,
-            BulkDeleteOpts {
+        delete_all_credentials(BulkDeleteRequest {
+            store: &mut store,
+            opts: BulkDeleteOpts {
                 purge: true,
                 dry_run: true,
                 remote_store: true,
             },
-        )
+        })
         .unwrap();
 
         assert_eq!(store.get("github.com_API_KEY").unwrap(), "legacy-secret");
@@ -421,14 +427,14 @@ mod tests {
             })
             .unwrap();
 
-        delete_all_credentials(
-            &mut store,
-            BulkDeleteOpts {
+        delete_all_credentials(BulkDeleteRequest {
+            store: &mut store,
+            opts: BulkDeleteOpts {
                 purge: false,
                 dry_run: false,
                 remote_store: true,
             },
-        )
+        })
         .unwrap();
 
         assert!(store.get("github.com_API_KEY").is_err());
@@ -447,14 +453,14 @@ mod tests {
             })
             .unwrap();
 
-        delete_all_credentials(
-            &mut store,
-            BulkDeleteOpts {
+        delete_all_credentials(BulkDeleteRequest {
+            store: &mut store,
+            opts: BulkDeleteOpts {
                 purge: true,
                 dry_run: false,
                 remote_store: true,
             },
-        )
+        })
         .unwrap();
 
         assert!(store.get(&set_id).is_err());
