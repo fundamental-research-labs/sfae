@@ -1,6 +1,6 @@
 //! HTML rendering helpers for the transient one-time code browser page.
 
-use crate::browser_html::BASE_STYLES;
+use crate::browser_html::{BASE_SCRIPT, BASE_STYLES};
 use crate::code::{CodeFormat, CodeRequest};
 
 pub(crate) struct CodePageContext<'a> {
@@ -51,6 +51,7 @@ pub(crate) fn build_code_page(ctx: CodePageContext<'_>) -> String {
         source: include_str!("code.html"),
         vars: &[
             ("{{BASE_STYLES}}", BASE_STYLES),
+            ("{{BASE_SCRIPT}}", BASE_SCRIPT),
             ("{{TITLE}}", "sfae - verification code"),
             ("{{HEADING}}", &html_escape(&heading)),
             ("{{META}}", &meta),
@@ -156,8 +157,16 @@ mod tests {
         assert!(html.contains(r#"inputmode="numeric""#));
         assert!(html.contains(r#"name="_code""#));
         assert!(html.contains(r#"name="_csrf""#));
+        assert!(html.contains(r#"data-required="true""#));
+        assert!(html.contains(r#"data-submit"#));
+        assert!(html.contains("sfaeWireSubmitState"));
+        assert!(html.contains(r#"class="site-mark""#));
         assert!(html.contains("Cancel"));
         assert!(!html.contains("stored in Passwords"));
+
+        let cancel = html.find("Cancel").expect("cancel button missing");
+        let submit = html.find("Submit").expect("submit button missing");
+        assert!(cancel < submit);
     }
 
     #[test]

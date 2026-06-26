@@ -7,8 +7,10 @@ use std::collections::HashMap;
 #[cfg(feature = "cli")]
 use crate::spec::{FieldSpec, GroupSpec, OAuthSpec, PromptSpec};
 
-/// Shared CSS included in both form and done pages.
+/// Shared CSS included in browser-rendered pages.
 pub(crate) const BASE_STYLES: &str = include_str!("base.css");
+/// Shared browser helpers included in interactive pages.
+pub(crate) const BASE_SCRIPT: &str = include_str!("base.js");
 
 /// A path string paired with the query-parameter key to extract.
 pub struct QueryLookup<'a> {
@@ -82,7 +84,7 @@ pub(crate) fn build_form_page(ctx: FormContext<'_>) -> String {
             .iter()
             .any(|g| g.fields.as_ref().is_some_and(|f| !f.is_empty()));
     let submit_button = if has_any_input_fields {
-        r#"<button type="button" onclick="sfaeSubmit()">Submit</button>"#
+        r#"<button type="button" data-submit onclick="sfaeSubmit()">Submit</button>"#
     } else {
         ""
     };
@@ -91,6 +93,7 @@ pub(crate) fn build_form_page(ctx: FormContext<'_>) -> String {
         source: include_str!("form.html"),
         vars: &[
             ("{{BASE_STYLES}}", BASE_STYLES),
+            ("{{BASE_SCRIPT}}", BASE_SCRIPT),
             ("{{LABEL}}", &html_escape(label)),
             ("{{URL_SECTION}}", &url_section),
             ("{{FIELDS}}", &fields_html),
@@ -148,7 +151,7 @@ impl<'a> FieldsRender<'a> {
             };
             if field.is_secret() {
                 html.push_str(&format!(
-                    r#"<div class="field"><label>{label}{optional_hint}</label><div style="position:relative"><input type="text" name="{opaque_name}"{value}{autofocus}{data_required} data-m="1"><span class="dots" aria-hidden="true"></span></div></div>"#,
+                    r#"<div class="field"><label>{label}{optional_hint}</label><div class="masked-input"><input type="text" name="{opaque_name}"{value}{autofocus}{data_required} data-m="1"><span class="dots" aria-hidden="true"></span></div></div>"#,
                 ));
             } else {
                 html.push_str(&format!(
@@ -251,12 +254,12 @@ impl<'a> GroupsRender<'a> {
             "if(d.authorized){",
             "clearInterval(t);",
             "document.querySelectorAll('.oauth-btn').forEach(function(b){b.style.display='none'});",
-            "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex'});",
+            "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex';s.classList.remove('error')});",
             "var inputs=document.querySelectorAll('input[type=\"text\"]:not(:disabled)');",
             "if(!inputs.length){sfaeSubmit()}",
             "}else if(d.error){",
             "clearInterval(t);",
-            "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex';s.textContent='Authorization failed'});",
+            "document.querySelectorAll('.oauth-status').forEach(function(s){s.style.display='flex';s.classList.add('error');s.textContent='Authorization failed'});",
             "sfaeSubmit();",
             "}",
             "}).catch(function(){})",
@@ -397,5 +400,35 @@ mod tests {
         assert!(html.contains(r#"href="/auth?group=0""#));
         assert!(html.contains(r#"class="oauth-btn""#));
         assert!(!html.contains("target="));
+    }
+
+    #[test]
+    fn form_page_uses_shared_dialog_ui() {
+        let spec = PromptSpec {
+            help_url: None,
+            fields: Some(vec![FieldSpec {
+                name: "ACCESS_TOKEN".to_string(),
+                label: Some("Access token".to_string()),
+                default: None,
+                secret: None,
+                optional: None,
+            }]),
+            groups: None,
+        };
+
+        let html = build_form_page(FormContext {
+            domain: "example.com",
+            label: "Credentials for example.com",
+            credential_label: None,
+            spec: &spec,
+        });
+
+        assert!(html.contains("SFAE stores credentials in your secret manager."));
+        assert!(html.contains("Agents can never see them."));
+        assert!(html.contains(r#"<div class="masked-input">"#));
+        assert!(html.contains("sfaeWireSubmitState"));
+        assert!(html.contains(r#"data-submit"#));
+        assert!(html.contains(r#"class="site-mark""#));
+        assert!(!html.contains("{{BASE_SCRIPT}}"));
     }
 }

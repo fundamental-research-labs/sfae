@@ -10,6 +10,8 @@ pub mod credential;
 pub mod error;
 pub mod http;
 pub mod oauth;
+#[cfg(feature = "cli")]
+pub mod preview;
 pub mod proxy;
 pub mod spec;
 pub mod store;
