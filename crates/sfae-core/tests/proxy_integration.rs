@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use sfae_core::proxy::{CredentialLookup, ProxyRequest, find_dynamic_placeholders};
+use sfae_core::proxy::{CredentialLookup, ProxyRequest, extract_host, find_dynamic_placeholders};
 use sfae_core::store::{InMemoryStore, SecretStore};
 
 fn populated_store() -> InMemoryStore {
@@ -18,6 +18,14 @@ fn populated_store() -> InMemoryStore {
         })
         .unwrap();
     store
+}
+
+#[test]
+fn extract_host_accepts_postgres_urls_with_userinfo() {
+    assert_eq!(
+        extract_host("postgres://user:pass@localhost:5432/app"),
+        Some("localhost".to_string())
+    );
 }
 
 #[test]

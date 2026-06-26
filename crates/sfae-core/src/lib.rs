@@ -10,6 +10,7 @@ pub mod credential;
 pub mod error;
 pub mod http;
 pub mod oauth;
+pub mod postgres;
 #[cfg(feature = "cli")]
 pub mod preview;
 pub mod proxy;
