@@ -195,7 +195,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hosted_oauth_revoke_material_accepts_google_provider() {
+    fn hosted_oauth_revoke_material_accepts_dropbox_provider() {
         let data = sfae_core::store::CredentialSetData {
             values: HashMap::from([("OAUTH_ACCESS_TOKEN".to_string(), "access-token".to_string())]),
             internal: HashMap::from([
@@ -209,7 +209,7 @@ mod tests {
                 ),
             ]),
             metadata: HashMap::from([
-                ("OAUTH_PROVIDER".to_string(), "google".to_string()),
+                ("OAUTH_PROVIDER".to_string(), "dropbox".to_string()),
                 (
                     "OAUTH_BROKER_CREDENTIAL_ID".to_string(),
                     "broker-id".to_string(),
@@ -219,7 +219,7 @@ mod tests {
 
         let material = hosted_oauth_revoke_material(&data).unwrap();
 
-        assert_eq!(material.provider, "google");
+        assert_eq!(material.provider, "dropbox");
         assert_eq!(material.access_token, Some("access-token"));
         assert_eq!(material.refresh_token, Some("refresh-token"));
         assert_eq!(material.broker_credential_id, "broker-id");

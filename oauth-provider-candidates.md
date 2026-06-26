@@ -1,8 +1,8 @@
 # OAuth Provider Candidates for SFAE
 
-Last checked: 2026-06-25
+Last checked: 2026-06-26
 
-SFAE currently supports Discord, Google, and GitHub. Google support is pending approval/verification for the requested scopes.
+SFAE currently supports Discord, Google, GitHub, and Dropbox. Google support is pending approval/verification for the requested scopes. Dropbox production approval remains external operational work.
 
 ## Recommended Next Batch
 
@@ -29,7 +29,6 @@ This covers code, chat, issue tracking, docs, enterprise files/email/calendar, a
 | Airtable | Structured records and base workflows. Good scoped access model. | Public docs describe OAuth grants and admin management, but no broad platform-review requirement was found. Enterprise admins may still govern integrations. Source: [Airtable third-party OAuth overview](https://support.airtable.com/docs/third-party-integrations-via-oauth-overview). |
 | Asana | Task and project automation. Useful for lightweight work management. | OAuth is standard. Publishing/listing app experiences goes through Asana review. Sources: [Asana OAuth docs](https://developers.asana.com/docs/oauth), [Asana publish-your-app docs](https://developers.asana.com/docs/publish-your-app). |
 | Figma | Design files, comments, design-to-code workflows, and design metadata. | Public OAuth apps require Figma review before broad user authorization. Source: [Figma OAuth apps docs](https://developers.figma.com/docs/rest-api/oauth-apps/). |
-| Dropbox | File access, sync, document workflows. | Production approval is required beyond development/limited usage. Source: [Dropbox developer guide](https://www.dropbox.com/developers/reference/developer-guide). |
 | Box | Enterprise file and document access. Strong fit for regulated company content. | Not usually a public marketplace review issue, but many enterprise apps require explicit Box admin authorization. Source: [Box authorization docs](https://developer.box.com/guides/authorization). |
 | HubSpot | CRM, contacts, companies, deals, and marketing/sales workflows. | Unverified apps can show warning UX. Marketplace/certification requires HubSpot review. Sources: [HubSpot public apps overview](https://developers.hubspot.com/docs/apps/legacy-apps/public-apps/overview), [HubSpot certification requirements](https://developers.hubspot.com/docs/apps/developer-platform/list-apps/apply-for-certification/certification-requirements). |
 | Salesforce | CRM, sales ops, service workflows, and enterprise automation. | Custom connected/external client apps can be used directly, but AppExchange or partner distribution requires Salesforce security review. Customer admins also control connected app policies. Sources: [Salesforce OAuth and connected apps](https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_oauth_and_connected_apps.htm), [Salesforce security review](https://developer.salesforce.com/docs/atlas.en-us.packagingGuide.meta/packagingGuide/security_review_how_it_works.htm). |
@@ -48,3 +47,4 @@ This covers code, chat, issue tracking, docs, enterprise files/email/calendar, a
 | Discord | Existing hosted OAuth provider. |
 | Google | Existing hosted OAuth provider for Google API scopes; approval/verification depends on requested Google scopes. |
 | GitHub | Hosted OAuth provider for `github.com`. No provider review for a normal OAuth App; organization owners may need to approve access when organization OAuth restrictions are enabled. Marketplace listing and paid plans are separate. Sources: [GitHub OAuth REST API docs](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authenticating-to-the-rest-api-with-an-oauth-app), [GitHub org OAuth approval docs](https://docs.github.com/en/organizations/managing-oauth-access-to-your-organizations-data/approving-oauth-apps-for-your-organization). |
+| Dropbox | Hosted OAuth provider for `dropboxapi.com`. Uses offline access with `account_info.read` for account linking; Dropbox production approval is required beyond development/limited usage. Source: [Dropbox developer guide](https://www.dropbox.com/developers/reference/developer-guide). |

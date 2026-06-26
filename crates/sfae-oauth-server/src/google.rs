@@ -307,6 +307,16 @@ mod tests {
             github_token_url: Url::parse("https://github.com/login/oauth/access_token").unwrap(),
             github_api_url: Url::parse("https://api.github.com").unwrap(),
             github_userinfo_url: Url::parse("https://api.github.com/user").unwrap(),
+            dropbox_client_id: "dropbox-client-id".to_string(),
+            dropbox_client_secret: "dropbox-client-secret".to_string(),
+            dropbox_authorize_url: Url::parse("https://www.dropbox.com/oauth2/authorize").unwrap(),
+            dropbox_token_url: Url::parse("https://api.dropbox.com/oauth2/token").unwrap(),
+            dropbox_revoke_url: Url::parse("https://api.dropboxapi.com/2/auth/token/revoke")
+                .unwrap(),
+            dropbox_current_account_url: Url::parse(
+                "https://api.dropboxapi.com/2/users/get_current_account",
+            )
+            .unwrap(),
             base_url: Url::parse("https://oauth.sfae.io").unwrap(),
             allowed_return_origins: HashSet::new(),
             port: 3100,

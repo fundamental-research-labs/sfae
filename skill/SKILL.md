@@ -131,6 +131,12 @@ Get UUIDs and visible field names with `sfae credentials <domain>`.
 
 Use hosted OAuth only for providers supported by SFAE. Do not put OAuth client IDs, client secrets, authorization URLs, token URLs, provider codes, or provider tokens in prompt specs.
 
+Use these credential domains for hosted OAuth provider families:
+
+- `googleapis.com` for Google APIs.
+- `github.com` for GitHub, including `api.github.com`.
+- `dropboxapi.com` for Dropbox API hosts such as `api.dropboxapi.com`, `content.dropboxapi.com`, and `notify.dropboxapi.com`.
+
 Discord OAuth example:
 
 ```bash
@@ -160,6 +166,23 @@ sfae prompt github.com --spec '{
     "oauth": {"provider": "github", "scopes": ["read:user"]}
   }]
 }'
+```
+
+Dropbox OAuth example:
+
+```bash
+sfae prompt dropboxapi.com --spec '{
+  "groups": [{
+    "label": "OAuth",
+    "oauth": {"provider": "dropbox", "scopes": ["files.metadata.read"]}
+  }]
+}'
+
+sfae request POST "https://api.dropboxapi.com/2/files/list_folder" \
+  --domain dropboxapi.com \
+  -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{\"path\":\"\"}"
 ```
 
 ## Verification Codes

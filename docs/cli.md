@@ -85,9 +85,9 @@ sfae request --protocol postgres QUERY "postgres://{USERNAME}:{PASSWORD}@{HOST}:
 
 ## OAuth
 
-Hosted OAuth currently supports Discord, Google APIs, and GitHub through `oauth.sfae.io`. Provider tokens are redeemed into local secret storage; the browser and agent do not receive access tokens, refresh tokens, provider authorization codes, provider client secrets, broker redeem secrets, or broker credential secrets.
+Hosted OAuth currently supports Discord, Google APIs, GitHub, and Dropbox through `oauth.sfae.io`. Provider tokens are redeemed into local secret storage; the browser and agent do not receive access tokens, refresh tokens, provider authorization codes, provider client secrets, broker redeem secrets, or broker credential secrets.
 
-Use `googleapis.com` as the credential domain for Google API credentials so parent-domain fallback can resolve the same token for hosts such as `gmail.googleapis.com`, `docs.googleapis.com`, `sheets.googleapis.com`, and `www.googleapis.com`. Use `github.com` as the credential domain for GitHub credentials so parent-domain fallback can resolve the same token for `api.github.com`.
+Use `googleapis.com` as the credential domain for Google API credentials so parent-domain fallback can resolve the same token for hosts such as `gmail.googleapis.com`, `docs.googleapis.com`, `sheets.googleapis.com`, and `www.googleapis.com`. Use `github.com` as the credential domain for GitHub credentials so parent-domain fallback can resolve the same token for `api.github.com`. Use `dropboxapi.com` as the credential domain for Dropbox API credentials so parent-domain fallback can resolve the same token for hosts such as `api.dropboxapi.com`, `content.dropboxapi.com`, and `notify.dropboxapi.com`.
 
 Discord:
 
@@ -139,6 +139,28 @@ sfae request GET "https://api.github.com/user" \
   -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}" \
   -H "User-Agent: sfae"
 ```
+
+Dropbox:
+
+```bash
+sfae prompt dropboxapi.com --spec '{
+  "groups": [{
+    "label": "OAuth",
+    "oauth": {
+      "provider": "dropbox",
+      "scopes": ["files.metadata.read"]
+    }
+  }]
+}'
+
+sfae request POST "https://api.dropboxapi.com/2/files/list_folder" \
+  --domain dropboxapi.com \
+  -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{\"path\":\"\"}"
+```
+
+Dropbox apps must register `https://oauth.sfae.io/oauth/callback` as an OAuth redirect URI. Request the narrowest Dropbox scopes required for the task and configure the Dropbox app access level appropriately in the Dropbox App Console.
 
 To upgrade OAuth scopes, rerun `sfae prompt` with the same domain and label plus the full required scope set. When SFAE can prove the provider account is the same, it forgets older same-account entries from its index without reading or purging keychain secrets. If multiple sets remain, select one with `sfae request --cred <uuid>` or `--label <label>`.
 

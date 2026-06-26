@@ -357,32 +357,12 @@ pub(crate) async fn revoke_local_credential(
         return (StatusCode::FORBIDDEN, "refresh token rejected").into_response();
     }
 
-    let token_to_revoke = body
-        .refresh_token
-        .as_deref()
-        .filter(|t| !t.is_empty())
-        .map(|token| (token, "refresh_token"))
-        .or_else(|| {
-            body.access_token
-                .as_deref()
-                .filter(|t| !t.is_empty())
-                .map(|token| (token, "access_token"))
-        });
-
-    let Some((token, token_type_hint)) = token_to_revoke else {
-        return (
-            StatusCode::BAD_REQUEST,
-            "access_token or refresh_token is required",
-        )
-            .into_response();
-    };
-
     if provider::revoke_token(RevokeToken {
         provider: &body.provider,
         http: &state.http,
         config: &state.config,
-        token,
-        token_type_hint: Some(token_type_hint),
+        access_token: body.access_token.as_deref(),
+        refresh_token: body.refresh_token.as_deref(),
     })
     .await
     .is_err()
@@ -655,6 +635,17 @@ mod tests {
                 .unwrap(),
             github_api_url: url::Url::parse("https://api.github.com").unwrap(),
             github_userinfo_url: url::Url::parse("https://api.github.com/user").unwrap(),
+            dropbox_client_id: "dropbox-client-id".to_string(),
+            dropbox_client_secret: "dropbox-client-secret".to_string(),
+            dropbox_authorize_url: url::Url::parse("https://www.dropbox.com/oauth2/authorize")
+                .unwrap(),
+            dropbox_token_url: url::Url::parse("https://api.dropbox.com/oauth2/token").unwrap(),
+            dropbox_revoke_url: url::Url::parse("https://api.dropboxapi.com/2/auth/token/revoke")
+                .unwrap(),
+            dropbox_current_account_url: url::Url::parse(
+                "https://api.dropboxapi.com/2/users/get_current_account",
+            )
+            .unwrap(),
             base_url: url::Url::parse("https://oauth.sfae.io").unwrap(),
             allowed_return_origins: std::collections::HashSet::new(),
             port: 3100,

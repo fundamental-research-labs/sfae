@@ -423,16 +423,12 @@ impl HostedOAuthBroker for DirectHostedOAuthBroker {
 
     fn revoke_credential(&self, input: HostedOAuthRevoke<'_>) -> Result<(), SfaeError> {
         let url = format!("{}/v1/local/oauth/revoke", self.base_url);
-        let (access_token, refresh_token) = match input.refresh_token {
-            Some(refresh_token) => (None, Some(refresh_token)),
-            None => (input.access_token, None),
-        };
         let body = serde_json::to_string(&RevokeReq {
             provider: input.provider,
             broker_credential_id: input.broker_credential_id,
             broker_credential_secret: input.broker_credential_secret,
-            access_token,
-            refresh_token,
+            access_token: input.access_token,
+            refresh_token: input.refresh_token,
         })
         .map_err(|e| SfaeError::StoreError(format!("failed to serialize revoke request: {e}")))?;
         let req = json_request("POST", &url, body)?;

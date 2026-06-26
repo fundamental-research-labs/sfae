@@ -161,6 +161,7 @@ fn prompt_help_explains_spec_and_secret_handling() {
         assert!(stdout.contains("{OAUTH_ACCESS_TOKEN}"));
         assert!(stdout.contains("authorization URLs, token URLs, or provider secrets"));
         assert!(stdout.contains("forwards requested OAuth scopes to the provider"));
+        assert!(stdout.contains("Dropbox (`dropboxapi.com`)"));
         assert!(stdout.contains("Ask for any scope required by the user's task"));
         assert!(stdout.contains("choose the narrowest set"));
         assert!(stdout.contains("SFAE or the provider may reject unknown"));

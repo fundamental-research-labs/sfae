@@ -30,6 +30,12 @@ pub(crate) struct Config {
     pub(crate) github_token_url: Url,
     pub(crate) github_api_url: Url,
     pub(crate) github_userinfo_url: Url,
+    pub(crate) dropbox_client_id: String,
+    pub(crate) dropbox_client_secret: String,
+    pub(crate) dropbox_authorize_url: Url,
+    pub(crate) dropbox_token_url: Url,
+    pub(crate) dropbox_revoke_url: Url,
+    pub(crate) dropbox_current_account_url: Url,
     pub(crate) base_url: Url,
     pub(crate) allowed_return_origins: HashSet<String>,
     pub(crate) port: u16,
@@ -84,6 +90,22 @@ impl Config {
         let github_api_url = provider_url("SFAE_GITHUB_API_URL", "https://api.github.com");
         let github_userinfo_url =
             provider_url("GITHUB_USERINFO_URL", "https://api.github.com/user");
+        let dropbox_client_id = required_env("DROPBOX_CLIENT_ID");
+        let dropbox_client_secret = required_env("DROPBOX_CLIENT_SECRET");
+        let dropbox_authorize_url = provider_url(
+            "DROPBOX_AUTHORIZE_URL",
+            "https://www.dropbox.com/oauth2/authorize",
+        );
+        let dropbox_token_url =
+            provider_url("DROPBOX_TOKEN_URL", "https://api.dropbox.com/oauth2/token");
+        let dropbox_revoke_url = provider_url(
+            "DROPBOX_REVOKE_URL",
+            "https://api.dropboxapi.com/2/auth/token/revoke",
+        );
+        let dropbox_current_account_url = provider_url(
+            "DROPBOX_CURRENT_ACCOUNT_URL",
+            "https://api.dropboxapi.com/2/users/get_current_account",
+        );
         let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:3100".into());
         let base_url = Url::parse(base_url.trim_end_matches('/')).expect("BASE_URL must be a URL");
         let port = std::env::var("SFAE_SERVER_PORT")
@@ -127,6 +149,12 @@ impl Config {
             github_token_url,
             github_api_url,
             github_userinfo_url,
+            dropbox_client_id,
+            dropbox_client_secret,
+            dropbox_authorize_url,
+            dropbox_token_url,
+            dropbox_revoke_url,
+            dropbox_current_account_url,
             base_url,
             allowed_return_origins,
             port,

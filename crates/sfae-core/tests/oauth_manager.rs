@@ -105,6 +105,10 @@ fn test_provider_registry() -> HostedOAuthProviderRegistry {
                 provider: "github".to_string(),
                 domains: vec!["github.com".to_string()],
             },
+            HostedOAuthProvider {
+                provider: "dropbox".to_string(),
+                domains: vec!["dropboxapi.com".to_string()],
+            },
         ],
     }
 }
@@ -272,6 +276,35 @@ fn resolves_github_provider() {
 }
 
 #[test]
+fn resolves_dropbox_provider_and_dropboxapi_subdomains() {
+    for domain in [
+        "dropboxapi.com",
+        "api.dropboxapi.com",
+        "content.dropboxapi.com",
+        "notify.dropboxapi.com",
+    ] {
+        let provider = resolve_hosted_provider(HostedProviderResolve {
+            domain,
+            requested_provider: None,
+            registry: &test_provider_registry(),
+        })
+        .unwrap();
+        assert_eq!(provider, "dropbox");
+    }
+}
+
+#[test]
+fn resolves_explicit_dropbox_provider() {
+    let provider = resolve_hosted_provider(HostedProviderResolve {
+        domain: "example.com",
+        requested_provider: Some("dropbox"),
+        registry: &test_provider_registry(),
+    })
+    .unwrap();
+    assert_eq!(provider, "dropbox");
+}
+
+#[test]
 fn rejects_unknown_provider() {
     let err = resolve_hosted_provider(HostedProviderResolve {
         domain: "example.com",
@@ -295,7 +328,7 @@ fn rejects_unknown_domain_without_provider() {
     .unwrap_err();
     assert!(
         err.to_string()
-            .contains("supported providers: discord, github, google")
+            .contains("supported providers: discord, dropbox, github, google")
     );
 }
 
