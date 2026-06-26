@@ -689,7 +689,7 @@ impl OAuthState {
                 )
                 .replace(
                     r#"<div class="oauth-status" id="oauth-status-0" style="display:none">&#10003; Authorized</div>"#,
-                    r#"<div class="oauth-status" id="oauth-status-0" style="display:flex">Authorization failed</div>"#,
+                    r#"<div class="oauth-status error" id="oauth-status-0" style="display:flex">Authorization failed</div>"#,
                 ),
         }
     }

@@ -11,6 +11,10 @@
   --code-bg: #f0f0f0;
   --link: #1a73e8;
   --focus-ring: rgba(26, 115, 232, 0.1);
+  --danger: #a12424;
+  --danger-border: #d94a4a;
+  --danger-bg: #fff2f2;
+  --danger-ring: rgba(217, 74, 74, 0.18);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -39,10 +43,12 @@ body::before {
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 40px;
   width: 100%;
   max-width: 440px;
+  position: relative;
+  z-index: 1;
 }
 .logo {
   display: flex;
@@ -64,6 +70,22 @@ h1 {
   font-weight: 600;
   line-height: 1.4;
   margin-bottom: 16px;
+  color: var(--text);
+}
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  h1 {
+    color: transparent;
+    background-image:
+      radial-gradient(ellipse 150px 90px at 18% 38%, rgba(134, 152, 178, 0.56), rgba(86, 103, 128, 0.18) 36%, rgba(86, 103, 128, 0) 64%),
+      radial-gradient(ellipse 210px 110px at 76% 62%, rgba(143, 118, 156, 0.4), rgba(104, 88, 123, 0.12) 44%, rgba(104, 88, 123, 0) 70%),
+      linear-gradient(112deg, #101315 0%, #1b2227 16%, #34424b 31%, #687a86 43%, #96a5ad 50%, #7d7f9d 56%, #65778a 64%, #29343b 78%, #101315 100%);
+    background-size: 360px 140%, 460px 150%, 360px 100%;
+    background-position: 0 50%, 120px 50%, 0 50%;
+    background-repeat: repeat-x;
+    background-clip: text;
+    -webkit-background-clip: text;
+    animation: title-titanium-loop 8s ease-in-out infinite;
+  }
 }
 .field { margin-bottom: 14px; }
 label {
@@ -80,18 +102,28 @@ input[type="text"] {
   border-radius: 6px;
   font-size: 1em;
   font-family: inherit;
+  line-height: 1.5;
   letter-spacing: 0;
   outline: none;
-  transition: border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 input[type="text"]:focus {
   border-color: var(--link);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
+input[type="text"].is-missing {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  box-shadow: 0 0 0 4px var(--danger-ring);
+  animation: missing-field-flash 520ms ease-out 2;
+}
 button, .oauth-btn {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   padding: 10px;
+  min-height: 46px;
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
@@ -101,7 +133,7 @@ button, .oauth-btn {
   cursor: pointer;
   text-align: center;
   text-decoration: none;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
 }
 button {
   background: var(--text);
@@ -111,6 +143,15 @@ button:hover {
 }
 button:active {
   background: #000;
+}
+button[data-incomplete="true"] {
+  background: #5c5c5c;
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+button[data-incomplete="true"]:hover,
+button[data-incomplete="true"]:active {
+  background: #5c5c5c;
 }
 .secondary-button {
   color: var(--text);
@@ -145,11 +186,12 @@ button:active {
 .error {
   margin: 0 0 12px;
   padding: 8px 10px;
-  border: 1px solid #e2a7a7;
+  border: 1px solid var(--danger-border);
   border-radius: 6px;
-  background: #fff4f4;
-  color: #8a1f1f;
+  background: var(--danger-bg);
+  color: var(--danger);
   font-size: 0.85em;
+  font-weight: 500;
 }
 .done { text-align: center; }
 .done .check {
@@ -179,4 +221,55 @@ button:active {
 .done p {
   font-size: 0.95em;
   color: var(--text-secondary);
+}
+.site-mark {
+  position: fixed;
+  right: 18px;
+  bottom: 14px;
+  z-index: 1;
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+.site-mark:hover {
+  color: var(--text);
+}
+@keyframes title-titanium-loop {
+  from { background-position: 0 50%, 120px 50%, 0 50%; }
+  18% { background-position: 74px 30%, 188px 72%, 82px 50%; }
+  43% { background-position: 156px 66%, 302px 34%, 176px 50%; }
+  68% { background-position: 248px 38%, 432px 78%, 276px 50%; }
+  84% { background-position: 314px 58%, 512px 44%, 332px 50%; }
+  to { background-position: 360px 50%, 580px 50%, 360px 50%; }
+}
+@keyframes missing-field-flash {
+  0%, 100% {
+    background: var(--danger-bg);
+    border-color: var(--danger-border);
+    box-shadow: 0 0 0 4px var(--danger-ring);
+  }
+  50% {
+    background: #ffe7e7;
+    border-color: var(--danger);
+    box-shadow: 0 0 0 6px rgba(217, 74, 74, 0.26);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  h1,
+  input[type="text"].is-missing {
+    animation: none;
+  }
+}
+@media (max-width: 480px) {
+  body {
+    padding: 12px;
+  }
+  .card {
+    padding: 32px 28px;
+  }
+  .site-mark {
+    right: 12px;
+    bottom: 10px;
+  }
 }

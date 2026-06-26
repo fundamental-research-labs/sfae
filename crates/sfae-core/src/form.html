@@ -12,18 +12,21 @@
     font-size: 0.9em;
   }
   input[data-m] { color: transparent; caret-color: var(--text); }
+  .masked-input {
+    position: relative;
+  }
   .dots {
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
     padding: 10px 12px;
     font-size: 1em;
     font-family: inherit;
+    line-height: 1.5;
     pointer-events: none;
     user-select: none;
     overflow: hidden;
     white-space: nowrap;
     color: var(--text);
-    line-height: normal;
   }
   #credential-form > button {
     margin-top: 16px;
@@ -31,23 +34,30 @@
   .groups { margin-top: 4px; }
   .group-tabs {
     display: flex;
+    align-items: stretch;
     border: 1px solid var(--border);
     border-radius: 6px;
     overflow: hidden;
     margin-bottom: 14px;
   }
   .group-tab {
+    display: flex;
     flex: 1;
     margin-bottom: 0;
     cursor: pointer;
+    border-right: 1px solid var(--border);
   }
+  .group-tab:last-child { border-right: none; }
   .group-tab input[type="radio"] {
     position: absolute;
     opacity: 0;
     pointer-events: none;
   }
   .group-tab span {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
     padding: 8px 12px;
     font-size: 0.9em;
     font-weight: 500;
@@ -55,10 +65,6 @@
     text-align: center;
     background: var(--bg);
     transition: background 0.15s, color 0.15s;
-    border-right: 1px solid var(--border);
-  }
-  .group-tab:last-child span {
-    border-right: none;
   }
   .group-tab input[type="radio"]:checked + span {
     background: var(--text);
@@ -91,6 +97,10 @@
     color: var(--accent);
     font-weight: 500;
   }
+  .oauth-status.error {
+    color: var(--danger);
+    padding: 8px 10px;
+  }
 </style>
 </head>
 <body>
@@ -103,40 +113,45 @@
     {{GROUPS}}
     {{SUBMIT_BUTTON}}
   </div>
-  <p class="footer-note">SFAE stores credentials outside this chat. The agent never sees or has access to secret values.</p>
+  <p class="footer-note">SFAE stores credentials in your secret manager. Agents can never see them.</p>
 </div>
+<a class="site-mark" href="https://sfae.io" target="_blank" rel="noreferrer">sfae.io</a>
 <script>
-// Dot overlay for masked fields — real value stays in input.value (transparent).
+{{BASE_SCRIPT}}
+// Dot overlay for masked fields. The real value stays in input.value.
 document.querySelectorAll('input[data-m]').forEach(function(el){
   var d=el.nextElementSibling;
   if(!d)return;
-  if(el.value)d.textContent='\u2022'.repeat(el.value.length);
-  el.addEventListener('input',function(){d.textContent='\u2022'.repeat(el.value.length)});
+  function update(){
+    d.textContent='\u2022'.repeat(el.value.length);
+    d.style.textIndent=el.scrollLeft ? '-' + el.scrollLeft + 'px' : '0';
+  }
+  function updateSoon(){
+    update();
+    requestAnimationFrame(update);
+  }
+  updateSoon();
+  el.addEventListener('input',updateSoon);
+  el.addEventListener('scroll',update);
+  el.addEventListener('click',updateSoon);
+  el.addEventListener('keyup',updateSoon);
 });
+sfaeWireSubmitState(document.getElementById('credential-form'));
 function sfaeSubmit(){
   var c=document.getElementById('credential-form');
   if(!c)return;
   var inputs=c.querySelectorAll('input:not(:disabled)');
   var body=new URLSearchParams();
-  var missing=[];
   inputs.forEach(function(i){
     if(!i.name)return;
     if(i.type==='radio'&&!i.checked)return;
     body.append(i.name,i.value);
-    if(i.dataset.required==='true'&&!i.value.trim())missing.push(i);
   });
-  if(missing.length){missing[0].focus();return}
+  var missing=sfaeMissingInputs(c);
+  if(missing.length){sfaeFlashMissing(missing);missing[0].focus();sfaeUpdateSubmitState(c);return}
   fetch('/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})
   .then(function(r){return r.text()})
-  .then(function(html){
-    // Replace DOM in-place — document.write() triggers navigation events
-    // which Safari uses to prompt "Save Password?"
-    var doc=new DOMParser().parseFromString(html,'text/html');
-    document.title=doc.title||'';
-    document.body.innerHTML=doc.body.innerHTML;
-    var s=doc.querySelector('style');
-    if(s){var os=document.querySelector('style');if(os)os.textContent=s.textContent}
-  })
+  .then(sfaeReplaceDocument)
 }
 document.addEventListener('keydown',function(e){
   if(e.key==='Enter'&&e.target.tagName==='INPUT')sfaeSubmit();

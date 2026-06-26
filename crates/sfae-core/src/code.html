@@ -31,24 +31,20 @@
   <div id="code-form">
     <input type="hidden" name="_csrf" value="{{CSRF}}">
     <label for="code">Code</label>
-    <input class="code-input" id="code" name="_code" type="text" inputmode="{{INPUTMODE}}" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" minlength="{{MIN_LENGTH}}" maxlength="{{MAX_LENGTH}}"{{PATTERN_ATTR}} autofocus>
+    <input class="code-input" id="code" name="_code" type="text" inputmode="{{INPUTMODE}}" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" minlength="{{MIN_LENGTH}}" maxlength="{{MAX_LENGTH}}"{{PATTERN_ATTR}} data-required="true" autofocus>
     <div class="actions">
-      <button class="submit" type="button" onclick="sfaeSubmit()">Submit</button>
       <button class="secondary-button cancel" type="button" onclick="sfaeCancel()">Cancel</button>
+      <button class="submit" type="button" data-submit onclick="sfaeSubmit()">Submit</button>
     </div>
   </div>
   <p class="timer">Expires in <span id="timer">{{TIMEOUT_SECONDS}}</span>s</p>
   <p class="footer-note">This short-lived code is returned to the waiting command and is not saved.</p>
 </div>
+<a class="site-mark" href="https://sfae.io" target="_blank" rel="noreferrer">sfae.io</a>
 <script>
+{{BASE_SCRIPT}}
 var sfaeRemaining = Number('{{TIMEOUT_SECONDS}}');
-function sfaeReplace(html){
-  var doc = new DOMParser().parseFromString(html,'text/html');
-  document.title = doc.title || '';
-  document.body.innerHTML = doc.body.innerHTML;
-  var s = doc.querySelector('style');
-  if(s){var os=document.querySelector('style');if(os)os.textContent=s.textContent}
-}
+sfaeWireSubmitState(document.getElementById('code-form'));
 function sfaeNetworkError(){
   var c=document.getElementById('code-form');
   if(c){
@@ -60,13 +56,14 @@ function sfaeSubmit(){
   if(!c)return;
   var code=c.querySelector('input[name="_code"]');
   var csrf=c.querySelector('input[name="_csrf"]');
-  if(!code.value.trim()){code.focus();return}
+  var missing=sfaeMissingInputs(c);
+  if(missing.length){sfaeFlashMissing(missing);missing[0].focus();sfaeUpdateSubmitState(c);return}
   var body=new URLSearchParams();
   body.append('_code',code.value);
   body.append('_csrf',csrf.value);
   fetch('/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body,cache:'no-store'})
     .then(function(r){return r.text()})
-    .then(sfaeReplace)
+    .then(sfaeReplaceDocument)
     .catch(sfaeNetworkError);
 }
 function sfaeCancel(){
@@ -75,7 +72,7 @@ function sfaeCancel(){
   body.append('_csrf',csrf ? csrf.value : '');
   fetch('/cancel',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body,cache:'no-store'})
     .then(function(r){return r.text()})
-    .then(sfaeReplace)
+    .then(sfaeReplaceDocument)
     .catch(sfaeNetworkError);
 }
 document.addEventListener('keydown',function(e){
