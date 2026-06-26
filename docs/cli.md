@@ -1,6 +1,6 @@
 # SFAE CLI
 
-The CLI is the trusted runtime behind the SFAE agent skill. Agents call it to check for credentials, open human-facing credential forms, and make authenticated requests with placeholders.
+The CLI is the trusted runtime behind the SFAE agent skill. Agents call it to check for credentials, open human-facing credential forms, and make authenticated HTTP or Postgres requests with placeholders.
 
 ## Install
 
@@ -61,7 +61,7 @@ sfae prompt github.com --spec '{
 }'
 ```
 
-Make an authenticated request with placeholders:
+Make an authenticated HTTP request with placeholders:
 
 ```bash
 sfae request GET "https://api.github.com/user" \
@@ -70,6 +70,18 @@ sfae request GET "https://api.github.com/user" \
 ```
 
 Agents should treat `sfae prompt` as a blocking, human-paced step. They should wait until it exits and should not ask the human to paste secrets into chat.
+
+For Postgres, prompt for connection fields and query with `--protocol postgres`:
+
+```bash
+sfae prompt db.example.com --spec '{
+  "fields": ["HOST", "PORT", "DATABASE", "USERNAME", "PASSWORD"]
+}'
+
+sfae request --protocol postgres QUERY "postgres://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}" \
+  --domain db.example.com \
+  -d "select current_user"
+```
 
 ## OAuth
 
@@ -143,7 +155,7 @@ sfae code github.com --label Work --message "Enter the 6-digit GitHub authentica
 - `sfae credentials [domain] [--label <label>]` lists credential sets as `<uuid> <domain> <label-or-> [KEY, ...]`.
 - `sfae prompt <domain> --spec '<JSON>' [--label <label>]` opens the human-paced browser flow and stores a credential set.
 - `sfae code <domain> [--label <label>] [--message <text>] [--help-url <url>] [--format digits|alnum|text] [--length <n> | --min-length <n> --max-length <n>] [--timeout <seconds>]` requests a transient verification code.
-- `sfae request <METHOD> <URL> [-H "Header: {KEY}"] [-d BODY] [--domain <domain>] [--cred <uuid>] [--label <label>] [--dry-run] [--verbose]` sends HTTP requests with `{KEY}` placeholders resolved from the selected credential set.
+- `sfae request [--protocol http|postgres] <METHOD|QUERY> <URL> [-H "Header: {KEY}"] [-d BODY] [--domain <domain>] [--cred <uuid>] [--label <label>] [--dry-run] [--verbose]` sends HTTP requests by default, or Postgres SQL queries with `--protocol postgres`, with `{KEY}` placeholders resolved from the selected credential set.
 - `sfae install-skill [--codex] [--claude] [--grok] [--all] [--target <path>] [--install-cli]` writes the bundled skill and support installer into project-local agent skill folders.
 - `sfae update` updates the CLI through Homebrew, npm, or the direct installer based on how the current binary was installed.
 - `sfae delete <uuid>` forgets one credential set from SFAE's index; add `--purge` only when keychain/password prompts are acceptable.

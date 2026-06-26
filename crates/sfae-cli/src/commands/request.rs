@@ -15,7 +15,25 @@ use sfae_core::store::{
 
 use crate::store_factory::{create_store, uses_remote_store};
 
+/// Wire protocol used by `sfae request`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protocol {
+    Http,
+    Postgres,
+}
+
+impl Protocol {
+    pub fn parse(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "http" => Ok(Self::Http),
+            "postgres" => Ok(Self::Postgres),
+            other => anyhow::bail!("unsupported protocol: {other}"),
+        }
+    }
+}
+
 pub struct RequestOpts<'a> {
+    pub protocol: Protocol,
     pub dry_run: bool,
     pub verbose: bool,
     pub domain: Option<&'a str>,
@@ -33,6 +51,13 @@ pub struct RunArgs<'a> {
 }
 
 pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
+    match args.opts.protocol {
+        Protocol::Http => run_http(args),
+        Protocol::Postgres => run_postgres(args),
+    }
+}
+
+fn run_http(args: RunArgs<'_>) -> anyhow::Result<()> {
     let RunArgs {
         method,
         url,
@@ -130,6 +155,77 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
     };
 
     print!("{}", response.body);
+    Ok(())
+}
+
+fn run_postgres(args: RunArgs<'_>) -> anyhow::Result<()> {
+    let RunArgs {
+        method,
+        url,
+        headers,
+        body,
+        opts,
+    } = args;
+
+    if !method.eq_ignore_ascii_case("QUERY") {
+        anyhow::bail!("Postgres requests use QUERY as the request method");
+    }
+    if !headers.is_empty() {
+        anyhow::bail!("headers are only supported for HTTP requests");
+    }
+    let query = body.ok_or_else(|| anyhow::anyhow!("Postgres requests require SQL in --data"))?;
+    let domain = match opts.domain {
+        Some(d) => d.to_string(),
+        None => extract_host(url)
+            .ok_or_else(|| anyhow::anyhow!("cannot extract host from URL; use --domain"))?,
+    };
+
+    let store = create_store();
+    let lookup = CredentialLookup {
+        store: &*store,
+        domain: &domain,
+        username: opts.user,
+        cred_id: opts.cred_id,
+    };
+    let request = sfae_core::postgres::PostgresRequest {
+        url: url.to_string(),
+        query: query.to_string(),
+    };
+
+    if opts.dry_run {
+        let masked = sfae_core::postgres::mask(sfae_core::postgres::PostgresRequestCtx {
+            lookup: &lookup,
+            request: &request,
+        })?;
+        println!("POSTGRES QUERY {}", masked.url);
+        println!();
+        println!("{}", masked.query);
+        return Ok(());
+    }
+
+    if opts.verbose {
+        eprintln!("> POSTGRES QUERY {}", mask_placeholders(url));
+        eprintln!("> [SQL present]");
+        eprintln!();
+    }
+
+    let start = Instant::now();
+    let response = sfae_core::postgres::execute(sfae_core::postgres::PostgresRequestCtx {
+        lookup: &lookup,
+        request: &request,
+    })?;
+    let elapsed = start.elapsed();
+
+    if opts.verbose {
+        eprintln!(
+            "< {} row(s), {} row(s) affected ({:.1?})",
+            response.rows.len(),
+            response.rows_affected,
+            elapsed
+        );
+    }
+
+    println!("{}", serde_json::to_string_pretty(&response)?);
     Ok(())
 }
 

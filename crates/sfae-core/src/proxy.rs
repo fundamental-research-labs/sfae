@@ -76,16 +76,18 @@ pub fn find_dynamic_placeholders(text: &str) -> Vec<String> {
 ///
 /// E.g., `"https://api.github.com/repos"` -> `"api.github.com"`
 pub fn extract_host(url: &str) -> Option<String> {
-    let without_scheme = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))?;
-    let host = without_scheme.split('/').next()?;
-    let host = host.split(':').next()?;
-    if host.is_empty() {
-        None
-    } else {
-        Some(host.to_string())
+    let (_, without_scheme) = url.split_once("://")?;
+    let authority = without_scheme.split('/').next()?.split('?').next()?;
+    let host_port = authority.rsplit('@').next()?;
+    let host = host_from_authority(host_port)?;
+    (!host.is_empty()).then(|| host.to_string())
+}
+
+fn host_from_authority(authority: &str) -> Option<&str> {
+    if let Some(without_open) = authority.strip_prefix('[') {
+        return without_open.split_once(']').map(|(host, _)| host);
     }
+    authority.split(':').next()
 }
 
 /// Return the domain itself followed by each parent domain that has at least

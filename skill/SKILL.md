@@ -1,13 +1,13 @@
 ---
 name: sfae
-description: Use the SFAE CLI when an agent needs to call external APIs that require authentication, collect credentials from the human without seeing secrets, reuse stored credential sets, request short-lived verification codes, or make HTTP requests with secret placeholders resolved outside chat.
+description: Use the SFAE CLI when an agent needs to call external APIs or databases that require authentication, collect credentials from the human without seeing secrets, reuse stored credential sets, request short-lived verification codes, or make HTTP/Postgres requests with secret placeholders resolved outside chat.
 ---
 
 # SFAE API Credentials
 
 ## Principles
 
-- Use `sfae` for authenticated external API calls instead of handling raw secrets directly.
+- Use `sfae` for authenticated external API calls and database queries instead of handling raw secrets directly.
 - Read the target service's official API and authentication docs before choosing endpoints, auth methods, scopes, or credential field names.
 - Never ask the human to paste credentials into chat.
 - Check for existing credentials before prompting the human.
@@ -52,12 +52,20 @@ sfae prompt github.com --spec '{
 }'
 ```
 
-After the prompt exits with a stored or connected credential message, send the request with placeholders:
+After the prompt exits with a stored or connected credential message, send the HTTP request with placeholders:
 
 ```bash
 sfae request GET "https://api.github.com/user" \
   -H "Authorization: Bearer {ACCESS_TOKEN}" \
   -H "User-Agent: sfae"
+```
+
+For Postgres, store fields such as `HOST`, `PORT`, `DATABASE`, `USERNAME`, and `PASSWORD`, then put the SQL in `--data` and use `--protocol postgres`:
+
+```bash
+sfae request --protocol postgres QUERY "postgres://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}" \
+  --domain db.example.com \
+  -d "select current_user"
 ```
 
 ## Prompt Specs
@@ -101,7 +109,7 @@ Top-level `fields` remain visible with every group.
 
 ## Placeholders And Selection
 
-Use any stored credential key as a placeholder in URLs, headers, or bodies:
+Use any stored credential key as a placeholder in URLs, headers, bodies, or Postgres SQL text:
 
 - `{ACCESS_TOKEN}` for personal access tokens
 - `{API_KEY}` for API keys

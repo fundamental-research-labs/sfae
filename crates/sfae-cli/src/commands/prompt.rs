@@ -18,6 +18,7 @@ pub struct RunArgs<'a> {
     pub spec: &'a PromptSpec,
     pub username: Option<&'a str>,
     pub terminal: bool,
+    pub provided_values: Option<HashMap<String, String>>,
 }
 
 pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
@@ -26,13 +27,16 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         spec,
         username,
         terminal,
+        provided_values,
     } = args;
     let display_label = match username {
         Some(user) => format!("Credentials for {user}@{domain}"),
         None => format!("Credentials for {domain}"),
     };
 
-    let prompt_result = if terminal {
+    let prompt_result = if let Some(values) = provided_values {
+        sfae_core::browser::BrowserPromptResult::Values(values)
+    } else if terminal {
         if let Some(u) = &spec.help_url {
             eprintln!("Obtain your credential here: {u}");
         }

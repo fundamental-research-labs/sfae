@@ -9,21 +9,21 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[cfg(feature = "native-keychain")]
 const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
-  SFAE is a credential gateway for agents making HTTP requests to service APIs.
+  SFAE is a credential gateway for agents making authenticated requests to service APIs and databases.
   It is not a service-specific CLI for GitHub, Google, Stripe, or any other provider, and it does not teach service APIs.
   1. Read the target service's official online API and authentication docs to choose endpoints, auth method, scopes, and credential fields.
   2. Run `sfae credentials <domain>` to see stored credential sets for the service. If a suitable set exists, no human action is needed.
   3. If credentials are missing, run `sfae prompt <domain> --spec '<JSON>'` to ask the human to provide or authorize them. Treat `sfae prompt` as a blocking human-interaction step: credential collection can take as long as the human needs, so wait until the command exits. Do not impose an agent-side timeout, kill/retry it while waiting, or ask the human to paste secrets into chat. If multiple auth methods are acceptable, put several alternatives in the spec with preferred methods first. Use `sfae prompt --help` to learn the spec format.
-  4. Send HTTP requests with `sfae request ...` and `{KEY}` placeholders in headers, URLs, or bodies. HTTP is the only protocol currently supported. SFAE resolves placeholders without revealing secret values to the agent.
+  4. Send requests with `sfae request ...` and `{KEY}` placeholders in URLs, headers, or bodies. HTTP is the default protocol; use `--protocol postgres` for Postgres SQL queries. SFAE resolves placeholders without revealing secret values to the agent.
   5. If a provider asks for a short-lived 2FA/MFA code during a workflow, run `sfae code <domain>` and submit the code it prints. This intentionally returns only that transient code to the agent; it is not stored."#;
 
 #[cfg(not(feature = "native-keychain"))]
 const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
-  SFAE is a credential gateway for agents making HTTP requests to service APIs.
-  `credentials` lists credential sets, `request` sends HTTP API requests with `{KEY}` placeholders resolved by SFAE, and `code` can request a transient 2FA/MFA code through the local browser.
+  SFAE is a credential gateway for agents making authenticated requests to service APIs and databases.
+  `credentials` lists credential sets, `request` sends HTTP API requests by default with `{KEY}` placeholders resolved by SFAE, and `code` can request a transient 2FA/MFA code through the local browser.
   `prompt`, `delete`, and `flush` are not available in this build. Use the host integration's request_credential client tool when credentials are missing."#;
 
-/// Credential gateway for LLM agents making HTTP API requests
+/// Credential gateway for LLM agents making authenticated requests
 #[derive(Parser)]
 #[command(
     version,
@@ -115,7 +115,8 @@ EXAMPLES:
     sfae show 550e8400-e29b-41d4-a716-446655440000"#;
 
 const REQUEST_AFTER_HELP: &str = r#"AGENT RULES:
-  Use this command for HTTP API calls only. Read the target service's official API docs for methods, URLs, headers, bodies, and auth scheme.
+  Use this command for HTTP API calls by default. Read the target service's official API docs for methods, URLs, headers, bodies, and auth scheme.
+  Use `--protocol postgres` for Postgres SQL queries over the Postgres wire protocol; put the SQL in `--data` and use QUERY as the request method.
   Put `{KEY}` placeholders only where credential values belong. SFAE resolves `{ALLCAPS_NAME}` from the stored credential blob without printing secrets.
   If a domain has multiple credential sets, pick a UUID from `sfae credentials <domain>` and pass `--cred <uuid>`, or select a label with `--label <label>`.
   Use `--dry-run` to verify placeholder resolution before sending; dry-run output masks resolved credentials.
@@ -130,7 +131,7 @@ CREDENTIAL LOOKUP:
   `--label` selects a credential-set label in current stores. `--user` is accepted as a legacy alias.
 
 OUTPUT:
-  Prints the response body to stdout. Use --verbose for status/timing on stderr and --dry-run to preview a masked request.
+  Prints the HTTP response body or a Postgres JSON result to stdout. Use --verbose for status/timing on stderr and --dry-run to preview a masked request.
 
 EXAMPLES:
   Bearer token request:
@@ -157,7 +158,12 @@ EXAMPLES:
   Preview without sending:
     sfae request GET "https://api.github.com/user" \
       -H "Authorization: Bearer {ACCESS_TOKEN}" \
-      --dry-run"#;
+      --dry-run
+
+  Postgres query:
+    sfae request --protocol postgres QUERY "postgres://{USERNAME}:{PASSWORD}@db.example.com/app" \
+      --domain db.example.com \
+      -d "select current_user""#;
 
 const CODE_AFTER_HELP: &str = r#"AGENT RULES:
   Use this command only for short-lived verification codes requested by an active login or API workflow.
@@ -385,12 +391,15 @@ enum Command {
         /// Credential set UUID from `sfae credentials`
         id: String,
     },
-    /// Send an HTTP request, resolving {KEY} placeholders from stored credentials
+    /// Send a request, resolving {KEY} placeholders from stored credentials
     #[command(after_help = REQUEST_AFTER_HELP)]
     Request {
-        /// HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)
+        /// Request protocol. Defaults to HTTP.
+        #[arg(long, default_value = "http", value_parser = ["http", "postgres"])]
+        protocol: String,
+        /// HTTP method, or QUERY for Postgres
         method: String,
-        /// Service API URL from the provider's official docs
+        /// Service URL from the provider's official docs
         url: String,
         /// Request headers in "Key: Value" format; values may contain {KEY} placeholders
         #[arg(short = 'H', long = "header")]
@@ -487,6 +496,9 @@ enum Command {
         /// Use terminal stdin instead of browser-based prompt; for manual shell use, not agents
         #[arg(long)]
         terminal: bool,
+        /// Read a JSON object of credential values from stdin instead of opening UI.
+        #[arg(long = "values-stdin", hide = true)]
+        values_stdin: bool,
     },
     /// Forget a credential set by UUID or legacy credentials by domain
     #[cfg(feature = "native-keychain")]
@@ -514,7 +526,17 @@ enum Command {
     },
 }
 
+#[cfg(feature = "native-keychain")]
+fn read_values_stdin() -> anyhow::Result<std::collections::HashMap<String, String>> {
+    let mut input = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
+    let values = serde_json::from_str(&input)
+        .map_err(|e| anyhow::anyhow!("invalid credential values JSON from stdin: {e}"))?;
+    Ok(values)
+}
+
 fn main() -> anyhow::Result<()> {
+    #[cfg(feature = "native-keychain")]
     let args: Vec<String> = std::env::args().collect();
     commands::install_skill::auto_refresh_existing();
     let mut cmd = Cli::command();
@@ -537,6 +559,7 @@ fn main() -> anyhow::Result<()> {
             commands::show::run(commands::show::RunArgs { id: &id })?;
         }
         Command::Request {
+            protocol,
             method,
             url,
             headers,
@@ -547,7 +570,9 @@ fn main() -> anyhow::Result<()> {
             dry_run,
             verbose,
         } => {
+            let protocol = commands::request::Protocol::parse(&protocol)?;
             let opts = commands::request::RequestOpts {
+                protocol,
                 dry_run,
                 verbose,
                 domain: domain.as_deref(),
@@ -613,15 +638,22 @@ fn main() -> anyhow::Result<()> {
             spec,
             label,
             terminal,
+            values_stdin,
         } => {
             let prompt_spec: sfae_core::spec::PromptSpec = serde_json::from_str(&spec)
                 .map_err(|e| anyhow::anyhow!("invalid --spec JSON: {e}"))?;
             prompt_spec.validate().map_err(|e| anyhow::anyhow!("{e}"))?;
+            let provided_values = if values_stdin {
+                Some(read_values_stdin()?)
+            } else {
+                None
+            };
             commands::prompt::run(commands::prompt::RunArgs {
                 domain: &domain,
                 spec: &prompt_spec,
                 username: label.as_deref(),
                 terminal,
+                provided_values,
             })?;
         }
         #[cfg(feature = "native-keychain")]

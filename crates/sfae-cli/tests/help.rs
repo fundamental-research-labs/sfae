@@ -81,7 +81,7 @@ fn read_request_target(stream: &mut TcpStream) -> String {
 fn root_help_explains_agent_workflow() {
     for args in [vec!["--help"], vec!["-h"]] {
         let stdout = help_output(&args);
-        assert!(stdout.contains("Credential gateway for LLM agents making HTTP API requests"));
+        assert!(stdout.contains("Credential gateway for LLM agents making authenticated requests"));
         assert!(stdout.contains("AGENT WORKFLOW:"));
         assert!(stdout.contains("official online API and authentication docs"));
         assert!(stdout.contains("not a service-specific CLI"));
@@ -91,7 +91,8 @@ fn root_help_explains_agent_workflow() {
         assert!(stdout.contains("Do not impose an agent-side timeout"));
         assert!(stdout.contains("If multiple auth methods are acceptable"));
         assert!(stdout.contains("preferred methods first"));
-        assert!(stdout.contains("HTTP is the only protocol currently supported"));
+        assert!(stdout.contains("HTTP is the default protocol"));
+        assert!(stdout.contains("--protocol postgres"));
         assert!(stdout.contains("without revealing secret values"));
         assert!(stdout.contains("short-lived 2FA/MFA code"));
         assert!(stdout.contains("sfae code <domain>"));
@@ -236,10 +237,12 @@ fn request_help_explains_placeholders_lookup_and_output() {
     assert!(stdout.contains("--label <LABEL>"));
     assert!(stdout.contains("PLACEHOLDERS:"));
     assert!(stdout.contains("Use `{FIELD_NAME}` in the URL, headers, or body"));
+    assert!(stdout.contains("--protocol"));
+    assert!(stdout.contains("Postgres query"));
     assert!(stdout.contains("CREDENTIAL LOOKUP:"));
     assert!(stdout.contains("parent-domain fallback"));
     assert!(stdout.contains("Pass `--domain` too if the URL host cannot be parsed"));
-    assert!(stdout.contains("Prints the response body to stdout"));
+    assert!(stdout.contains("Prints the HTTP response body or a Postgres JSON result"));
     assert!(stdout.contains("dry-run output masks resolved credentials"));
     assert!(stdout.contains("Hosted OAuth credentials use the same"));
     assert!(!stdout.contains("Username for credential lookup"));
