@@ -181,7 +181,7 @@ sfae code github.com --label Work --message "Enter the 6-digit GitHub authentica
 - `sfae install-skill [--codex] [--claude] [--grok] [--all] [--target <path>] [--install-cli]` writes the bundled skill and support installer into project-local agent skill folders.
 - `sfae update` updates the CLI through Homebrew, npm, or the direct installer based on how the current binary was installed.
 - `sfae delete <uuid>` forgets one credential set from SFAE's index; add `--purge` only when keychain/password prompts are acceptable.
-- `sfae flush --dry-run` previews a local full wipe; `sfae flush` deletes every locally indexed credential.
+- `sfae delete --all --dry-run` previews forgetting every indexed credential; `sfae delete --all --purge` also removes local secret-store material where possible.
 
 `--user` is still accepted as a compatibility alias for `--label`.
 

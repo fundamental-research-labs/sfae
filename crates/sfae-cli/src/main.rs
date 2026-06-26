@@ -21,7 +21,7 @@ const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
 const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
   SFAE is a credential gateway for agents making authenticated requests to service APIs and databases.
   `credentials` lists credential sets, `request` sends HTTP API requests by default with `{KEY}` placeholders resolved by SFAE, and `code` can request a transient 2FA/MFA code through the local browser.
-  `prompt`, `delete`, and `flush` are not available in this build. Use the host integration's request_credential client tool when credentials are missing."#;
+  `prompt` and `delete` are not available in this build. Use the host integration's request_credential client tool when credentials are missing."#;
 
 /// Credential gateway for LLM agents making authenticated requests
 #[derive(Parser)]
@@ -362,9 +362,10 @@ const DELETE_AFTER_HELP: &str = r#"PREFERRED USE:
   Default UUID deletion attempts broker-mediated hosted OAuth revoke when local OAuth material is available, then forgets credentials from SFAE's public index so agents stop selecting them.
   It does not delete keychain secret material.
   Use --purge only for manual cleanup when you are prepared for keychain/password prompts.
+  Use --all to apply the same behavior to every indexed credential. Add --dry-run to preview the bulk operation.
   Delete by UUID from `sfae credentials`. Domain deletion is for legacy flat credentials.
-  `--type` accepts ACCESS_TOKEN, REFRESH_TOKEN, API_KEY, PASSWORD, USERNAME, or CLIENT_SECRET, and cannot be used with UUID deletion.
-  `--label` filters legacy flat credentials by label/username. `--user` is accepted as a legacy alias.
+  `--type` accepts ACCESS_TOKEN, REFRESH_TOKEN, API_KEY, PASSWORD, USERNAME, or CLIENT_SECRET, and cannot be used with UUID deletion or --all.
+  `--label` filters legacy flat credentials by label/username. `--user` is accepted as a legacy alias. Neither is used with --all.
 
 EXAMPLES:
   Forget one credential set without prompting:
@@ -376,20 +377,17 @@ EXAMPLES:
   Forget one legacy flat credential type:
     sfae delete github.com --type ACCESS_TOKEN
 
+  Preview forgetting every indexed credential:
+    sfae delete --all --dry-run
+
+  Forget every indexed credential:
+    sfae delete --all
+
   Purge keychain material too (may prompt for password):
-    sfae delete 550e8400-e29b-41d4-a716-446655440000 --purge"#;
+    sfae delete 550e8400-e29b-41d4-a716-446655440000 --purge
 
-#[cfg(feature = "native-keychain")]
-const FLUSH_AFTER_HELP: &str = r#"WARNING:
-  Deletes every credential indexed by SFAE on this machine. Prefer `sfae delete <uuid>` when removing one credential set.
-  Use `sfae flush --dry-run` first.
-
-EXAMPLES:
-  Preview all entries that would be removed:
-    sfae flush --dry-run
-
-  Delete all stored credentials:
-    sfae flush"#;
+  Purge every indexed credential:
+    sfae delete --all --purge"#;
 
 #[derive(Subcommand)]
 enum Command {
@@ -522,24 +520,32 @@ enum Command {
     #[command(after_help = DELETE_AFTER_HELP)]
     Delete {
         /// Credential set UUID or domain (e.g. github.com)
-        target: String,
+        #[arg(
+            value_name = "TARGET",
+            required_unless_present = "all",
+            conflicts_with = "all"
+        )]
+        target: Option<String>,
+        /// Apply the delete operation to every indexed credential
+        #[arg(long, conflicts_with = "target")]
+        all: bool,
+        /// Show what --all would delete without actually deleting
+        #[arg(long, requires = "all")]
+        dry_run: bool,
         /// Also delete keychain secret material; hosted OAuth revoke is attempted for UUID deletes either way
         #[arg(long)]
         purge: bool,
         /// Delete only this credential type (legacy, not used with UUID)
-        #[arg(long = "type", value_name = "TYPE")]
+        #[arg(long = "type", value_name = "TYPE", conflicts_with = "all")]
         cred_type: Option<String>,
         /// Delete only credentials for this legacy label/username (not used with UUID)
-        #[arg(long = "label", alias = "user", value_name = "LABEL")]
+        #[arg(
+            long = "label",
+            alias = "user",
+            value_name = "LABEL",
+            conflicts_with = "all"
+        )]
         label: Option<String>,
-    },
-    /// Delete all stored credentials
-    #[cfg(feature = "native-keychain")]
-    #[command(after_help = FLUSH_AFTER_HELP)]
-    Flush {
-        /// Show what would be deleted without actually deleting
-        #[arg(long)]
-        dry_run: bool,
     },
 }
 
@@ -676,20 +682,20 @@ fn main() -> anyhow::Result<()> {
         #[cfg(feature = "native-keychain")]
         Command::Delete {
             target,
+            all,
+            dry_run,
             purge,
             cred_type,
             label,
         } => {
             commands::delete::run(commands::delete::RunArgs {
-                target: &target,
+                target: target.as_deref(),
                 cred_type_str: cred_type.as_deref(),
                 username: label.as_deref(),
+                all,
+                dry_run,
                 purge,
             })?;
-        }
-        #[cfg(feature = "native-keychain")]
-        Command::Flush { dry_run } => {
-            commands::flush::run(dry_run)?;
         }
     }
     Ok(())

@@ -5,8 +5,6 @@ pub mod credentials;
 #[cfg(feature = "native-keychain")]
 pub mod delete;
 pub mod embedded_skill;
-#[cfg(feature = "native-keychain")]
-pub mod flush;
 pub mod install_skill;
 #[cfg(feature = "native-keychain")]
 pub mod prompt;

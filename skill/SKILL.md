@@ -205,6 +205,7 @@ sfae code github.com \
 - `sfae show <uuid>` inspects public metadata for a credential set.
 - `sfae delete <uuid>` forgets one credential set from SFAE's index.
 - `sfae delete <uuid> --purge` may trigger OS credential-store prompts; use only when that is acceptable.
-- `sfae flush --dry-run` previews a full local wipe.
+- `sfae delete --all --dry-run` previews forgetting every indexed credential.
+- `sfae delete --all --purge` also removes local secret-store material where possible.
 - `sfae request --dry-run ...` previews a resolved request without sending it.
 - `sfae request --verbose ...` helps debug request behavior without exposing secret values.
