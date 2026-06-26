@@ -3,6 +3,7 @@
 use std::process::{Command, ExitCode};
 
 mod checks;
+mod ui_preview;
 
 /// One named CI step and the shell command it invokes.
 struct Step<'a> {
@@ -39,6 +40,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("ci") => run_ci(),
         Some("lint") => run_lint(),
+        Some("ui-preview") => ui_preview::run(&args[1..]),
         Some(name) => match STEPS.iter().find(|s| s.name == name) {
             Some(step) => run_step(step),
             None => {
@@ -56,6 +58,7 @@ fn usage() -> ExitCode {
     eprintln!("commands:");
     eprintln!("  ci       Run all CI checks (fmt, clippy, test, doc, lint)");
     eprintln!("  lint     Run xtask lint checks (file length, docstring, fn params)");
+    eprintln!("  ui-preview  Serve credential UI preview pages");
     for step in STEPS {
         eprintln!("  {:<8} Run {} only", step.name, step.name);
     }
