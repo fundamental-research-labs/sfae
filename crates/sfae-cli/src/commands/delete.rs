@@ -1,4 +1,6 @@
-//! `sfae delete`: forget a credential set by UUID or legacy flat credentials.
+//! `sfae delete`: forget credential sets or legacy flat credentials.
+
+use std::collections::HashSet;
 
 use sfae_core::credential::{CredentialKey, CredentialType, credential_key};
 use sfae_core::store::{
@@ -24,11 +26,13 @@ fn looks_like_uuid(s: &str) -> bool {
             .all(|p| p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
-/// All inputs for `delete::run`: the target (UUID or domain) plus optional filters.
+/// All inputs for `delete::run`: a target (UUID or domain), or the bulk `--all` mode.
 pub struct RunArgs<'a> {
-    pub target: &'a str,
+    pub target: Option<&'a str>,
     pub cred_type_str: Option<&'a str>,
     pub username: Option<&'a str>,
+    pub all: bool,
+    pub dry_run: bool,
     pub purge: bool,
 }
 
@@ -37,9 +41,36 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         target,
         cred_type_str,
         username,
+        all,
+        dry_run,
         purge,
     } = args;
     let mut store = create_store();
+
+    if all {
+        if target.is_some() {
+            anyhow::bail!("--all cannot be used with a credential UUID or domain target");
+        }
+        if cred_type_str.is_some() || username.is_some() {
+            anyhow::bail!("--type and --label/--user flags are not used with --all");
+        }
+        return delete_all_credentials(BulkDeleteRequest {
+            store: &mut *store,
+            opts: BulkDeleteOpts {
+                purge,
+                dry_run,
+                remote_store: uses_remote_store(),
+            },
+        });
+    }
+
+    if dry_run {
+        anyhow::bail!("--dry-run is only supported with --all");
+    }
+
+    let Some(target) = target else {
+        anyhow::bail!("pass a credential UUID, a legacy domain, or --all");
+    };
 
     // If target looks like a UUID, delete by credential set ID.
     if looks_like_uuid(target) {
@@ -104,6 +135,133 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+struct BulkDeleteOpts {
+    purge: bool,
+    dry_run: bool,
+    remote_store: bool,
+}
+
+struct BulkDeleteRequest<'a> {
+    store: &'a mut dyn SecretStore,
+    opts: BulkDeleteOpts,
+}
+
+struct BulkTargets {
+    credential_sets: Vec<CredentialSetInfo>,
+    legacy_keys: Vec<String>,
+}
+
+fn collect_bulk_targets(store: &dyn SecretStore) -> anyhow::Result<BulkTargets> {
+    let credential_sets = if store.supports_credential_sets() {
+        store.list_credential_sets(None)?
+    } else {
+        Vec::new()
+    };
+
+    let set_ids: HashSet<&str> = credential_sets.iter().map(|set| set.id.as_str()).collect();
+    let legacy_keys = store
+        .list_keys()?
+        .into_iter()
+        .filter(|key| !set_ids.contains(key.as_str()))
+        .collect();
+
+    Ok(BulkTargets {
+        credential_sets,
+        legacy_keys,
+    })
+}
+
+fn delete_all_credentials(request: BulkDeleteRequest<'_>) -> anyhow::Result<()> {
+    let BulkDeleteRequest { store, opts } = request;
+    let targets = collect_bulk_targets(store)?;
+    let total = targets.credential_sets.len() + targets.legacy_keys.len();
+
+    if total == 0 {
+        eprintln!("No credentials stored.");
+        return Ok(());
+    }
+
+    let action = if opts.purge { "purge" } else { "forget" };
+    if opts.dry_run {
+        eprintln!("Would {action} {total} credential(s):");
+        for set in &targets.credential_sets {
+            eprintln!("  credential set {}", format_credential_set(set));
+        }
+        for key in &targets.legacy_keys {
+            eprintln!("  legacy credential {key}");
+        }
+        return Ok(());
+    }
+
+    let mut failed = 0usize;
+
+    for set in &targets.credential_sets {
+        if should_attempt_hosted_oauth_revoke(opts.remote_store, opts.purge) {
+            revoke_hosted_oauth_if_needed(store, &set.id);
+        }
+
+        let result = if opts.purge {
+            store.delete_credential_set(&set.id)
+        } else {
+            store.forget_credential_set(&set.id)
+        };
+
+        match result {
+            Ok(()) => {
+                let verb = if opts.purge { "Purged" } else { "Forgot" };
+                eprintln!("{verb} credential set: {}", set.id);
+            }
+            Err(e) => {
+                failed += 1;
+                eprintln!("Failed to {action} credential set {}: {e}", set.id);
+            }
+        }
+    }
+
+    for key in &targets.legacy_keys {
+        let result = if opts.purge {
+            store.delete(key)
+        } else {
+            store.forget(key)
+        };
+
+        match result {
+            Ok(()) => {
+                let verb = if opts.purge { "Purged" } else { "Forgot" };
+                eprintln!("{verb}: {key}");
+            }
+            Err(sfae_core::error::SfaeError::CredentialNotFound(_)) if opts.purge => {
+                eprintln!("Removed stale legacy index entry: {key}");
+            }
+            Err(e) => {
+                failed += 1;
+                eprintln!("Failed to {action} legacy credential {key}: {e}");
+            }
+        }
+    }
+
+    if failed > 0 {
+        anyhow::bail!("failed to {action} {failed} credential(s)");
+    }
+
+    eprintln!(
+        "{} {} credential(s).",
+        if opts.purge { "Purged" } else { "Forgot" },
+        total
+    );
+    Ok(())
+}
+
+fn format_credential_set(set: &CredentialSetInfo) -> String {
+    let label = set.label.as_deref().unwrap_or("-");
+    let keys = if set.keys.is_empty() {
+        "-".to_string()
+    } else {
+        set.keys.join(", ")
+    };
+    format!("{} {} {} [{}]", set.id, set.domain, label, keys)
 }
 
 // xtask: allow-multi-param - helper makes purge-independent revoke behavior explicit
@@ -192,10 +350,125 @@ fn hosted_oauth_revoke_material(
 mod tests {
     use std::collections::HashMap;
 
+    use sfae_core::store::{InMemoryStore, StoreEntry};
+
     use super::*;
 
     #[test]
-    fn hosted_oauth_revoke_material_accepts_google_provider() {
+    fn bulk_target_collection_includes_sets_and_legacy_keys_once() {
+        let mut store = InMemoryStore::new();
+        store
+            .set(StoreEntry {
+                key: "github.com_API_KEY",
+                value: "legacy-secret",
+            })
+            .unwrap();
+        let set_id = store
+            .store_credential_set(sfae_core::store::CredentialSetInput {
+                domain: "github.com",
+                label: Some("Work"),
+                values: &HashMap::from([("ACCESS_TOKEN".to_string(), "token".to_string())]),
+            })
+            .unwrap();
+
+        let targets = collect_bulk_targets(&store).unwrap();
+
+        assert_eq!(targets.credential_sets.len(), 1);
+        assert_eq!(targets.credential_sets[0].id, set_id);
+        assert_eq!(targets.legacy_keys, vec!["github.com_API_KEY"]);
+    }
+
+    #[test]
+    fn bulk_delete_dry_run_does_not_mutate_store() {
+        let mut store = InMemoryStore::new();
+        store
+            .set(StoreEntry {
+                key: "github.com_API_KEY",
+                value: "legacy-secret",
+            })
+            .unwrap();
+        let set_id = store
+            .store_credential_set(sfae_core::store::CredentialSetInput {
+                domain: "github.com",
+                label: None,
+                values: &HashMap::from([("ACCESS_TOKEN".to_string(), "token".to_string())]),
+            })
+            .unwrap();
+
+        delete_all_credentials(BulkDeleteRequest {
+            store: &mut store,
+            opts: BulkDeleteOpts {
+                purge: true,
+                dry_run: true,
+                remote_store: true,
+            },
+        })
+        .unwrap();
+
+        assert_eq!(store.get("github.com_API_KEY").unwrap(), "legacy-secret");
+        assert!(store.get(&set_id).is_ok());
+        assert_eq!(store.list_credential_sets(None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn bulk_delete_forgets_indexes_without_purging_credential_set_material() {
+        let mut store = InMemoryStore::new();
+        store
+            .set(StoreEntry {
+                key: "github.com_API_KEY",
+                value: "legacy-secret",
+            })
+            .unwrap();
+        let set_id = store
+            .store_credential_set(sfae_core::store::CredentialSetInput {
+                domain: "github.com",
+                label: None,
+                values: &HashMap::from([("ACCESS_TOKEN".to_string(), "token".to_string())]),
+            })
+            .unwrap();
+
+        delete_all_credentials(BulkDeleteRequest {
+            store: &mut store,
+            opts: BulkDeleteOpts {
+                purge: false,
+                dry_run: false,
+                remote_store: true,
+            },
+        })
+        .unwrap();
+
+        assert!(store.get("github.com_API_KEY").is_err());
+        assert!(store.get(&set_id).is_ok());
+        assert!(store.list_credential_sets(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn bulk_delete_purges_credential_set_material() {
+        let mut store = InMemoryStore::new();
+        let set_id = store
+            .store_credential_set(sfae_core::store::CredentialSetInput {
+                domain: "github.com",
+                label: None,
+                values: &HashMap::from([("ACCESS_TOKEN".to_string(), "token".to_string())]),
+            })
+            .unwrap();
+
+        delete_all_credentials(BulkDeleteRequest {
+            store: &mut store,
+            opts: BulkDeleteOpts {
+                purge: true,
+                dry_run: false,
+                remote_store: true,
+            },
+        })
+        .unwrap();
+
+        assert!(store.get(&set_id).is_err());
+        assert!(store.list_credential_sets(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn hosted_oauth_revoke_material_accepts_dropbox_provider() {
         let data = sfae_core::store::CredentialSetData {
             values: HashMap::from([("OAUTH_ACCESS_TOKEN".to_string(), "access-token".to_string())]),
             internal: HashMap::from([
@@ -209,7 +482,7 @@ mod tests {
                 ),
             ]),
             metadata: HashMap::from([
-                ("OAUTH_PROVIDER".to_string(), "google".to_string()),
+                ("OAUTH_PROVIDER".to_string(), "dropbox".to_string()),
                 (
                     "OAUTH_BROKER_CREDENTIAL_ID".to_string(),
                     "broker-id".to_string(),
@@ -219,7 +492,7 @@ mod tests {
 
         let material = hosted_oauth_revoke_material(&data).unwrap();
 
-        assert_eq!(material.provider, "google");
+        assert_eq!(material.provider, "dropbox");
         assert_eq!(material.access_token, Some("access-token"));
         assert_eq!(material.refresh_token, Some("refresh-token"));
         assert_eq!(material.broker_credential_id, "broker-id");

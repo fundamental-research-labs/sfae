@@ -623,6 +623,9 @@ async fn local_credential_blob(
     if let Some(display_name) = user.display_name.as_deref() {
         metadata.insert("OAUTH_DISPLAY_NAME".to_string(), display_name.to_string());
     }
+    if let Some(email) = user.email.as_deref() {
+        metadata.insert("OAUTH_EMAIL".to_string(), email.to_string());
+    }
     if let Some(token_type) = token.token_type.as_deref() {
         metadata.insert("OAUTH_TOKEN_TYPE".to_string(), token_type.to_string());
     }

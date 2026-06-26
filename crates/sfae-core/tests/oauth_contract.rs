@@ -185,7 +185,8 @@ fn provider_registry_response() -> MockResponse {
         "providers": [
             {"provider": "discord", "domains": ["discord.com"]},
             {"provider": "google", "domains": ["googleapis.com"]},
-            {"provider": "github", "domains": ["github.com"]}
+            {"provider": "github", "domains": ["github.com"]},
+            {"provider": "dropbox", "domains": ["dropboxapi.com"]}
         ]
     }))
 }
@@ -324,8 +325,9 @@ impl HostedOAuthBroker for InProcessBroker {
 
     fn revoke_credential(&self, input: HostedOAuthRevoke<'_>) -> Result<(), sfae_core::SfaeError> {
         self.calls.borrow_mut().push(format!(
-            "revoke:{}:{}",
+            "revoke:{}:{}:{}",
             input.broker_credential_id,
+            input.access_token.unwrap_or("-"),
             input.refresh_token.unwrap_or("-")
         ));
         Ok(())
@@ -384,6 +386,11 @@ fn direct_broker_fetches_provider_registry_from_broker() {
         registry.providers[2].domains,
         vec!["github.com".to_string()]
     );
+    assert_eq!(registry.providers[3].provider, "dropbox");
+    assert_eq!(
+        registry.providers[3].domains,
+        vec!["dropboxapi.com".to_string()]
+    );
     assert_eq!(requests[0].method, "GET");
     assert_eq!(requests[0].target, "/v1/oauth/providers");
 }
@@ -436,6 +443,11 @@ fn backend_proxy_fetches_provider_registry_from_backend() {
     assert_eq!(
         registry.providers[2].domains,
         vec!["github.com".to_string()]
+    );
+    assert_eq!(registry.providers[3].provider, "dropbox");
+    assert_eq!(
+        registry.providers[3].domains,
+        vec!["dropboxapi.com".to_string()]
     );
     assert_eq!(requests[0].method, "GET");
     assert_eq!(requests[0].target, "/oauth/providers");
@@ -510,7 +522,7 @@ fn in_process_broker_contract_covers_full_token_lifecycle() {
             "status:session-1",
             "redeem:session-1:redeem-verifier:completion",
             "refresh:grant-id:refresh-token",
-            "revoke:grant-id:refresh-token"
+            "revoke:grant-id:access-token:refresh-token"
         ]
     );
 }
@@ -561,7 +573,7 @@ fn direct_broker_redeem_refresh_and_revoke_requests_are_compartmentalized() {
     assert!(requests[1].body.contains("refresh-token"));
     assert_eq!(requests[2].target, "/v1/local/oauth/revoke");
     assert!(requests[2].body.contains("refresh-token"));
-    assert!(!requests[2].body.contains("access-token"));
+    assert!(requests[2].body.contains("access-token"));
 }
 
 #[test]

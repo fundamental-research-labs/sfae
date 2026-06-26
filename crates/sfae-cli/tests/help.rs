@@ -161,6 +161,7 @@ fn prompt_help_explains_spec_and_secret_handling() {
         assert!(stdout.contains("{OAUTH_ACCESS_TOKEN}"));
         assert!(stdout.contains("authorization URLs, token URLs, or provider secrets"));
         assert!(stdout.contains("forwards requested OAuth scopes to the provider"));
+        assert!(stdout.contains("Dropbox (`dropboxapi.com`)"));
         assert!(stdout.contains("Ask for any scope required by the user's task"));
         assert!(stdout.contains("choose the narrowest set"));
         assert!(stdout.contains("SFAE or the provider may reject unknown"));
@@ -258,14 +259,14 @@ fn destructive_command_help_explains_scope_and_dry_run() {
     assert!(delete_stdout.contains("does not delete keychain secret material"));
     assert!(delete_stdout.contains("Use --purge only for manual cleanup"));
     assert!(delete_stdout.contains("may prompt for password"));
+    assert!(delete_stdout.contains("Use --all to apply the same behavior"));
+    assert!(delete_stdout.contains("sfae delete --all --dry-run"));
+    assert!(delete_stdout.contains("sfae delete --all --purge"));
     assert!(delete_stdout.contains("hosted OAuth revoke is attempted for UUID deletes either way"));
+    assert!(delete_stdout.contains("--all"));
     assert!(delete_stdout.contains("--purge"));
     assert!(delete_stdout.contains("Domain deletion is for legacy flat credentials"));
     assert!(delete_stdout.contains("--label <LABEL>"));
     assert!(delete_stdout.contains("ACCESS_TOKEN"));
-
-    let flush_stdout = help_output(&["flush", "--help"]);
-    assert!(flush_stdout.contains("Deletes every credential indexed by SFAE"));
-    assert!(flush_stdout.contains("sfae flush --dry-run"));
-    assert!(!flush_stdout.contains("remote store"));
+    assert!(!delete_stdout.contains("sfae flush"));
 }

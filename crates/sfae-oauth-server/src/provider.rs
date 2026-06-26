@@ -3,11 +3,12 @@
 use chrono::{DateTime, Utc};
 
 use crate::config::Config;
-use crate::{discord, github, google};
+use crate::{discord, dropbox, github, google};
 
 const DISCORD_DOMAINS: &[&str] = &["discord.com"];
 const GOOGLE_DOMAINS: &[&str] = &["googleapis.com"];
 const GITHUB_DOMAINS: &[&str] = &["github.com"];
+const DROPBOX_DOMAINS: &[&str] = &["dropboxapi.com"];
 const PROVIDERS: &[ProviderMetadata] = &[
     ProviderMetadata {
         provider: "discord",
@@ -20,6 +21,10 @@ const PROVIDERS: &[ProviderMetadata] = &[
     ProviderMetadata {
         provider: "github",
         domains: GITHUB_DOMAINS,
+    },
+    ProviderMetadata {
+        provider: "dropbox",
+        domains: DROPBOX_DOMAINS,
     },
 ];
 
@@ -81,8 +86,8 @@ pub(crate) struct RevokeToken<'a> {
     pub(crate) provider: &'a str,
     pub(crate) http: &'a reqwest::Client,
     pub(crate) config: &'a Config,
-    pub(crate) token: &'a str,
-    pub(crate) token_type_hint: Option<&'a str>,
+    pub(crate) access_token: Option<&'a str>,
+    pub(crate) refresh_token: Option<&'a str>,
 }
 
 /// Inputs for fetching provider account identity.
@@ -98,6 +103,7 @@ enum Provider {
     Discord,
     Google,
     GitHub,
+    Dropbox,
 }
 
 impl Provider {
@@ -106,6 +112,7 @@ impl Provider {
             Self::Discord => "discord",
             Self::Google => "google",
             Self::GitHub => "github",
+            Self::Dropbox => "dropbox",
         }
     }
 
@@ -114,6 +121,7 @@ impl Provider {
             Self::Discord => "discord.com",
             Self::Google => "googleapis.com",
             Self::GitHub => "github.com",
+            Self::Dropbox => "dropboxapi.com",
         }
     }
 }
@@ -177,6 +185,17 @@ pub(crate) fn build_authorization(
                 authorization_url: session.authorization_url,
             })
         }
+        Provider::Dropbox => {
+            let session = dropbox::build_authorization(dropbox::DropboxAuthorize {
+                config,
+                state,
+                requested_scopes,
+            })?;
+            Ok(ProviderAuthorization {
+                scopes: session.scopes,
+                authorization_url: session.authorization_url,
+            })
+        }
     }
 }
 
@@ -203,6 +222,11 @@ pub(crate) async fn exchange_code(args: ExchangeCode<'_>) -> Result<ProviderToke
         Provider::GitHub => {
             let token =
                 github::exchange_code(github::GitHubTokenRequest { http, config, code }).await?;
+            Ok(token.into_provider_token(requested_scopes))
+        }
+        Provider::Dropbox => {
+            let token =
+                dropbox::exchange_code(dropbox::DropboxTokenRequest { http, config, code }).await?;
             Ok(token.into_provider_token(requested_scopes))
         }
     }
@@ -236,6 +260,15 @@ pub(crate) async fn refresh_token(args: RefreshToken<'_>) -> Result<ProviderToke
             Ok(token.into_refreshed_provider_token())
         }
         Provider::GitHub => Err("provider_refresh_unsupported".to_string()),
+        Provider::Dropbox => {
+            let token = dropbox::refresh_token(dropbox::DropboxRefreshRequest {
+                http,
+                config,
+                refresh_token,
+            })
+            .await?;
+            Ok(token.into_refreshed_provider_token())
+        }
     }
 }
 
@@ -245,20 +278,33 @@ pub(crate) async fn revoke_token(args: RevokeToken<'_>) -> Result<(), String> {
         provider,
         http,
         config,
-        token,
-        token_type_hint,
+        access_token,
+        refresh_token,
     } = args;
     match require_provider(provider)? {
         Provider::Discord => {
+            let (token, token_type_hint) = refresh_token
+                .filter(|token| !token.is_empty())
+                .map(|token| (token, "refresh_token"))
+                .or_else(|| {
+                    access_token
+                        .filter(|token| !token.is_empty())
+                        .map(|token| (token, "access_token"))
+                })
+                .ok_or_else(|| "provider_revoke_token_required".to_string())?;
             discord::revoke_token(discord::DiscordRevokeRequest {
                 http,
                 config,
                 token,
-                token_type_hint: token_type_hint.unwrap_or("refresh_token"),
+                token_type_hint,
             })
             .await
         }
         Provider::Google => {
+            let token = refresh_token
+                .filter(|token| !token.is_empty())
+                .or_else(|| access_token.filter(|token| !token.is_empty()))
+                .ok_or_else(|| "provider_revoke_token_required".to_string())?;
             google::revoke_token(google::GoogleRevokeRequest {
                 http,
                 config,
@@ -267,10 +313,22 @@ pub(crate) async fn revoke_token(args: RevokeToken<'_>) -> Result<(), String> {
             .await
         }
         Provider::GitHub => {
+            let token = access_token
+                .filter(|token| !token.is_empty())
+                .ok_or_else(|| "provider_revoke_access_token_required".to_string())?;
             github::revoke_token(github::GitHubRevokeRequest {
                 http,
                 config,
                 token,
+            })
+            .await
+        }
+        Provider::Dropbox => {
+            dropbox::revoke_token(dropbox::DropboxRevokeRequest {
+                http,
+                config,
+                access_token,
+                refresh_token,
             })
             .await
         }
@@ -313,6 +371,15 @@ pub(crate) async fn fetch_user(args: FetchUser<'_>) -> Result<ProviderUser, Stri
             .await?;
             Ok(user.into_provider_user())
         }
+        Provider::Dropbox => {
+            let user = dropbox::fetch_user(dropbox::DropboxUserRequest {
+                http,
+                config,
+                access_token,
+            })
+            .await?;
+            Ok(user.into_provider_user())
+        }
     }
 }
 
@@ -325,6 +392,7 @@ fn provider_by_name(provider: &str) -> Option<Provider> {
         "discord" => Some(Provider::Discord),
         "google" => Some(Provider::Google),
         "github" => Some(Provider::GitHub),
+        "dropbox" => Some(Provider::Dropbox),
         _ => None,
     }
 }
@@ -334,7 +402,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_includes_discord_google_and_github() {
+    fn registry_includes_supported_providers() {
         let registry: Vec<_> = provider_metadata()
             .iter()
             .map(|provider| (provider.provider, provider.domains.to_vec()))
@@ -345,7 +413,8 @@ mod tests {
             vec![
                 ("discord", vec!["discord.com"]),
                 ("google", vec!["googleapis.com"]),
-                ("github", vec!["github.com"])
+                ("github", vec!["github.com"]),
+                ("dropbox", vec!["dropboxapi.com"])
             ]
         );
     }
@@ -355,6 +424,7 @@ mod tests {
         assert_eq!(default_domain("discord"), Some("discord.com"));
         assert_eq!(default_domain("google"), Some("googleapis.com"));
         assert_eq!(default_domain("github"), Some("github.com"));
+        assert_eq!(default_domain("dropbox"), Some("dropboxapi.com"));
         assert_eq!(default_domain("unknown"), None);
     }
 }

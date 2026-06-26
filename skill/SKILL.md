@@ -52,7 +52,7 @@ sfae prompt github.com --spec '{
 }'
 ```
 
-After the prompt exits with a stored or connected credential message, send the HTTP request with placeholders:
+After the prompt exits with a stored or connected credential message, send the request with placeholders:
 
 ```bash
 sfae request GET "https://api.github.com/user" \
@@ -131,6 +131,12 @@ Get UUIDs and visible field names with `sfae credentials <domain>`.
 
 Use hosted OAuth only for providers supported by SFAE. Do not put OAuth client IDs, client secrets, authorization URLs, token URLs, provider codes, or provider tokens in prompt specs.
 
+Use these credential domains for hosted OAuth provider families:
+
+- `googleapis.com` for Google APIs.
+- `github.com` for GitHub, including `api.github.com`.
+- `dropboxapi.com` for Dropbox API hosts such as `api.dropboxapi.com`, `content.dropboxapi.com`, and `notify.dropboxapi.com`.
+
 Discord OAuth example:
 
 ```bash
@@ -162,6 +168,23 @@ sfae prompt github.com --spec '{
 }'
 ```
 
+Dropbox OAuth example:
+
+```bash
+sfae prompt dropboxapi.com --spec '{
+  "groups": [{
+    "label": "OAuth",
+    "oauth": {"provider": "dropbox", "scopes": ["files.metadata.read"]}
+  }]
+}'
+
+sfae request POST "https://api.dropboxapi.com/2/files/list_folder" \
+  --domain dropboxapi.com \
+  -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{\"path\":\"\"}"
+```
+
 ## Verification Codes
 
 Use `sfae code` only for active, short-lived MFA or verification challenges that the agent must submit immediately:
@@ -182,6 +205,7 @@ sfae code github.com \
 - `sfae show <uuid>` inspects public metadata for a credential set.
 - `sfae delete <uuid>` forgets one credential set from SFAE's index.
 - `sfae delete <uuid> --purge` may trigger OS credential-store prompts; use only when that is acceptable.
-- `sfae flush --dry-run` previews a full local wipe.
+- `sfae delete --all --dry-run` previews forgetting every indexed credential.
+- `sfae delete --all --purge` also removes local secret-store material where possible.
 - `sfae request --dry-run ...` previews a resolved request without sending it.
 - `sfae request --verbose ...` helps debug request behavior without exposing secret values.

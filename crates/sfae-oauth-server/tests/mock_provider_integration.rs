@@ -122,9 +122,13 @@ async fn google_local_handoff_refresh_and_revoke_use_generic_callback() {
     .await;
 
     let redeem_verifier = "redeem-verifier-with-enough-entropy-for-test";
-    let local = create_google_local_session(CreateLocalSession {
+    let local = create_local_session(CreateLocalSession {
         http: &http,
         base_url: &broker.base_url,
+        provider: "google",
+        domain: "googleapis.com",
+        label: "mock-google",
+        scopes: vec!["https://www.googleapis.com/auth/drive.metadata.readonly"],
         redeem_challenge: &redeem_challenge(redeem_verifier),
     })
     .await;
@@ -189,9 +193,10 @@ async fn google_local_handoff_refresh_and_revoke_use_generic_callback() {
     );
     assert_eq!(redeemed.metadata["OAUTH_DISPLAY_NAME"], "Mock Google User");
 
-    let refreshed = refresh_google_local_credential(RefreshLocalCredential {
+    let refreshed = refresh_local_credential(RefreshLocalCredential {
         http: &http,
         base_url: &broker.base_url,
+        provider: "google",
         credential_id: &redeemed.metadata["OAUTH_BROKER_CREDENTIAL_ID"],
         credential_secret: &redeemed.internal["OAUTH_BROKER_CREDENTIAL_SECRET"],
         refresh_token: &redeemed.internal["OAUTH_REFRESH_TOKEN"],
@@ -258,6 +263,158 @@ async fn google_local_handoff_refresh_and_revoke_use_generic_callback() {
     assert!(!revoke_body.contains_key("token_type_hint"));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn dropbox_local_handoff_refresh_and_revoke_use_bearer_revoke_with_retry() {
+    let Some(database_url) = std::env::var("SFAE_OAUTH_TEST_DATABASE_URL").ok() else {
+        eprintln!("skipping mock provider integration test: SFAE_OAUTH_TEST_DATABASE_URL is unset");
+        return;
+    };
+    let provider = MockProvider::start(6);
+    let mut broker = BrokerProcess::start(BrokerStart {
+        database_url: database_url.clone(),
+        provider_base_url: provider.base_url.clone(),
+    });
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    wait_for_health(HealthProbe {
+        http: &http,
+        broker: &mut broker,
+    })
+    .await;
+    let redeem_verifier = "dropbox-redeem-verifier-with-enough-entropy";
+    let local = create_local_session(CreateLocalSession {
+        http: &http,
+        base_url: &broker.base_url,
+        provider: "dropbox",
+        domain: "dropboxapi.com",
+        label: "mock-dropbox",
+        scopes: vec!["files.metadata.read"],
+        redeem_challenge: &redeem_challenge(redeem_verifier),
+    })
+    .await;
+    let authorize_url = Url::parse(&local.authorization_url).unwrap();
+    let authorize_pairs: HashMap<_, _> = authorize_url.query_pairs().into_owned().collect();
+    assert_eq!(
+        authorize_pairs["redirect_uri"],
+        format!("{}/oauth/callback", broker.base_url)
+    );
+    assert_eq!(authorize_pairs["token_access_type"], "offline");
+    assert!(authorize_pairs["scope"].contains("files.metadata.read"));
+    assert!(authorize_pairs["scope"].contains("account_info.read"));
+    let state = oauth_state_from_authorization_url(&local.authorization_url);
+    let callback = format!(
+        "{}/oauth/callback?code=dropbox-code&state={state}",
+        broker.base_url
+    );
+    let callback_resp = http.get(callback).send().await.unwrap();
+    assert_eq!(callback_resp.status(), StatusCode::SEE_OTHER);
+    let location = callback_resp
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(location.contains("status=success"));
+    let completion_verifier = query_value(location, "completion_verifier");
+    let redeemed = redeem_local_session(RedeemLocalSession {
+        http: &http,
+        base_url: &broker.base_url,
+        session_id: &local.session_id,
+        redeem_verifier,
+        completion_verifier: &completion_verifier,
+    })
+    .await;
+    assert_eq!(
+        redeemed.values["OAUTH_ACCESS_TOKEN"],
+        "mock-dropbox-access-token"
+    );
+    assert_eq!(
+        redeemed.internal["OAUTH_REFRESH_TOKEN"],
+        "mock-dropbox-refresh-token"
+    );
+    assert_eq!(redeemed.metadata["OAUTH_PROVIDER"], "dropbox");
+    assert_eq!(
+        redeemed.metadata["OAUTH_PROVIDER_SUBJECT"],
+        "dbid:mock-dropbox"
+    );
+    assert_eq!(redeemed.metadata["OAUTH_DISPLAY_NAME"], "Mock Dropbox User");
+    assert_eq!(redeemed.metadata["OAUTH_EMAIL"], "dropbox@example.test");
+    let refreshed = refresh_local_credential(RefreshLocalCredential {
+        http: &http,
+        base_url: &broker.base_url,
+        provider: "dropbox",
+        credential_id: &redeemed.metadata["OAUTH_BROKER_CREDENTIAL_ID"],
+        credential_secret: &redeemed.internal["OAUTH_BROKER_CREDENTIAL_SECRET"],
+        refresh_token: &redeemed.internal["OAUTH_REFRESH_TOKEN"],
+    })
+    .await;
+    assert_eq!(
+        refreshed.values["OAUTH_ACCESS_TOKEN"],
+        "mock-dropbox-refreshed-access-token"
+    );
+    assert!(!refreshed.internal.contains_key("OAUTH_REFRESH_TOKEN"));
+    assert_eq!(refreshed.metadata["OAUTH_PROVIDER"], "dropbox");
+    revoke_dropbox_local_credential(RevokeDropboxLocalCredential {
+        http: &http,
+        base_url: &broker.base_url,
+        credential_id: &redeemed.metadata["OAUTH_BROKER_CREDENTIAL_ID"],
+        credential_secret: &redeemed.internal["OAUTH_BROKER_CREDENTIAL_SECRET"],
+        access_token: &redeemed.values["OAUTH_ACCESS_TOKEN"],
+        refresh_token: &redeemed.internal["OAUTH_REFRESH_TOKEN"],
+    })
+    .await;
+
+    let pool = sqlx::PgPool::connect(&database_url).await.unwrap();
+    let (grant_status,) =
+        sqlx::query_as::<_, (String,)>("SELECT status FROM local_oauth_grants WHERE id = $1::uuid")
+            .bind(&redeemed.metadata["OAUTH_BROKER_CREDENTIAL_ID"])
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(grant_status, "revoked");
+
+    let provider_requests = provider.finish();
+    assert_eq!(provider_requests.len(), 6);
+    let token_body = parse_urlencoded(&provider_requests[0].body);
+    assert_eq!(provider_requests[0].target, "/token");
+    assert_eq!(token_body["grant_type"], "authorization_code");
+    assert_eq!(token_body["code"], "dropbox-code");
+    assert_eq!(token_body["client_id"], "mock-dropbox-client-id");
+    assert_eq!(provider_requests[1].method, "POST");
+    assert_eq!(provider_requests[1].target, "/userinfo");
+    assert_eq!(
+        provider_requests[1].header("authorization"),
+        Some("Bearer mock-dropbox-access-token")
+    );
+
+    let refresh_body = parse_urlencoded(&provider_requests[2].body);
+    assert_eq!(provider_requests[2].target, "/token");
+    assert_eq!(refresh_body["grant_type"], "refresh_token");
+    assert_eq!(refresh_body["refresh_token"], "mock-dropbox-refresh-token");
+
+    assert_eq!(provider_requests[3].target, "/revoke");
+    assert_eq!(
+        provider_requests[3].header("authorization"),
+        Some("Bearer mock-dropbox-access-token")
+    );
+    assert!(provider_requests[3].body.is_empty());
+
+    let retry_refresh_body = parse_urlencoded(&provider_requests[4].body);
+    assert_eq!(provider_requests[4].target, "/token");
+    assert_eq!(retry_refresh_body["grant_type"], "refresh_token");
+    assert_eq!(
+        retry_refresh_body["refresh_token"],
+        "mock-dropbox-refresh-token"
+    );
+    assert_eq!(provider_requests[5].target, "/revoke");
+    assert_eq!(
+        provider_requests[5].header("authorization"),
+        Some("Bearer mock-dropbox-refreshed-access-token")
+    );
+}
+
 #[derive(Deserialize)]
 struct CreatedSession {
     session_id: String,
@@ -313,17 +470,21 @@ async fn create_session(args: CreateSession<'_>) -> CreatedSession {
 struct CreateLocalSession<'a> {
     http: &'a reqwest::Client,
     base_url: &'a str,
+    provider: &'a str,
+    domain: &'a str,
+    label: &'a str,
+    scopes: Vec<&'a str>,
     redeem_challenge: &'a str,
 }
 
-async fn create_google_local_session(args: CreateLocalSession<'_>) -> CreatedLocalSession {
+async fn create_local_session(args: CreateLocalSession<'_>) -> CreatedLocalSession {
     args.http
         .post(format!("{}/v1/local/oauth/sessions", args.base_url))
         .json(&json!({
-            "provider": "google",
-            "domain": "googleapis.com",
-            "label": "mock-google",
-            "scopes": ["https://www.googleapis.com/auth/drive.metadata.readonly"],
+            "provider": args.provider,
+            "domain": args.domain,
+            "label": args.label,
+            "scopes": args.scopes,
             "redeem_challenge": args.redeem_challenge,
             "redeem_challenge_method": "S256",
             "return_url": format!("{}/oauth-complete", args.base_url)
@@ -369,16 +530,17 @@ async fn redeem_local_session(args: RedeemLocalSession<'_>) -> RedeemedCredentia
 struct RefreshLocalCredential<'a> {
     http: &'a reqwest::Client,
     base_url: &'a str,
+    provider: &'a str,
     credential_id: &'a str,
     credential_secret: &'a str,
     refresh_token: &'a str,
 }
 
-async fn refresh_google_local_credential(args: RefreshLocalCredential<'_>) -> RedeemedCredential {
+async fn refresh_local_credential(args: RefreshLocalCredential<'_>) -> RedeemedCredential {
     args.http
         .post(format!("{}/v1/local/oauth/refresh", args.base_url))
         .json(&json!({
-            "provider": "google",
+            "provider": args.provider,
             "broker_credential_id": args.credential_id,
             "broker_credential_secret": args.credential_secret,
             "refresh_token": args.refresh_token
@@ -409,6 +571,32 @@ async fn revoke_google_local_credential(args: RevokeLocalCredential<'_>) {
             "provider": "google",
             "broker_credential_id": args.credential_id,
             "broker_credential_secret": args.credential_secret,
+            "refresh_token": args.refresh_token
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
+struct RevokeDropboxLocalCredential<'a> {
+    http: &'a reqwest::Client,
+    base_url: &'a str,
+    credential_id: &'a str,
+    credential_secret: &'a str,
+    access_token: &'a str,
+    refresh_token: &'a str,
+}
+
+async fn revoke_dropbox_local_credential(args: RevokeDropboxLocalCredential<'_>) {
+    let response = args
+        .http
+        .post(format!("{}/v1/local/oauth/revoke", args.base_url))
+        .json(&json!({
+            "provider": "dropbox",
+            "broker_credential_id": args.credential_id,
+            "broker_credential_secret": args.credential_secret,
+            "access_token": args.access_token,
             "refresh_token": args.refresh_token
         }))
         .send()
@@ -511,6 +699,8 @@ impl BrokerProcess {
             .env("GOOGLE_CLIENT_SECRET", "mock-google-client-secret")
             .env("GITHUB_CLIENT_ID", "mock-github-client-id")
             .env("GITHUB_CLIENT_SECRET", "mock-github-client-secret")
+            .env("DROPBOX_CLIENT_ID", "mock-dropbox-client-id")
+            .env("DROPBOX_CLIENT_SECRET", "mock-dropbox-client-secret")
             .env("BASE_URL", &base_url)
             .env("SFAE_SERVER_PORT", port.to_string())
             .env("SFAE_OAUTH_ALLOW_TEST_PROVIDER_URLS", "1")
@@ -544,6 +734,22 @@ impl BrokerProcess {
             )
             .env(
                 "GOOGLE_USERINFO_URL",
+                format!("{}/userinfo", args.provider_base_url),
+            )
+            .env(
+                "DROPBOX_AUTHORIZE_URL",
+                format!("{}/authorize", args.provider_base_url),
+            )
+            .env(
+                "DROPBOX_TOKEN_URL",
+                format!("{}/token", args.provider_base_url),
+            )
+            .env(
+                "DROPBOX_REVOKE_URL",
+                format!("{}/revoke", args.provider_base_url),
+            )
+            .env(
+                "DROPBOX_CURRENT_ACCOUNT_URL",
                 format!("{}/userinfo", args.provider_base_url),
             )
             .stdout(Stdio::null())
@@ -598,7 +804,9 @@ fn collect_provider_requests(
                 let request = read_http_request(&mut stream);
                 respond_to_provider_request(ProviderResponse {
                     stream: &mut stream,
+                    method: &request.method,
                     target: &request.target,
+                    authorization: request.header("authorization"),
                     body: &request.body,
                 });
                 requests.push(request);
@@ -679,7 +887,9 @@ fn content_length_from_headers(headers: &str) -> usize {
 
 struct ProviderResponse<'a> {
     stream: &'a mut TcpStream,
+    method: &'a str,
     target: &'a str,
+    authorization: Option<&'a str>,
     body: &'a str,
 }
 
@@ -688,7 +898,13 @@ fn respond_to_provider_request(args: ProviderResponse<'_>) {
         "/token" => {
             let body = parse_urlencoded(args.body);
             let response = if body.get("grant_type").map(String::as_str) == Some("refresh_token") {
-                r#"{"access_token":"mock-google-refreshed-access-token","token_type":"Bearer","expires_in":1800}"#
+                if body.get("client_id").map(String::as_str) == Some("mock-dropbox-client-id") {
+                    r#"{"access_token":"mock-dropbox-refreshed-access-token","token_type":"bearer","expires_in":1800}"#
+                } else {
+                    r#"{"access_token":"mock-google-refreshed-access-token","token_type":"Bearer","expires_in":1800}"#
+                }
+            } else if body.get("client_id").map(String::as_str) == Some("mock-dropbox-client-id") {
+                r#"{"access_token":"mock-dropbox-access-token","refresh_token":"mock-dropbox-refresh-token","token_type":"bearer","scope":"account_info.read files.metadata.read","expires_in":3600}"#
             } else if body.get("client_id").map(String::as_str) == Some("mock-google-client-id") {
                 r#"{"access_token":"mock-google-access-token","refresh_token":"mock-google-refresh-token","token_type":"Bearer","scope":"email profile https://www.googleapis.com/auth/drive.metadata.readonly","expires_in":3600}"#
             } else {
@@ -699,14 +915,31 @@ fn respond_to_provider_request(args: ProviderResponse<'_>) {
                 body: response,
             });
         }
-        "/userinfo" => write_json_response(ResponseBody {
-            stream: args.stream,
-            body: r#"{"id":"mock-user-123","username":"mockuser","global_name":"Mock User","sub":"mock-google-sub","name":"Mock Google User","email":"mock@example.test"}"#,
-        }),
-        "/revoke" => write_json_response(ResponseBody {
-            stream: args.stream,
-            body: r#"{}"#,
-        }),
+        "/userinfo" => {
+            let body = if args.method == "POST" {
+                r#"{"account_id":"dbid:mock-dropbox","name":{"display_name":"Mock Dropbox User"},"email":"dropbox@example.test"}"#
+            } else {
+                r#"{"id":"mock-user-123","username":"mockuser","global_name":"Mock User","sub":"mock-google-sub","name":"Mock Google User","email":"mock@example.test"}"#
+            };
+            write_json_response(ResponseBody {
+                stream: args.stream,
+                body,
+            });
+        }
+        "/revoke" => {
+            if args.authorization == Some("Bearer mock-dropbox-access-token") {
+                write_json_status_response(StatusResponse {
+                    stream: args.stream,
+                    status: 401,
+                    body: r#"{}"#,
+                });
+            } else {
+                write_json_response(ResponseBody {
+                    stream: args.stream,
+                    body: r#"{}"#,
+                });
+            }
+        }
         _ => write_not_found(args.stream),
     }
 }
@@ -716,9 +949,32 @@ struct ResponseBody<'a> {
     body: &'a str,
 }
 
+struct StatusResponse<'a> {
+    stream: &'a mut TcpStream,
+    status: u16,
+    body: &'a str,
+}
+
 fn write_json_response(args: ResponseBody<'_>) {
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        args.body.len(),
+        args.body
+    );
+    args.stream.write_all(response.as_bytes()).unwrap();
+    args.stream.flush().unwrap();
+}
+
+fn write_json_status_response(args: StatusResponse<'_>) {
+    let reason = if args.status == 401 {
+        "Unauthorized"
+    } else {
+        "Status"
+    };
+    let response = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        args.status,
+        reason,
         args.body.len(),
         args.body
     );
