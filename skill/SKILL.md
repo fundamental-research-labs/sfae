@@ -43,22 +43,15 @@ Check stored credentials for the API domain:
 sfae credentials github.com
 ```
 
-If the needed credential is missing, prompt the human with a JSON spec:
-
-```bash
-sfae prompt github.com --spec '{
-  "help_url": "https://github.com/settings/tokens",
-  "fields": ["ACCESS_TOKEN"]
-}'
-```
-
-After the prompt exits with a stored or connected credential message, send the HTTP request with placeholders:
+If the needed credential is missing, prompt the human using [Choosing Auth Method](#choosing-auth-method). After the prompt exits with a stored or connected credential message, send the request with placeholders:
 
 ```bash
 sfae request GET "https://api.github.com/user" \
   -H "Authorization: Bearer {ACCESS_TOKEN}" \
   -H "User-Agent: sfae"
 ```
+
+Use `{OAUTH_ACCESS_TOKEN}` instead when the human chose OAuth.
 
 For Postgres, store fields such as `HOST`, `PORT`, `DATABASE`, `USERNAME`, and `PASSWORD`, then put the SQL in `--data` and use `--protocol postgres`:
 
@@ -67,6 +60,41 @@ sfae request --protocol postgres QUERY "postgres://{USERNAME}:{PASSWORD}@{HOST}:
   --domain db.example.com \
   -d "select current_user"
 ```
+
+## Choosing Auth Method
+
+When credentials are missing, build the prompt spec from the human's words and the service's supported auth methods:
+
+- **Default for GitHub and Dropbox** — offer both access token and OAuth in `groups`, with access token first. Both providers accept app-generated bearer tokens and hosted OAuth; do not default to OAuth only.
+- **Human mentions an existing token** — `fields: ["ACCESS_TOKEN"]` only.
+- **Human asks to connect or authorize** — OAuth `groups` only.
+- **Discord and Google APIs** — OAuth only.
+
+GitHub:
+
+```bash
+sfae prompt github.com --spec '{
+  "help_url": "https://github.com/settings/tokens",
+  "groups": [
+    {"label": "Access Token", "fields": ["ACCESS_TOKEN"]},
+    {"label": "OAuth", "oauth": {"provider": "github", "scopes": ["read:user"]}}
+  ]
+}'
+```
+
+Dropbox:
+
+```bash
+sfae prompt dropboxapi.com --spec '{
+  "help_url": "https://www.dropbox.com/developers/apps",
+  "groups": [
+    {"label": "Access Token", "fields": ["ACCESS_TOKEN"]},
+    {"label": "OAuth", "oauth": {"provider": "dropbox", "scopes": ["account_info.read"]}}
+  ]
+}'
+```
+
+Request the narrowest OAuth scopes required by the task. For Dropbox account info, include `account_info.read`.
 
 ## Prompt Specs
 
@@ -137,7 +165,7 @@ Use these credential domains for hosted OAuth provider families:
 - `github.com` for GitHub, including `api.github.com`.
 - `dropboxapi.com` for Dropbox API hosts such as `api.dropboxapi.com`, `content.dropboxapi.com`, and `notify.dropboxapi.com`.
 
-Discord OAuth example:
+Discord:
 
 ```bash
 sfae prompt discord.com --spec '{
@@ -146,37 +174,31 @@ sfae prompt discord.com --spec '{
     "oauth": {"provider": "discord", "scopes": ["identify"]}
   }]
 }'
-```
 
-Then make requests with `{OAUTH_ACCESS_TOKEN}`:
-
-```bash
 sfae request GET "https://discord.com/api/v10/users/@me" \
   -H "Authorization: Bearer {OAUTH_ACCESS_TOKEN}"
 ```
 
-To request broader OAuth access, re-run `sfae prompt` with the same domain and label plus the full required scope set. If multiple credential sets remain, select one explicitly with `--cred` or `--label`.
-
-GitHub OAuth example:
+Google APIs:
 
 ```bash
-sfae prompt github.com --spec '{
+sfae prompt googleapis.com --spec '{
   "groups": [{
     "label": "OAuth",
-    "oauth": {"provider": "github", "scopes": ["read:user"]}
+    "oauth": {
+      "provider": "google",
+      "scopes": ["https://www.googleapis.com/auth/drive.metadata.readonly"]
+    }
   }]
 }'
 ```
 
-Dropbox OAuth example:
+Dropbox request example (after either auth method above):
 
 ```bash
-sfae prompt dropboxapi.com --spec '{
-  "groups": [{
-    "label": "OAuth",
-    "oauth": {"provider": "dropbox", "scopes": ["files.metadata.read"]}
-  }]
-}'
+sfae request POST "https://api.dropboxapi.com/2/users/get_current_account" \
+  --domain dropboxapi.com \
+  -H "Authorization: Bearer {ACCESS_TOKEN}"
 
 sfae request POST "https://api.dropboxapi.com/2/files/list_folder" \
   --domain dropboxapi.com \
@@ -184,6 +206,8 @@ sfae request POST "https://api.dropboxapi.com/2/files/list_folder" \
   -H "Content-Type: application/json" \
   -d "{\"path\":\"\"}"
 ```
+
+To request broader OAuth access, re-run `sfae prompt` with the same domain and label plus the full required scope set. If multiple credential sets remain, select one explicitly with `--cred` or `--label`.
 
 ## Verification Codes
 
