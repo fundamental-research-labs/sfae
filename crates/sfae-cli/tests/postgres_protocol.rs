@@ -301,6 +301,8 @@ fn wait_for_postgres(container: &PostgresContainer) {
                 "exec",
                 &container.name,
                 "pg_isready",
+                "-h",
+                "127.0.0.1",
                 "-U",
                 "sfae_owner",
                 "-d",
