@@ -20,6 +20,7 @@ use crate::store_factory::{create_store, uses_remote_store};
 pub enum Protocol {
     Http,
     Postgres,
+    Redis,
 }
 
 impl Protocol {
@@ -27,6 +28,7 @@ impl Protocol {
         match value {
             "http" => Ok(Self::Http),
             "postgres" => Ok(Self::Postgres),
+            "redis" => Ok(Self::Redis),
             other => anyhow::bail!("unsupported protocol: {other}"),
         }
     }
@@ -54,6 +56,7 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
     match args.opts.protocol {
         Protocol::Http => run_http(args),
         Protocol::Postgres => run_postgres(args),
+        Protocol::Redis => run_redis(args),
     }
 }
 
@@ -227,6 +230,82 @@ fn run_postgres(args: RunArgs<'_>) -> anyhow::Result<()> {
 
     println!("{}", serde_json::to_string_pretty(&response)?);
     Ok(())
+}
+
+fn run_redis(args: RunArgs<'_>) -> anyhow::Result<()> {
+    let RunArgs {
+        method,
+        url,
+        headers,
+        body,
+        opts,
+    } = args;
+
+    if !headers.is_empty() {
+        anyhow::bail!("headers are only supported for HTTP requests");
+    }
+    let domain = match opts.domain {
+        Some(d) => d.to_string(),
+        None => extract_host(url)
+            .ok_or_else(|| anyhow::anyhow!("cannot extract host from URL; use --domain"))?,
+    };
+    let args = parse_redis_args(body)?;
+
+    let store = create_store();
+    let lookup = CredentialLookup {
+        store: &*store,
+        domain: &domain,
+        username: opts.user,
+        cred_id: opts.cred_id,
+    };
+    let request = sfae_core::redis::RedisRequest {
+        url: url.to_string(),
+        command: method.to_uppercase(),
+        args,
+    };
+
+    if opts.dry_run {
+        let masked = sfae_core::redis::mask(sfae_core::redis::RedisRequestCtx {
+            lookup: &lookup,
+            request: &request,
+        })?;
+        println!("REDIS {} {}", masked.command, masked.url);
+        if !masked.args.is_empty() {
+            println!();
+            println!("{}", serde_json::to_string_pretty(&masked.args)?);
+        }
+        return Ok(());
+    }
+
+    if opts.verbose {
+        eprintln!("> REDIS {} {}", request.command, mask_placeholders(url));
+        if !request.args.is_empty() {
+            eprintln!("> [{} arg(s) present]", request.args.len());
+        }
+        eprintln!();
+    }
+
+    let start = Instant::now();
+    let response = sfae_core::redis::execute(sfae_core::redis::RedisRequestCtx {
+        lookup: &lookup,
+        request: &request,
+    })?;
+    let elapsed = start.elapsed();
+
+    if opts.verbose {
+        eprintln!("< Redis result ({:.1?})", elapsed);
+    }
+
+    println!("{}", serde_json::to_string_pretty(&response)?);
+    Ok(())
+}
+
+fn parse_redis_args(body: Option<&str>) -> anyhow::Result<Vec<String>> {
+    let Some(body) = body else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str::<Vec<String>>(body)
+        .map_err(|e| anyhow::anyhow!("Redis requests require --data as a JSON string array: {e}"))
 }
 
 /// Check whether any part of the request contains an `{OAUTH_ACCESS_TOKEN}` placeholder.

@@ -14,6 +14,7 @@ pub mod postgres;
 #[cfg(feature = "cli")]
 pub mod preview;
 pub mod proxy;
+pub mod redis;
 pub mod spec;
 pub mod store;
 #[cfg(feature = "cli")]

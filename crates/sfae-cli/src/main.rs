@@ -14,13 +14,13 @@ const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
   1. Read the target service's official online API and authentication docs to choose endpoints, auth method, scopes, and credential fields.
   2. Run `sfae credentials <domain>` to see stored credential sets for the service. If a suitable set exists, no human action is needed.
   3. If credentials are missing, run `sfae prompt <domain> --spec '<JSON>'` to ask the human to provide or authorize them. Treat `sfae prompt` as a blocking human-interaction step: credential collection can take as long as the human needs, so wait until the command exits. Do not impose an agent-side timeout, kill/retry it while waiting, or ask the human to paste secrets into chat. If multiple auth methods are acceptable, put several alternatives in the spec with preferred methods first. Use `sfae prompt --help` to learn the spec format.
-  4. Send requests with `sfae request ...` and `{KEY}` placeholders in URLs, headers, or bodies. HTTP is the default protocol; use `--protocol postgres` for Postgres SQL queries. SFAE resolves placeholders without revealing secret values to the agent.
+  4. Send requests with `sfae request ...` and `{KEY}` placeholders in URLs, headers, or bodies. HTTP is the default protocol; use `--protocol postgres` for Postgres SQL queries or `--protocol redis` for Redis commands. SFAE resolves placeholders without revealing secret values to the agent.
   5. If a provider asks for a short-lived 2FA/MFA code during a workflow, run `sfae code <domain>` and submit the code it prints. This intentionally returns only that transient code to the agent; it is not stored."#;
 
 #[cfg(not(feature = "native-keychain"))]
 const ROOT_AFTER_HELP: &str = r#"AGENT WORKFLOW:
   SFAE is a credential gateway for agents making authenticated requests to service APIs and databases.
-  `credentials` lists credential sets, `request` sends HTTP API requests by default with `{KEY}` placeholders resolved by SFAE, and `code` can request a transient 2FA/MFA code through the local browser.
+  `credentials` lists credential sets, `request` sends HTTP API requests by default and supports Postgres or Redis protocols with `{KEY}` placeholders resolved by SFAE, and `code` can request a transient 2FA/MFA code through the local browser.
   `prompt` and `delete` are not available in this build. Use the host integration's request_credential client tool when credentials are missing."#;
 
 /// Credential gateway for LLM agents making authenticated requests
@@ -117,6 +117,7 @@ EXAMPLES:
 const REQUEST_AFTER_HELP: &str = r#"AGENT RULES:
   Use this command for HTTP API calls by default. Read the target service's official API docs for methods, URLs, headers, bodies, and auth scheme.
   Use `--protocol postgres` for Postgres SQL queries over the Postgres wire protocol; put the SQL in `--data` and use QUERY as the request method.
+  Use `--protocol redis` for Redis commands; use the request method as the Redis command and put command args in `--data` as a JSON string array.
   Put `{KEY}` placeholders only where credential values belong. SFAE resolves `{ALLCAPS_NAME}` from the stored credential blob without printing secrets.
   If a domain has multiple credential sets, pick a UUID from `sfae credentials <domain>` and pass `--cred <uuid>`, or select a label with `--label <label>`.
   Use `--dry-run` to verify placeholder resolution before sending; dry-run output masks resolved credentials.
@@ -131,7 +132,7 @@ CREDENTIAL LOOKUP:
   `--label` selects a credential-set label in current stores. `--user` is accepted as a legacy alias.
 
 OUTPUT:
-  Prints the HTTP response body or a Postgres JSON result to stdout. Use --verbose for status/timing on stderr and --dry-run to preview a masked request.
+  Prints the HTTP response body, a Postgres JSON result, or a Redis JSON result to stdout. Use --verbose for status/timing on stderr and --dry-run to preview a masked request.
 
 EXAMPLES:
   Bearer token request:
@@ -163,7 +164,12 @@ EXAMPLES:
   Postgres query:
     sfae request --protocol postgres QUERY "postgres://{USERNAME}:{PASSWORD}@db.example.com/app" \
       --domain db.example.com \
-      -d "select current_user""#;
+      -d "select current_user"
+
+  Redis command:
+    sfae request --protocol redis SET "redis://:{PASSWORD}@{HOST}:{PORT}/0" \
+      --domain cache.example.com \
+      -d '["session:123","active"]'"#;
 
 const CODE_AFTER_HELP: &str = r#"AGENT RULES:
   Use this command only for short-lived verification codes requested by an active login or API workflow.
@@ -410,9 +416,9 @@ enum Command {
     #[command(after_help = REQUEST_AFTER_HELP)]
     Request {
         /// Request protocol. Defaults to HTTP.
-        #[arg(long, default_value = "http", value_parser = ["http", "postgres"])]
+        #[arg(long, default_value = "http", value_parser = ["http", "postgres", "redis"])]
         protocol: String,
-        /// HTTP method, or QUERY for Postgres
+        /// HTTP method, QUERY for Postgres, or Redis command
         method: String,
         /// Service URL from the provider's official docs
         url: String,
