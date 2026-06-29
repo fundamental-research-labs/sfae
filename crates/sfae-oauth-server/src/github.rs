@@ -141,15 +141,21 @@ pub(crate) async fn revoke_token(args: GitHubRevokeRequest<'_>) -> Result<(), St
     let params = [("access_token", token)];
     let response = http
         .delete(config.github_grant_url())
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("User-Agent", "sfae-oauth")
         .basic_auth(&config.github_client_id, Some(&config.github_client_secret))
         .json(&params_map(&params))
         .send()
         .await
-        .map_err(|e| format!("provider revoke request failed: {e}"))?;
+        .map_err(|e| {
+            tracing::warn!("GitHub token revoke request failed: {e}");
+            "provider_revoke_request_failed".to_string()
+        })?;
     if !response.status().is_success() {
         let status = response.status();
         tracing::warn!("GitHub token revoke rejected: {status}");
-        return Err(format!("provider_revoke_status_{status}"));
+        return Err(format!("provider_revoke_status_{}", status.as_u16()));
     }
     Ok(())
 }
@@ -226,8 +232,14 @@ fn params_map(params: &[(&str, &str)]) -> std::collections::HashMap<String, Stri
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc;
+    use std::thread;
 
     use super::*;
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
     use url::Url;
 
     fn test_config() -> Config {
@@ -357,5 +369,180 @@ mod tests {
             email: None,
         };
         assert_eq!(login_only.display_name(), "octocat");
+    }
+
+    #[tokio::test]
+    async fn revoke_uses_github_grant_endpoint_headers_auth_body_and_status() {
+        let server = MockHttpServer::start(vec![
+            MockResponse {
+                status: 204,
+                body: String::new(),
+            },
+            MockResponse {
+                status: 401,
+                body: r#"{"message":"bad credentials"}"#.to_string(),
+            },
+        ]);
+        let mut config = test_config();
+        config.github_api_url = Url::parse(&server.base_url).unwrap();
+        let http = reqwest::Client::new();
+
+        revoke_token(GitHubRevokeRequest {
+            http: &http,
+            config: &config,
+            token: "access-token",
+        })
+        .await
+        .unwrap();
+        let err = revoke_token(GitHubRevokeRequest {
+            http: &http,
+            config: &config,
+            token: "rejected-token",
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(err, "provider_revoke_status_401");
+
+        let requests = server.finish();
+        assert_eq!(requests.len(), 2);
+        let expected_auth = format!(
+            "Basic {}",
+            STANDARD.encode("github-client-id:github-client-secret")
+        );
+        for request in &requests {
+            assert_eq!(request.method, "DELETE");
+            assert_eq!(request.target, "/applications/github-client-id/grant");
+            assert_eq!(
+                request.header("accept"),
+                Some("application/vnd.github+json")
+            );
+            assert_eq!(request.header("x-github-api-version"), Some("2022-11-28"));
+            assert_eq!(request.header("user-agent"), Some("sfae-oauth"));
+            assert_eq!(
+                request.header("authorization"),
+                Some(expected_auth.as_str())
+            );
+        }
+        let first_body: HashMap<String, String> = serde_json::from_str(&requests[0].body).unwrap();
+        let second_body: HashMap<String, String> = serde_json::from_str(&requests[1].body).unwrap();
+        assert_eq!(first_body["access_token"], "access-token");
+        assert_eq!(second_body["access_token"], "rejected-token");
+    }
+
+    struct MockResponse {
+        status: u16,
+        body: String,
+    }
+
+    struct CapturedRequest {
+        method: String,
+        target: String,
+        headers: HashMap<String, String>,
+        body: String,
+    }
+
+    impl CapturedRequest {
+        fn header(&self, name: &str) -> Option<&str> {
+            self.headers.get(name).map(String::as_str)
+        }
+    }
+
+    struct MockHttpServer {
+        base_url: String,
+        requests: mpsc::Receiver<CapturedRequest>,
+        handle: thread::JoinHandle<()>,
+    }
+
+    impl MockHttpServer {
+        fn start(responses: Vec<MockResponse>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let base_url = format!("http://{}", listener.local_addr().unwrap());
+            let (tx, rx) = mpsc::channel();
+            let handle = thread::spawn(move || {
+                for response in responses {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let request = read_request(&mut stream);
+                    tx.send(request).unwrap();
+                    write_response(&mut stream, response);
+                }
+            });
+            Self {
+                base_url,
+                requests: rx,
+                handle,
+            }
+        }
+
+        fn finish(self) -> Vec<CapturedRequest> {
+            self.handle.join().unwrap();
+            self.requests.try_iter().collect()
+        }
+    }
+
+    fn read_request(stream: &mut TcpStream) -> CapturedRequest {
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 1024];
+        let header_end = loop {
+            let read = stream.read(&mut buf).unwrap();
+            assert!(read > 0, "connection closed before headers");
+            raw.extend_from_slice(&buf[..read]);
+            if let Some(pos) = raw.windows(4).position(|window| window == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let header_text = String::from_utf8_lossy(&raw[..header_end]).to_string();
+        let content_length = content_length_from_headers(&header_text);
+        while raw.len() < header_end + content_length {
+            let read = stream.read(&mut buf).unwrap();
+            assert!(read > 0, "connection closed before body");
+            raw.extend_from_slice(&buf[..read]);
+        }
+
+        let mut lines = header_text.lines();
+        let request_line = lines.next().unwrap_or_default();
+        let mut request_parts = request_line.split_whitespace();
+        let method = request_parts.next().unwrap_or_default().to_string();
+        let target = request_parts.next().unwrap_or_default().to_string();
+        let headers = lines
+            .filter_map(|line| line.split_once(':'))
+            .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
+            .collect();
+        let body =
+            String::from_utf8_lossy(&raw[header_end..header_end + content_length]).to_string();
+        CapturedRequest {
+            method,
+            target,
+            headers,
+            body,
+        }
+    }
+
+    fn content_length_from_headers(headers: &str) -> usize {
+        headers
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find_map(|(name, value)| {
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().unwrap())
+            })
+            .unwrap_or(0)
+    }
+
+    // xtask: allow-multi-param - test helper pairs stream with response data
+    fn write_response(stream: &mut TcpStream, response: MockResponse) {
+        let reason = match response.status {
+            204 => "No Content",
+            401 => "Unauthorized",
+            _ => "Status",
+        };
+        let http = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response.status,
+            reason,
+            response.body.len(),
+            response.body
+        );
+        stream.write_all(http.as_bytes()).unwrap();
+        stream.flush().unwrap();
     }
 }

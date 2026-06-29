@@ -699,17 +699,51 @@ fn send_request<B: ureq::AsSendBody>(args: SendRequest<'_, B>) -> Result<String,
         .body_mut()
         .read_to_string()
         .map_err(|e| SfaeError::StoreError(format!("failed to read OAuth response: {e}")))?;
+    let body_preview = sanitized_error_body_preview(&body);
     if status == 401 || status == 403 {
         return Err(SfaeError::StoreError(format!(
-            "{service} rejected OAuth request: {status}"
+            "{} rejected OAuth request: {status}{}",
+            service,
+            body_preview.unwrap_or_default()
         )));
     }
     if status >= 400 {
         return Err(SfaeError::StoreError(format!(
-            "{service} returned {status}"
+            "{} returned {status}{}",
+            service,
+            body_preview.unwrap_or_default()
         )));
     }
     Ok(body)
+}
+
+fn sanitized_error_body_preview(body: &str) -> Option<String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() || trimmed.starts_with('{') || trimmed.starts_with('[') {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    for marker in [
+        "access_token",
+        "refresh_token",
+        "credential_secret",
+        "broker_secret",
+        "authorization",
+        "provider-code",
+    ] {
+        if lower.contains(marker) {
+            return None;
+        }
+    }
+    let single_line = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+    if single_line.is_empty() {
+        return None;
+    }
+    let mut preview: String = single_line.chars().take(160).collect();
+    if single_line.chars().count() > 160 {
+        preview.push_str("...");
+    }
+    Some(format!(": {preview}"))
 }
 
 // xtask: allow-multi-param - small HTTP request builder helper
