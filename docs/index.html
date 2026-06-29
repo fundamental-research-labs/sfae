@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SFAE — Speak Friend, and Enter</title>
-  <meta name="description" content="SFAE lets AI coding agents make authenticated API calls without ever seeing your credentials.">
+  <meta name="description" content="SFAE lets AI agents talk to services without ever seeing your credentials.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
@@ -204,57 +204,14 @@
     .method-badge {
       flex: 0 0 auto;
       padding: 2px 7px;
-      border: 1px solid var(--accent);
-      border-radius: 999px;
+      border: 1px solid #c9ead8;
+      border-radius: 4px;
+      background: #f3fbf6;
       color: var(--accent);
       font-size: 0.62rem;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-    }
-
-    .method-badge.steel {
-      position: relative;
-      border-color: #9aa0a4;
-      color: #3f484d;
-    }
-
-    @supports ((background-clip: text) or (-webkit-background-clip: text)) {
-      .method-badge.steel {
-        color: transparent;
-        background-image:
-          radial-gradient(ellipse 48px 28px at 20% 38%, rgba(118, 137, 164, 0.52), rgba(88, 104, 130, 0.1) 58%, rgba(88, 104, 130, 0) 72%),
-          linear-gradient(112deg, #2f383d 0%, #53636d 34%, #8d98a6 49%, #686b8f 58%, #344047 100%);
-        background-size: 96px 120%, 110px 100%;
-        background-position: 0 50%, 0 50%;
-        background-repeat: repeat-x;
-        background-clip: text;
-        -webkit-background-clip: text;
-        animation: badge-titanium-loop 7s ease-in-out infinite;
-      }
-    }
-
-    @supports ((-webkit-mask-composite: xor) or (mask-composite: exclude)) {
-      .method-badge.steel {
-        border-color: transparent;
-      }
-
-      .method-badge.steel::before {
-        content: '';
-        position: absolute;
-        inset: 0;
-        border-radius: inherit;
-        padding: 1px;
-        pointer-events: none;
-        background-image: linear-gradient(112deg, #758189 0%, #a2adb4 28%, #aaaec3 48%, #7e8ca0 60%, #758189 100%);
-        background-size: 180px 100%;
-        animation: steel-border-loop 7s ease-in-out infinite;
-        -webkit-mask:
-          linear-gradient(#000 0 0) content-box,
-          linear-gradient(#000 0 0);
-        -webkit-mask-composite: xor;
-        mask-composite: exclude;
-      }
     }
 
     .method-desc {
@@ -341,19 +298,22 @@
     .target-hint {
       min-height: 1.4em;
       margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 4px;
+      background: rgba(42, 107, 74, 0.08);
       font-size: 0.7rem;
-      color: var(--text-tertiary);
+      color: var(--accent);
       font-weight: 300;
     }
 
     .target-command {
-      color: var(--text-tertiary);
+      color: var(--accent);
       overflow-wrap: anywhere;
     }
 
     .typewriter {
-      color: var(--text);
-      border-right: 1px solid var(--steel-dark);
+      color: var(--accent);
+      border-right: 1px solid var(--accent);
       padding-right: 2px;
     }
 
@@ -411,7 +371,6 @@
     /* Footer */
     footer {
       padding: 32px 0;
-      border-top: 1px solid var(--border);
       text-align: center;
       font-size: 0.7rem;
       color: var(--text-tertiary);
@@ -426,6 +385,12 @@
       gap: 8px;
     }
 
+    .footer-title {
+      margin-bottom: 10px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
     footer a {
       color: var(--text-tertiary);
       text-decoration: none;
@@ -435,18 +400,27 @@
       color: var(--text);
     }
 
-    .repo-link {
+    .footer-link {
       display: inline-flex;
       align-items: center;
       gap: 6px;
       font-weight: 500;
     }
 
-    .repo-link svg {
+    .footer-link svg {
       width: 14px;
       height: 14px;
-      fill: currentColor;
       flex: 0 0 auto;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .footer-link .github-icon {
+      fill: currentColor;
+      stroke: none;
     }
 
     .footer-divider {
@@ -471,24 +445,8 @@
       to { background-position: 360px 50%, 580px 50%, 360px 50%; }
     }
 
-    @keyframes badge-titanium-loop {
-      from { background-position: 0 50%, 0 50%; }
-      30% { background-position: 28px 32%, 36px 50%; }
-      62% { background-position: 70px 70%, 78px 50%; }
-      to { background-position: 96px 50%, 110px 50%; }
-    }
-
-    @keyframes steel-border-loop {
-      from { background-position: 0 50%; }
-      35% { background-position: 68px 50%; }
-      72% { background-position: 132px 50%; }
-      to { background-position: 180px 50%; }
-    }
-
     @media (prefers-reduced-motion: reduce) {
-      .hero h1,
-      .method-badge.steel,
-      .method-badge.steel::before {
+      .hero h1 {
         animation: none;
       }
 
@@ -544,9 +502,9 @@
           <line x1="24" y1="33.5" x2="24" y2="37" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
       </div>
-      <h1>Your agent makes API calls.<br>It never sees your keys.</h1>
+      <h1>Let your agent talk to any service.<br>It never sees your keys.</h1>
       <p class="subheadline">
-        Credentials stay in your secret storage. Agents use placeholders.
+        Credentials stay in your secret storage.
         Secrets never hit the context window.
       </p>
     </section>
@@ -557,7 +515,7 @@
       <ul class="features">
         <li>
           <strong>Keychain-native storage</strong><br>
-          <span>macOS Keychain, Windows Credential Manager, Linux Secret Service. Not env vars.</span>
+          <span>macOS Keychain, Windows Credential Manager, Linux Secret Service...</span>
         </li>
         <li>
           <strong>All sorts of credentials</strong><br>
@@ -565,30 +523,7 @@
         </li>
         <li>
           <strong>Communication protocols</strong><br>
-          <span>HTTP by default, plus Postgres and Redis with protocol-aware execution.</span>
-        </li>
-      </ul>
-    </section>
-
-    <!-- Roadmap -->
-    <section>
-      <h2 class="section-title">Roadmap</h2>
-      <ul class="features">
-        <li>
-          <strong><a href="https://github.com/fundamental-research-labs/sfae/issues/60">MySQL / MariaDB</a></strong><br>
-          <span>Native queries for MySQL-compatible production databases.</span>
-        </li>
-        <li>
-          <strong><a href="https://github.com/fundamental-research-labs/sfae/issues/62">MongoDB</a></strong><br>
-          <span>Document and aggregation workflows with credential-safe connection strings.</span>
-        </li>
-        <li>
-          <strong><a href="https://github.com/fundamental-research-labs/sfae/issues/61">Microsoft SQL Server / TDS</a></strong><br>
-          <span>Enterprise SQL Server and Azure SQL access through the trusted runtime.</span>
-        </li>
-        <li>
-          <strong><a href="https://github.com/fundamental-research-labs/sfae/issues/31">ClickHouse</a></strong><br>
-          <span>Analytics queries without exposing database credentials to agents.</span>
+          <span>HTTP, Postgres, Redis, and more.</span>
         </li>
       </ul>
     </section>
@@ -600,9 +535,9 @@
         <li class="recommended">
           <div class="method-heading">
             <div class="method-title">Just install the SFAE skill</div>
-            <div class="method-badge steel">Recommended</div>
+            <div class="method-badge">Recommended</div>
           </div>
-          <p class="method-desc">Adds the SFAE skill to your project. It can install the CLI when needed.</p>
+          <p class="method-desc">Adds the SFAE skill to your project. Then you can prompt your agent to access services.</p>
           <div class="command-row">
             <pre><code>curl -fsSL https://sfae.io/install-skill.sh | sh</code></pre>
             <button class="copy-button" type="button" data-copy="curl -fsSL https://sfae.io/install-skill.sh | sh" aria-label="Copy skill install command">
@@ -619,7 +554,7 @@
         </li>
         <li>
           <div class="method-title">Skill plus CLI</div>
-          <p class="method-desc">Install the skill and immediately install the CLI through Homebrew, npm, or the direct release installer.</p>
+          <p class="method-desc">Install the skill + CLI through Homebrew, npm, or the direct release installer.</p>
           <div class="command-row">
             <pre><code>curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --install-cli</code></pre>
             <button class="copy-button" type="button" data-copy="curl -fsSL https://sfae.io/install-skill.sh | sh -s -- --install-cli" aria-label="Copy skill and CLI install command">
@@ -635,7 +570,6 @@
         </li>
         <li>
           <div class="method-title">CLI only</div>
-          <p class="method-desc">Use Homebrew first. npm installs the same native CLI through the published package; the direct installer is the fallback.</p>
           <div class="command-list">
             <div class="command-item">
               <div class="command-label">Homebrew</div>
@@ -716,21 +650,54 @@
 
     <!-- Footer -->
     <footer>
+      <div class="footer-title">SFAE: Speak Friend, and Enter</div>
       <div class="footer-main">
-        <a class="repo-link" href="https://github.com/fundamental-research-labs/sfae" aria-label="SFAE on GitHub">
-          <svg viewBox="0 0 16 16" aria-hidden="true">
+        <a class="footer-link" href="https://github.com/fundamental-research-labs/sfae" aria-label="SFAE on Github">
+          <svg class="github-icon" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4 0-.2-.01-.86-.01-1.56-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.16-.68-.55-.01-.56.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.43 7.43 0 0 1 8 3.96c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.26.54.75.54 1.52 0 1.09-.01 1.97-.01 2.24 0 .22.15.48.55.4A8.13 8.13 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"/>
           </svg>
-          <span>SFAE on GitHub</span>
+          <span>Github</span>
         </a>
         <span class="footer-divider">/</span>
-        <span>Speak Friend, and Enter</span>
+        <a class="footer-link" href="https://github.com/fundamental-research-labs/sfae#roadmap" aria-label="Roadmap on Github">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3Z"/>
+            <path d="M9 3v15"/>
+            <path d="M15 6v15"/>
+          </svg>
+          <span>Roadmap</span>
+        </a>
         <span class="footer-divider">/</span>
-        <a href="https://fundamentalresearchlabs.com/">Fundamental Research Labs</a>
+        <a class="footer-link" href="https://fundamentalresearchlabs.com/">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 21h18"/>
+            <path d="M5 21V7l8-4v18"/>
+            <path d="M19 21V11l-6-3"/>
+            <path d="M9 9h1"/>
+            <path d="M9 13h1"/>
+            <path d="M9 17h1"/>
+          </svg>
+          <span>Fundamental Research Labs</span>
+        </a>
         <span class="footer-divider">/</span>
-        <a href="/privacy/">Privacy</a>
+        <a class="footer-link" href="/privacy/">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="5" y="11" width="14" height="10" rx="2"/>
+            <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+          </svg>
+          <span>Privacy</span>
+        </a>
         <span class="footer-divider">/</span>
-        <a href="/terms/">Terms</a>
+        <a class="footer-link" href="/terms/">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/>
+            <path d="M14 2v6h6"/>
+            <path d="M16 13H8"/>
+            <path d="M16 17H8"/>
+            <path d="M10 9H8"/>
+          </svg>
+          <span>Terms</span>
+        </a>
       </div>
       <div class="version">Latest release <a href="__RELEASE_URL__">__VERSION__</a></div>
     </footer>
