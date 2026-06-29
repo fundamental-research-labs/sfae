@@ -1,6 +1,6 @@
 ---
 name: sfae
-description: Use the SFAE CLI when an agent needs to call external APIs or databases that require authentication, collect credentials from the human without seeing secrets, reuse stored credential sets, request short-lived verification codes, or make HTTP/Postgres requests with secret placeholders resolved outside chat.
+description: Use the SFAE CLI when an agent needs to call external APIs or databases that require authentication, collect credentials from the human without seeing secrets, reuse stored credential sets, request short-lived verification codes, or make HTTP/Postgres/Redis requests with secret placeholders resolved outside chat.
 ---
 
 # SFAE API Credentials
@@ -68,6 +68,18 @@ sfae request --protocol postgres QUERY "postgres://{USERNAME}:{PASSWORD}@{HOST}:
   -d "select current_user"
 ```
 
+For Redis, store fields such as `HOST`, `PORT`, and `PASSWORD`, then use the request method as the Redis command and put command arguments in `--data` as a JSON string array:
+
+```bash
+sfae request --protocol redis SET "redis://:{PASSWORD}@{HOST}:{PORT}/0" \
+  --domain cache.example.com \
+  -d '["session:123","active"]'
+
+sfae request --protocol redis GET "redis://:{PASSWORD}@{HOST}:{PORT}/0" \
+  --domain cache.example.com \
+  -d '["session:123"]'
+```
+
 ## Prompt Specs
 
 Use `fields` for credentials that are always shown:
@@ -109,7 +121,7 @@ Top-level `fields` remain visible with every group.
 
 ## Placeholders And Selection
 
-Use any stored credential key as a placeholder in URLs, headers, bodies, or Postgres SQL text:
+Use any stored credential key as a placeholder in URLs, headers, bodies, Postgres SQL text, Redis connection URLs, or Redis command arguments:
 
 - `{ACCESS_TOKEN}` for personal access tokens
 - `{API_KEY}` for API keys

@@ -10,7 +10,7 @@ SFAE lets AI coding agents make authenticated API calls and database queries wit
 
 - **Secret-manager storage** — macOS Keychain, Windows Credential Manager, Linux Secret Service, or an authenticated SFAE backend.
 - **Credentials agents can request safely** — API keys, Basic Auth, OAuth 2.0, and more.
-- **Communication protocols** — HTTP by default, plus Postgres with `--protocol postgres`.
+- **Communication protocols** — HTTP by default, plus Postgres and Redis with `--protocol`.
 
 ## Install
 
@@ -46,7 +46,7 @@ The agent checks which credentials exist, opens a web form when something is mis
 
 1. The agent reads the service's official API/auth docs and checks for stored credentials.
 2. SFAE offers you a web form for anything missing.
-3. The agent makes HTTP or Postgres requests with placeholders, and SFAE resolves them from secret storage.
+3. The agent makes HTTP, Postgres, or Redis requests with placeholders, and SFAE resolves them from secret storage.
 
 ## Roadmap
 
@@ -54,7 +54,6 @@ The agent checks which credentials exist, opens a web form when something is mis
 | --- | --- |
 | Authentication | [x.509 certificate authentication](https://github.com/fundamental-research-labs/sfae/issues/27) |
 | Protocols | [Support ClickHouse](https://github.com/fundamental-research-labs/sfae/issues/31) |
-| Protocols | [Support Redis](https://github.com/fundamental-research-labs/sfae/issues/52) |
 | Product | [Add a credential management UI](https://github.com/fundamental-research-labs/sfae/issues/12) |
 
 ## License
