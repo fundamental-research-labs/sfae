@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+shopt -u patsub_replacement 2>/dev/null || true
 
 script_dir="$(CDPATH= cd "$(dirname "$0")/.." && pwd)"
 
@@ -26,13 +27,29 @@ mkdir -p "$stage/skill"
 cp "$script_dir/skill/SKILL.md" "$stage/skill/SKILL.md"
 cp "$script_dir/skill/install.sh" "$stage/skill/install.sh"
 
-VERSION="$version" RELEASE_URL="$release_url" perl -0pi -e '
-  s/__VERSION__/$ENV{"VERSION"}/g;
-  s#__RELEASE_URL__#$ENV{"RELEASE_URL"}#g;
-' "$stage/index.html"
+if compgen -G "$script_dir/docs/pages/*.md" >/dev/null; then
+  "$script_dir/scripts/render-markdown-pages.sh" \
+    "$script_dir/docs/pages" \
+    "$stage" \
+    "$script_dir/docs/page-template.html"
+  rm -rf "$stage/pages" "$stage/page-template.html"
+fi
 
-if grep -R "__VERSION__\|__RELEASE_URL__" "$stage/index.html" >/dev/null; then
-  echo "Unresolved page placeholders remain in $stage/index.html" >&2
+replace_placeholders() {
+  local file="$1"
+  local content
+  content="$(<"$file")"
+  content="${content//__VERSION__/$version}"
+  content="${content//__RELEASE_URL__/$release_url}"
+  printf '%s' "$content" > "$file"
+}
+
+while IFS= read -r -d '' html_file; do
+  replace_placeholders "$html_file"
+done < <(find "$stage" -name '*.html' -print0)
+
+if grep -R "__VERSION__\|__RELEASE_URL__" "$stage" >/dev/null; then
+  echo "Unresolved page placeholders remain in $stage" >&2
   exit 1
 fi
 
