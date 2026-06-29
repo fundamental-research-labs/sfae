@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{TITLE}} - SFAE</title>
+  <meta name="description" content="{{DESCRIPTION}}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #fafafa;
+      --surface: #ffffff;
+      --border: #e2e2e2;
+      --text: #1a1a1a;
+      --text-secondary: #555555;
+      --text-tertiary: #888888;
+      --accent: #2a6b4a;
+      --code-bg: #f0f0f0;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+      position: relative;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.03;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+
+    .container {
+      width: min(760px, calc(100% - 48px));
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 28px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.76rem;
+    }
+
+    .brand {
+      color: var(--text);
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    nav {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 14px;
+    }
+
+    a {
+      color: var(--text);
+      text-decoration: none;
+      border-bottom: 1px solid var(--border);
+    }
+
+    a:hover,
+    a:focus-visible {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      outline: none;
+    }
+
+    nav a,
+    footer a,
+    .brand {
+      border-bottom: 0;
+    }
+
+    main {
+      padding: 56px 0 72px;
+    }
+
+    .updated {
+      margin-bottom: 28px;
+      color: var(--text-tertiary);
+      font-size: 0.72rem;
+    }
+
+    h1 {
+      margin-bottom: 10px;
+      font-size: 1.45rem;
+      line-height: 1.35;
+      font-weight: 600;
+    }
+
+    h2 {
+      margin: 42px 0 12px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+      font-size: 0.86rem;
+      line-height: 1.45;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-tertiary);
+    }
+
+    p,
+    li {
+      font-size: 0.84rem;
+      color: var(--text-secondary);
+      font-weight: 300;
+    }
+
+    p {
+      margin: 13px 0;
+    }
+
+    ul,
+    ol {
+      margin: 12px 0 18px;
+      padding-left: 22px;
+    }
+
+    li {
+      margin: 8px 0;
+    }
+
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78em;
+      color: var(--text);
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+
+    footer {
+      padding: 28px 0 36px;
+      border-top: 1px solid var(--border);
+      color: var(--text-tertiary);
+      font-size: 0.7rem;
+    }
+
+    .footer-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .footer-divider {
+      color: var(--border);
+    }
+
+    @media (max-width: 520px) {
+      .container {
+        width: min(100% - 32px, 760px);
+      }
+
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      nav {
+        justify-content: flex-start;
+      }
+
+      main {
+        padding: 42px 0 56px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <a class="brand" href="/">sfae</a>
+      <nav aria-label="Site">
+        <a href="/privacy/">Privacy</a>
+        <a href="/terms/">Terms</a>
+        <a href="https://github.com/fundamental-research-labs/sfae">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <div class="updated">Updated {{UPDATED}}</div>
+      {{CONTENT}}
+    </main>
+
+    <footer>
+      <div class="footer-row">
+        <span>SFAE</span>
+        <span class="footer-divider">/</span>
+        <a href="https://fundamentalresearchlabs.com/">Fundamental Research Labs</a>
+        <span class="footer-divider">/</span>
+        <span>Latest release <a href="__RELEASE_URL__">__VERSION__</a></span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
