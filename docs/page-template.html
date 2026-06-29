@@ -61,9 +61,19 @@
     }
 
     .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       color: var(--text);
       font-weight: 600;
       text-decoration: none;
+    }
+
+    .brand-logo {
+      display: block;
+      width: 20px;
+      height: auto;
+      flex: 0 0 auto;
     }
 
     nav {
@@ -153,23 +163,7 @@
       padding: 1px 4px;
     }
 
-    footer {
-      padding: 28px 0 36px;
-      border-top: 1px solid var(--border);
-      color: var(--text-tertiary);
-      font-size: 0.7rem;
-    }
-
-    .footer-row {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .footer-divider {
-      color: var(--border);
-    }
+{{FOOTER_STYLES}}
 
     @media (max-width: 520px) {
       .container {
@@ -194,7 +188,10 @@
 <body>
   <div class="container">
     <header>
-      <a class="brand" href="/">sfae</a>
+      <a class="brand" href="/">
+        <img class="brand-logo" src="/logo.svg" alt="" aria-hidden="true">
+        <span>SFAE</span>
+      </a>
       <nav aria-label="Site">
         <a href="/privacy/">Privacy</a>
         <a href="/terms/">Terms</a>
@@ -207,15 +204,7 @@
       {{CONTENT}}
     </main>
 
-    <footer>
-      <div class="footer-row">
-        <span>SFAE</span>
-        <span class="footer-divider">/</span>
-        <a href="https://fundamentalresearchlabs.com/">Fundamental Research Labs</a>
-        <span class="footer-divider">/</span>
-        <span>Latest release <a href="__RELEASE_URL__">__VERSION__</a></span>
-      </div>
-    </footer>
+{{FOOTER}}
   </div>
 </body>
 </html>
