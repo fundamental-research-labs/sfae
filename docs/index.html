@@ -20,7 +20,6 @@
       --accent: #2a6b4a;
       --accent-light: #e8f5ee;
       --code-bg: #f0f0f0;
-      --steel-dark: #4d5559;
     }
 
     * {
@@ -64,14 +63,11 @@
       text-align: center;
     }
 
-    .hero-icon {
-      display: inline-block;
-      margin-bottom: 32px;
-    }
-
-    .hero-icon svg {
-      width: 48px;
-      height: 48px;
+    .hero-logo {
+      display: block;
+      width: 83px;
+      height: auto;
+      margin: 0 auto 32px;
     }
 
     .hero h1 {
@@ -80,22 +76,6 @@
       letter-spacing: 0;
       margin-bottom: 16px;
       color: var(--text);
-    }
-
-    @supports ((background-clip: text) or (-webkit-background-clip: text)) {
-      .hero h1 {
-        color: transparent;
-        background-image:
-          radial-gradient(ellipse 150px 90px at 18% 38%, rgba(134, 152, 178, 0.56), rgba(86, 103, 128, 0.18) 36%, rgba(86, 103, 128, 0) 64%),
-          radial-gradient(ellipse 210px 110px at 76% 62%, rgba(143, 118, 156, 0.4), rgba(104, 88, 123, 0.12) 44%, rgba(104, 88, 123, 0) 70%),
-          linear-gradient(112deg, #101315 0%, #1b2227 16%, #34424b 31%, #687a86 43%, #96a5ad 50%, #7d7f9d 56%, #65778a 64%, #29343b 78%, #101315 100%);
-        background-size: 360px 140%, 460px 150%, 360px 100%;
-        background-position: 0 50%, 120px 50%, 0 50%;
-        background-repeat: repeat-x;
-        background-clip: text;
-        -webkit-background-clip: text;
-        animation: hero-steel-loop 8s ease-in-out infinite;
-      }
     }
 
     .hero .subheadline {
@@ -368,88 +348,10 @@
       font-family: 'JetBrains Mono', monospace;
     }
 
-    /* Footer */
-    footer {
-      padding: 32px 0;
-      text-align: center;
-      font-size: 0.7rem;
-      color: var(--text-tertiary);
-      font-weight: 300;
-    }
-
-    .footer-main {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .footer-title {
-      margin-bottom: 10px;
-      color: var(--text-secondary);
-      font-weight: 500;
-    }
-
-    footer a {
-      color: var(--text-tertiary);
-      text-decoration: none;
-    }
-
-    footer a:hover {
-      color: var(--text);
-    }
-
-    .footer-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-weight: 500;
-    }
-
-    .footer-link svg {
-      width: 14px;
-      height: 14px;
-      flex: 0 0 auto;
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 1.8;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    .footer-link .github-icon {
-      fill: currentColor;
-      stroke: none;
-    }
-
-    .footer-divider {
-      color: var(--border);
-    }
-
-    .version {
-      margin-top: 8px;
-    }
-
-    .version a {
-      border-bottom: 1px solid currentColor;
-    }
+{{FOOTER_STYLES}}
 
     /* Responsive */
-    @keyframes hero-steel-loop {
-      from { background-position: 0 50%, 120px 50%, 0 50%; }
-      18% { background-position: 74px 30%, 188px 72%, 82px 50%; }
-      43% { background-position: 156px 66%, 302px 34%, 176px 50%; }
-      68% { background-position: 248px 38%, 432px 78%, 276px 50%; }
-      84% { background-position: 314px 58%, 512px 44%, 332px 50%; }
-      to { background-position: 360px 50%, 580px 50%, 360px 50%; }
-    }
-
     @media (prefers-reduced-motion: reduce) {
-      .hero h1 {
-        animation: none;
-      }
-
       .typewriter {
         border-right: 0;
       }
@@ -494,14 +396,7 @@
 
     <!-- Hero -->
     <section class="hero">
-      <div class="hero-icon">
-        <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="12" y="20" width="24" height="20" rx="3" stroke="currentColor" stroke-width="2.5" fill="none"/>
-          <path d="M18 20V14a6 6 0 1 1 12 0v6" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-          <circle cx="24" cy="31" r="2.5" fill="currentColor"/>
-          <line x1="24" y1="33.5" x2="24" y2="37" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-        </svg>
-      </div>
+      <img class="hero-logo" src="logo.svg" alt="SFAE logo">
       <h1>Give your agent access to any service.<br>Keep your keys out of sight.</h1>
       <p class="subheadline">
         Credentials stay in your secret storage.<br>
@@ -648,59 +543,7 @@
       </ol>
     </section>
 
-    <!-- Footer -->
-    <footer>
-      <div class="footer-title">SFAE: Speak Friend, and Enter</div>
-      <div class="footer-main">
-        <a class="footer-link" href="https://github.com/fundamental-research-labs/sfae" aria-label="SFAE on Github">
-          <svg class="github-icon" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4 0-.2-.01-.86-.01-1.56-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.16-.68-.55-.01-.56.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.43 7.43 0 0 1 8 3.96c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.26.54.75.54 1.52 0 1.09-.01 1.97-.01 2.24 0 .22.15.48.55.4A8.13 8.13 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"/>
-          </svg>
-          <span>Github</span>
-        </a>
-        <span class="footer-divider">/</span>
-        <a class="footer-link" href="https://github.com/fundamental-research-labs/sfae#roadmap" aria-label="Roadmap on Github">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3Z"/>
-            <path d="M9 3v15"/>
-            <path d="M15 6v15"/>
-          </svg>
-          <span>Roadmap</span>
-        </a>
-        <span class="footer-divider">/</span>
-        <a class="footer-link" href="https://fundamentalresearchlabs.com/">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M3 21h18"/>
-            <path d="M5 21V7l8-4v18"/>
-            <path d="M19 21V11l-6-3"/>
-            <path d="M9 9h1"/>
-            <path d="M9 13h1"/>
-            <path d="M9 17h1"/>
-          </svg>
-          <span>Fundamental Research Labs</span>
-        </a>
-        <span class="footer-divider">/</span>
-        <a class="footer-link" href="/privacy/">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="5" y="11" width="14" height="10" rx="2"/>
-            <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
-          </svg>
-          <span>Privacy</span>
-        </a>
-        <span class="footer-divider">/</span>
-        <a class="footer-link" href="/terms/">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/>
-            <path d="M14 2v6h6"/>
-            <path d="M16 13H8"/>
-            <path d="M16 17H8"/>
-            <path d="M10 9H8"/>
-          </svg>
-          <span>Terms</span>
-        </a>
-      </div>
-      <div class="version">Latest release <a href="__RELEASE_URL__">__VERSION__</a></div>
-    </footer>
+{{FOOTER}}
 
   </div>
   <script>
