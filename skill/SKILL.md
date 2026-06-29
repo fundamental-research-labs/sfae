@@ -221,3 +221,5 @@ sfae code github.com \
 - `sfae delete --all --purge` also removes local secret-store material where possible.
 - `sfae request --dry-run ...` previews a resolved request without sending it.
 - `sfae request --verbose ...` helps debug request behavior without exposing secret values.
+
+Deleting local SFAE-hosted OAuth credentials for Discord, Google, GitHub, or Dropbox attempts provider revoke first. Manual, legacy, non-OAuth, and remote-store credentials are removed from SFAE only; the local CLI does not provider-revoke remote-store credentials today.

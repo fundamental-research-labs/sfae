@@ -357,7 +357,7 @@ pub(crate) async fn revoke_local_credential(
         return (StatusCode::FORBIDDEN, "refresh token rejected").into_response();
     }
 
-    if provider::revoke_token(RevokeToken {
+    if let Err(error_code) = provider::revoke_token(RevokeToken {
         provider: &body.provider,
         http: &state.http,
         config: &state.config,
@@ -365,9 +365,15 @@ pub(crate) async fn revoke_local_credential(
         refresh_token: body.refresh_token.as_deref(),
     })
     .await
-    .is_err()
     {
-        return (StatusCode::BAD_GATEWAY, "failed to revoke OAuth token").into_response();
+        let safe_error_code = safe_provider_revoke_error_code(&error_code);
+        tracing::warn!(
+            provider = %body.provider,
+            broker_credential_id = %body.broker_credential_id,
+            error_code = %safe_error_code,
+            "local OAuth provider revoke failed"
+        );
+        return (StatusCode::BAD_GATEWAY, safe_error_code).into_response();
     }
     mark_local_grant_revoked(MarkLocalGrantRevoked {
         state: &state,
@@ -375,6 +381,36 @@ pub(crate) async fn revoke_local_credential(
     })
     .await;
     StatusCode::NO_CONTENT.into_response()
+}
+
+fn safe_provider_revoke_error_code(error_code: &str) -> String {
+    if let Some(status) = error_code.strip_prefix("provider_revoke_status_") {
+        return status_code_suffix("provider_revoke_status", status)
+            .unwrap_or_else(|| "provider_revoke_failed".to_string());
+    }
+    if error_code.starts_with("provider revoke request failed") {
+        return "provider_revoke_request_failed".to_string();
+    }
+    if let Some(status) = error_code.strip_prefix("provider_refresh_status_") {
+        return status_code_suffix("provider_refresh_status", status)
+            .unwrap_or_else(|| "provider_revoke_failed".to_string());
+    }
+    if error_code.starts_with("provider refresh request failed") {
+        return "provider_refresh_request_failed".to_string();
+    }
+    if error_code
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return error_code.to_string();
+    }
+    "provider_revoke_failed".to_string()
+}
+
+// xtask: allow-multi-param - sanitizer helper pairs a code prefix with raw provider text
+fn status_code_suffix(prefix: &str, raw: &str) -> Option<String> {
+    let code: String = raw.chars().take_while(|c| c.is_ascii_digit()).collect();
+    (!code.is_empty()).then(|| format!("{prefix}_{code}"))
 }
 
 struct LocalGrantAuth<'a> {
@@ -600,6 +636,30 @@ mod tests {
             "http://192.168.1.10:49152/oauth-complete"
         ));
         assert!(!local_return_url_allowed("https://oauth.sfae.io/v1/done"));
+    }
+
+    #[test]
+    fn safe_provider_revoke_error_code_keeps_only_safe_details() {
+        assert_eq!(
+            safe_provider_revoke_error_code("provider_revoke_status_401 Unauthorized"),
+            "provider_revoke_status_401"
+        );
+        assert_eq!(
+            safe_provider_revoke_error_code("provider revoke request failed: access-token"),
+            "provider_revoke_request_failed"
+        );
+        assert_eq!(
+            safe_provider_revoke_error_code("provider_refresh_status_403 Forbidden"),
+            "provider_refresh_status_403"
+        );
+        assert_eq!(
+            safe_provider_revoke_error_code("provider_revoke_access_token_required"),
+            "provider_revoke_access_token_required"
+        );
+        assert_eq!(
+            safe_provider_revoke_error_code("provider failed with token access-token"),
+            "provider_revoke_failed"
+        );
     }
 
     #[tokio::test]
