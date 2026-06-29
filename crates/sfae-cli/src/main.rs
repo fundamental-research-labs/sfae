@@ -280,9 +280,9 @@ EXAMPLES:
     }'
 
   Multi-field with defaults:
-    sfae prompt clickhouse.example.com --spec '{
+    sfae prompt database.example.com --spec '{
       "fields": [
-        {"name": "HOST", "default": "https://ch.example.com:8443"},
+        {"name": "HOST", "default": "db.example.com"},
         {"name": "USERNAME"},
         {"name": "PASSWORD"}
       ]

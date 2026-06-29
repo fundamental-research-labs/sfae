@@ -53,7 +53,7 @@ The agent checks which credentials exist, opens a web form when something is mis
 | Area | Work |
 | --- | --- |
 | Authentication | [x.509 certificate authentication](https://github.com/fundamental-research-labs/sfae/issues/27) |
-| Protocols | [Support ClickHouse](https://github.com/fundamental-research-labs/sfae/issues/31) |
+| Protocols | [Support ClickHouse](https://github.com/fundamental-research-labs/sfae/issues/31), MySQL/MariaDB, MongoDB, and Microsoft SQL Server / TDS |
 | Product | [Add a credential management UI](https://github.com/fundamental-research-labs/sfae/issues/12) |
 
 ## License
