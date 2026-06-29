@@ -172,6 +172,14 @@ fn sensitive_error_response() -> MockResponse {
     }
 }
 
+fn plain_error_response(body: &str) -> MockResponse {
+    MockResponse {
+        status: 502,
+        body: body.to_string(),
+        content_type: "text/plain",
+    }
+}
+
 fn session_start_response() -> MockResponse {
     json_response(serde_json::json!({
         "session_id": "session-1",
@@ -637,4 +645,27 @@ fn broker_error_messages_do_not_include_sensitive_response_bodies() {
     assert!(!err.contains("provider-code"));
     assert!(!err.contains("access_token"));
     assert!(!err.contains("refresh_token"));
+}
+
+#[test]
+fn broker_error_messages_include_safe_text_response_body() {
+    let server = MockHttpServer::start(vec![plain_error_response("provider_revoke_status_401")]);
+    let broker = DirectHostedOAuthBroker::new(&server.base_url).unwrap();
+
+    let err = broker
+        .revoke_credential(HostedOAuthRevoke {
+            provider: "github",
+            broker_credential_id: "grant-id",
+            broker_credential_secret: "broker-secret",
+            access_token: Some("access-token"),
+            refresh_token: None,
+        })
+        .unwrap_err()
+        .to_string();
+    let _ = server.finish();
+
+    assert!(err.contains("OAuth broker returned 502"));
+    assert!(err.contains("provider_revoke_status_401"));
+    assert!(!err.contains("access-token"));
+    assert!(!err.contains("broker-secret"));
 }

@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use sfae_core::credential::{CredentialKey, CredentialType, credential_key};
+use sfae_core::error::SfaeError;
 use sfae_core::store::{
     CredentialSetInfo, SecretStore, load_credential_set_metadata, parse_structured_credential_set,
 };
@@ -77,9 +78,14 @@ pub fn run(args: RunArgs<'_>) -> anyhow::Result<()> {
         if cred_type_str.is_some() || username.is_some() {
             anyhow::bail!("--type and --label/--user flags are not used with UUID deletion");
         }
-        if should_attempt_hosted_oauth_revoke(uses_remote_store(), purge) {
-            revoke_hosted_oauth_if_needed(&*store, target);
-        }
+        let revoke_outcome = hosted_oauth_revoke_outcome(HostedOAuthRevokeAttempt {
+            store: &*store,
+            id: target,
+            metadata: None,
+            remote_store: uses_remote_store(),
+            revoker: &DirectHostedOAuthRevoker,
+        });
+        report_hosted_oauth_revoke_outcome(target, &revoke_outcome);
         if purge {
             store.delete_credential_set(target)?;
             eprintln!("Purged credential set: {target}");
@@ -198,9 +204,14 @@ fn delete_all_credentials(request: BulkDeleteRequest<'_>) -> anyhow::Result<()> 
     let mut failed = 0usize;
 
     for set in &targets.credential_sets {
-        if should_attempt_hosted_oauth_revoke(opts.remote_store, opts.purge) {
-            revoke_hosted_oauth_if_needed(store, &set.id);
-        }
+        let revoke_outcome = hosted_oauth_revoke_outcome(HostedOAuthRevokeAttempt {
+            store,
+            id: &set.id,
+            metadata: Some(set),
+            remote_store: opts.remote_store,
+            revoker: &DirectHostedOAuthRevoker,
+        });
+        report_hosted_oauth_revoke_outcome(&set.id, &revoke_outcome);
 
         let result = if opts.purge {
             store.delete_credential_set(&set.id)
@@ -264,52 +275,140 @@ fn format_credential_set(set: &CredentialSetInfo) -> String {
     format!("{} {} {} [{}]", set.id, set.domain, label, keys)
 }
 
-// xtask: allow-multi-param - helper makes purge-independent revoke behavior explicit
-fn should_attempt_hosted_oauth_revoke(remote_store: bool, _purge: bool) -> bool {
-    !remote_store
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HostedOAuthRevokeOutcome {
+    Revoked,
+    RevokeFailed { error: String },
+    NotHostedOAuth,
+    MissingRevokeMaterial,
+    MissingBrokerMaterial,
+    RemoteStoreSkipped,
 }
 
-// xtask: allow-multi-param - deletion needs the selected store and credential id
-fn revoke_hosted_oauth_if_needed(store: &dyn SecretStore, id: &str) {
-    let Ok(metadata) = load_credential_set_metadata(store, id) else {
-        return;
-    };
-    if !credential_set_metadata_is_hosted_oauth(&metadata) {
-        return;
-    }
-    let Ok(blob) = store.get(id) else {
-        return;
-    };
-    let Ok(data) = parse_structured_credential_set(&blob) else {
-        return;
-    };
-    let Some(material) = hosted_oauth_revoke_material(&data) else {
-        return;
-    };
+struct HostedOAuthRevokeAttempt<'a> {
+    store: &'a dyn SecretStore,
+    id: &'a str,
+    metadata: Option<&'a CredentialSetInfo>,
+    remote_store: bool,
+    revoker: &'a dyn HostedOAuthRevoker,
+}
 
-    let broker = match sfae_core::oauth::DirectHostedOAuthBroker::from_env() {
-        Ok(broker) => broker,
-        Err(e) => {
-            eprintln!("Could not configure OAuth broker for revoke; deleting locally only: {e}");
-            return;
+trait HostedOAuthRevoker {
+    fn revoke_hosted_oauth(&self, material: HostedOAuthRevokeMaterial<'_>)
+    -> Result<(), SfaeError>;
+}
+
+struct DirectHostedOAuthRevoker;
+
+impl HostedOAuthRevoker for DirectHostedOAuthRevoker {
+    fn revoke_hosted_oauth(
+        &self,
+        material: HostedOAuthRevokeMaterial<'_>,
+    ) -> Result<(), SfaeError> {
+        let broker = sfae_core::oauth::DirectHostedOAuthBroker::from_env()?;
+        let manager = sfae_core::oauth::OAuthCredentialManager::new(&broker);
+        manager.revoke_credential(sfae_core::oauth::HostedOAuthRevoke {
+            provider: material.provider,
+            broker_credential_id: material.broker_credential_id,
+            broker_credential_secret: material.broker_credential_secret,
+            access_token: material.access_token,
+            refresh_token: material.refresh_token,
+        })
+    }
+}
+
+fn hosted_oauth_revoke_outcome(attempt: HostedOAuthRevokeAttempt<'_>) -> HostedOAuthRevokeOutcome {
+    let HostedOAuthRevokeAttempt {
+        store,
+        id,
+        metadata,
+        remote_store,
+        revoker,
+    } = attempt;
+    let loaded_metadata;
+    let metadata = match metadata {
+        Some(metadata) => metadata,
+        None => {
+            loaded_metadata = match load_credential_set_metadata(store, id) {
+                Ok(metadata) => metadata,
+                Err(_) => return HostedOAuthRevokeOutcome::NotHostedOAuth,
+            };
+            &loaded_metadata
         }
     };
-    let manager = sfae_core::oauth::OAuthCredentialManager::new(&broker);
-    if let Err(e) = manager.revoke_credential(sfae_core::oauth::HostedOAuthRevoke {
-        provider: material.provider,
-        broker_credential_id: material.broker_credential_id,
-        broker_credential_secret: material.broker_credential_secret,
-        access_token: material.access_token,
-        refresh_token: material.refresh_token,
-    }) {
-        eprintln!("OAuth revoke failed; deleting local credential anyway: {e}");
-    } else {
-        eprintln!("Revoked hosted OAuth credential.");
+    if !credential_set_metadata_is_hosted_oauth(metadata) {
+        return HostedOAuthRevokeOutcome::NotHostedOAuth;
+    }
+    if remote_store {
+        return HostedOAuthRevokeOutcome::RemoteStoreSkipped;
+    }
+    let blob = match store.get(id) {
+        Ok(blob) => blob,
+        Err(_) => return HostedOAuthRevokeOutcome::MissingRevokeMaterial,
+    };
+    let data = match parse_structured_credential_set(&blob) {
+        Ok(data) => data,
+        Err(_) => return HostedOAuthRevokeOutcome::MissingRevokeMaterial,
+    };
+    let material = match hosted_oauth_revoke_material(&data) {
+        HostedOAuthRevokeMaterialOutcome::Ready(material) => material,
+        HostedOAuthRevokeMaterialOutcome::MissingRevokeMaterial => {
+            return HostedOAuthRevokeOutcome::MissingRevokeMaterial;
+        }
+        HostedOAuthRevokeMaterialOutcome::MissingBrokerMaterial => {
+            return HostedOAuthRevokeOutcome::MissingBrokerMaterial;
+        }
+    };
+
+    match revoker.revoke_hosted_oauth(material) {
+        Ok(()) => HostedOAuthRevokeOutcome::Revoked,
+        Err(SfaeError::ConfigError(_)) => HostedOAuthRevokeOutcome::MissingBrokerMaterial,
+        Err(e) => HostedOAuthRevokeOutcome::RevokeFailed {
+            error: e.to_string(),
+        },
     }
 }
 
 fn credential_set_metadata_is_hosted_oauth(info: &CredentialSetInfo) -> bool {
-    info.metadata.contains_key("OAUTH_PROVIDER")
+    info.metadata
+        .get("OAUTH_PROVIDER")
+        .is_some_and(|provider| supported_hosted_oauth_provider(provider))
+}
+
+fn supported_hosted_oauth_provider(provider: &str) -> bool {
+    matches!(provider, "discord" | "google" | "github" | "dropbox")
+}
+
+// xtask: allow-multi-param - output helper pairs credential id with revoke outcome
+fn report_hosted_oauth_revoke_outcome(id: &str, outcome: &HostedOAuthRevokeOutcome) {
+    match outcome {
+        HostedOAuthRevokeOutcome::Revoked => {
+            eprintln!("Revoked hosted OAuth credential: {id}");
+        }
+        HostedOAuthRevokeOutcome::RevokeFailed { error } => {
+            eprintln!(
+                "OAuth provider revoke failed for credential set {id}; deleting locally anyway: {error}"
+            );
+        }
+        HostedOAuthRevokeOutcome::NotHostedOAuth => {
+            eprintln!("No hosted OAuth provider revoke needed for credential set: {id}");
+        }
+        HostedOAuthRevokeOutcome::MissingRevokeMaterial => {
+            eprintln!(
+                "Could not revoke hosted OAuth credential set {id}; missing local token material. Deleting locally only."
+            );
+        }
+        HostedOAuthRevokeOutcome::MissingBrokerMaterial => {
+            eprintln!(
+                "Could not revoke hosted OAuth credential set {id}; missing broker credential material. Deleting locally only."
+            );
+        }
+        HostedOAuthRevokeOutcome::RemoteStoreSkipped => {
+            eprintln!(
+                "Skipped OAuth provider revoke for remote-store credential set {id}; deleting from the remote store only."
+            );
+        }
+    }
 }
 
 struct HostedOAuthRevokeMaterial<'a> {
@@ -320,24 +419,33 @@ struct HostedOAuthRevokeMaterial<'a> {
     refresh_token: Option<&'a str>,
 }
 
+enum HostedOAuthRevokeMaterialOutcome<'a> {
+    Ready(HostedOAuthRevokeMaterial<'a>),
+    MissingRevokeMaterial,
+    MissingBrokerMaterial,
+}
+
 fn hosted_oauth_revoke_material(
     data: &sfae_core::store::CredentialSetData,
-) -> Option<HostedOAuthRevokeMaterial<'_>> {
-    let provider = data.metadata.get("OAUTH_PROVIDER")?;
+) -> HostedOAuthRevokeMaterialOutcome<'_> {
+    let Some(provider) = data.metadata.get("OAUTH_PROVIDER") else {
+        return HostedOAuthRevokeMaterialOutcome::MissingRevokeMaterial;
+    };
+    if !supported_hosted_oauth_provider(provider) {
+        return HostedOAuthRevokeMaterialOutcome::MissingRevokeMaterial;
+    }
     let access_token = data.values.get("OAUTH_ACCESS_TOKEN").map(String::as_str);
     let refresh_token = data.internal.get("OAUTH_REFRESH_TOKEN").map(String::as_str);
     if access_token.is_none() && refresh_token.is_none() {
-        return None;
+        return HostedOAuthRevokeMaterialOutcome::MissingRevokeMaterial;
     }
     let Some(broker_credential_id) = data.metadata.get("OAUTH_BROKER_CREDENTIAL_ID") else {
-        eprintln!("OAuth credential has no broker credential id; deleting locally only.");
-        return None;
+        return HostedOAuthRevokeMaterialOutcome::MissingBrokerMaterial;
     };
     let Some(broker_credential_secret) = data.internal.get("OAUTH_BROKER_CREDENTIAL_SECRET") else {
-        eprintln!("OAuth credential has no broker credential secret; deleting locally only.");
-        return None;
+        return HostedOAuthRevokeMaterialOutcome::MissingBrokerMaterial;
     };
-    Some(HostedOAuthRevokeMaterial {
+    HostedOAuthRevokeMaterialOutcome::Ready(HostedOAuthRevokeMaterial {
         provider,
         broker_credential_id,
         broker_credential_secret,
@@ -348,11 +456,95 @@ fn hosted_oauth_revoke_material(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::collections::HashMap;
 
-    use sfae_core::store::{InMemoryStore, StoreEntry};
+    use sfae_core::store::{InMemoryStore, StoreEntry, StructuredCredentialSetInput};
 
     use super::*;
+
+    struct MockHostedOAuthRevoker {
+        failure: Option<String>,
+        revoked: RefCell<Vec<String>>,
+    }
+
+    impl MockHostedOAuthRevoker {
+        fn success() -> Self {
+            Self {
+                failure: None,
+                revoked: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn failure(error: &str) -> Self {
+            Self {
+                failure: Some(error.to_string()),
+                revoked: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl HostedOAuthRevoker for MockHostedOAuthRevoker {
+        fn revoke_hosted_oauth(
+            &self,
+            material: HostedOAuthRevokeMaterial<'_>,
+        ) -> Result<(), SfaeError> {
+            self.revoked.borrow_mut().push(format!(
+                "{}:{}:{}:{}",
+                material.provider,
+                material.broker_credential_id,
+                material.access_token.unwrap_or("-"),
+                material.refresh_token.unwrap_or("-")
+            ));
+            match self.failure.as_deref() {
+                Some(error) => Err(SfaeError::StoreError(error.to_string())),
+                None => Ok(()),
+            }
+        }
+    }
+
+    struct OAuthSetFixture {
+        include_tokens: bool,
+        include_broker_id: bool,
+        include_broker_secret: bool,
+    }
+
+    // xtask: allow-multi-param - test helper pairs store with fixture data
+    fn store_oauth_set(store: &mut InMemoryStore, fixture: OAuthSetFixture) -> String {
+        let mut values = HashMap::new();
+        if fixture.include_tokens {
+            values.insert("OAUTH_ACCESS_TOKEN".to_string(), "access-token".to_string());
+        }
+        let mut internal = HashMap::new();
+        if fixture.include_tokens {
+            internal.insert(
+                "OAUTH_REFRESH_TOKEN".to_string(),
+                "refresh-token".to_string(),
+            );
+        }
+        if fixture.include_broker_secret {
+            internal.insert(
+                "OAUTH_BROKER_CREDENTIAL_SECRET".to_string(),
+                "broker-secret".to_string(),
+            );
+        }
+        let mut metadata = HashMap::from([("OAUTH_PROVIDER".to_string(), "github".to_string())]);
+        if fixture.include_broker_id {
+            metadata.insert(
+                "OAUTH_BROKER_CREDENTIAL_ID".to_string(),
+                "broker-id".to_string(),
+            );
+        }
+        store
+            .store_structured_credential_set(StructuredCredentialSetInput {
+                domain: "github.com",
+                label: None,
+                values: &values,
+                internal: Some(&internal),
+                metadata: Some(&metadata),
+            })
+            .unwrap()
+    }
 
     #[test]
     fn bulk_target_collection_includes_sets_and_legacy_keys_once() {
@@ -490,7 +682,10 @@ mod tests {
             ]),
         };
 
-        let material = hosted_oauth_revoke_material(&data).unwrap();
+        let material = match hosted_oauth_revoke_material(&data) {
+            HostedOAuthRevokeMaterialOutcome::Ready(material) => material,
+            _ => panic!("expected hosted OAuth revoke material"),
+        };
 
         assert_eq!(material.provider, "dropbox");
         assert_eq!(material.access_token, Some("access-token"));
@@ -521,10 +716,169 @@ mod tests {
     }
 
     #[test]
-    fn hosted_oauth_revoke_is_attempted_for_local_uuid_delete_with_or_without_purge() {
-        assert!(should_attempt_hosted_oauth_revoke(false, false));
-        assert!(should_attempt_hosted_oauth_revoke(false, true));
-        assert!(!should_attempt_hosted_oauth_revoke(true, false));
-        assert!(!should_attempt_hosted_oauth_revoke(true, true));
+    fn hosted_oauth_revoke_outcome_reports_success() {
+        let mut store = InMemoryStore::new();
+        let id = store_oauth_set(
+            &mut store,
+            OAuthSetFixture {
+                include_tokens: true,
+                include_broker_id: true,
+                include_broker_secret: true,
+            },
+        );
+        let revoker = MockHostedOAuthRevoker::success();
+
+        let outcome = hosted_oauth_revoke_outcome(HostedOAuthRevokeAttempt {
+            store: &store,
+            id: &id,
+            metadata: None,
+            remote_store: false,
+            revoker: &revoker,
+        });
+
+        assert_eq!(outcome, HostedOAuthRevokeOutcome::Revoked);
+        assert_eq!(
+            revoker.revoked.borrow().as_slice(),
+            ["github:broker-id:access-token:refresh-token"]
+        );
+    }
+
+    #[test]
+    fn hosted_oauth_revoke_outcome_reports_provider_failure() {
+        let mut store = InMemoryStore::new();
+        let id = store_oauth_set(
+            &mut store,
+            OAuthSetFixture {
+                include_tokens: true,
+                include_broker_id: true,
+                include_broker_secret: true,
+            },
+        );
+        let revoker = MockHostedOAuthRevoker::failure("provider_revoke_status_401");
+
+        let outcome = hosted_oauth_revoke_outcome(HostedOAuthRevokeAttempt {
+            store: &store,
+            id: &id,
+            metadata: None,
+            remote_store: false,
+            revoker: &revoker,
+        });
+
+        assert_eq!(
+            outcome,
+            HostedOAuthRevokeOutcome::RevokeFailed {
+                error: "secret store error: provider_revoke_status_401".to_string()
+            }
+        );
+        assert_eq!(revoker.revoked.borrow().len(), 1);
+    }
+
+    #[test]
+    fn hosted_oauth_revoke_outcome_reports_missing_revoke_material() {
+        let mut store = InMemoryStore::new();
+        let id = store_oauth_set(
+            &mut store,
+            OAuthSetFixture {
+                include_tokens: false,
+                include_broker_id: true,
+                include_broker_secret: true,
+            },
+        );
+        let revoker = MockHostedOAuthRevoker::success();
+
+        let outcome = hosted_oauth_revoke_outcome(HostedOAuthRevokeAttempt {
+            store: &store,
+            id: &id,
+            metadata: None,
+            remote_store: false,
+            revoker: &revoker,
+        });
+
+        assert_eq!(outcome, HostedOAuthRevokeOutcome::MissingRevokeMaterial);
+        assert!(revoker.revoked.borrow().is_empty());
+    }
+
+    #[test]
+    fn hosted_oauth_revoke_outcome_reports_missing_broker_material() {
+        let mut store = InMemoryStore::new();
+        let id_without_broker_id = store_oauth_set(
+            &mut store,
+            OAuthSetFixture {
+                include_tokens: true,
+                include_broker_id: false,
+                include_broker_secret: true,
+            },
+        );
+        let id_without_broker_secret = store_oauth_set(
+            &mut store,
+            OAuthSetFixture {
+                include_tokens: true,
+                include_broker_id: true,
+                include_broker_secret: false,
+            },
+        );
+        let revoker = MockHostedOAuthRevoker::success();
+
+        let missing_id = hosted_oauth_revoke_outcome(HostedOAuthRevokeAttempt {
+            store: &store,
+            id: &id_without_broker_id,
+            metadata: None,
+            remote_store: false,
+            revoker: &revoker,
+        });
+        let missing_secret = hosted_oauth_revoke_outcome(HostedOAuthRevokeAttempt {
+            store: &store,
+            id: &id_without_broker_secret,
+            metadata: None,
+            remote_store: false,
+            revoker: &revoker,
+        });
+
+        assert_eq!(missing_id, HostedOAuthRevokeOutcome::MissingBrokerMaterial);
+        assert_eq!(
+            missing_secret,
+            HostedOAuthRevokeOutcome::MissingBrokerMaterial
+        );
+        assert!(revoker.revoked.borrow().is_empty());
+    }
+
+    #[test]
+    fn hosted_oauth_revoke_outcome_skips_non_oauth_and_remote_store_sets() {
+        let mut store = InMemoryStore::new();
+        let non_oauth_id = store
+            .store_credential_set(sfae_core::store::CredentialSetInput {
+                domain: "github.com",
+                label: None,
+                values: &HashMap::from([("API_KEY".to_string(), "secret".to_string())]),
+            })
+            .unwrap();
+        let oauth_id = store_oauth_set(
+            &mut store,
+            OAuthSetFixture {
+                include_tokens: true,
+                include_broker_id: true,
+                include_broker_secret: true,
+            },
+        );
+        let revoker = MockHostedOAuthRevoker::success();
+
+        let non_oauth = hosted_oauth_revoke_outcome(HostedOAuthRevokeAttempt {
+            store: &store,
+            id: &non_oauth_id,
+            metadata: None,
+            remote_store: false,
+            revoker: &revoker,
+        });
+        let remote = hosted_oauth_revoke_outcome(HostedOAuthRevokeAttempt {
+            store: &store,
+            id: &oauth_id,
+            metadata: None,
+            remote_store: true,
+            revoker: &revoker,
+        });
+
+        assert_eq!(non_oauth, HostedOAuthRevokeOutcome::NotHostedOAuth);
+        assert_eq!(remote, HostedOAuthRevokeOutcome::RemoteStoreSkipped);
+        assert!(revoker.revoked.borrow().is_empty());
     }
 }

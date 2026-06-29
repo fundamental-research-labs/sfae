@@ -209,11 +209,14 @@ pub(crate) async fn revoke_token(args: DiscordRevokeRequest<'_>) -> Result<(), S
         .form(&params)
         .send()
         .await
-        .map_err(|e| format!("provider revoke request failed: {e}"))?;
+        .map_err(|e| {
+            tracing::warn!("Discord token revoke request failed: {e}");
+            "provider_revoke_request_failed".to_string()
+        })?;
     if !response.status().is_success() {
         let status = response.status();
         tracing::warn!("Discord token revoke rejected: {status}");
-        return Err(format!("provider_revoke_status_{status}"));
+        return Err(format!("provider_revoke_status_{}", status.as_u16()));
     }
     Ok(())
 }

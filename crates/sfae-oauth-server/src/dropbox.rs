@@ -256,11 +256,14 @@ async fn revoke_access_token(args: DropboxAccessRevoke<'_>) -> Result<(), String
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| format!("provider revoke request failed: {e}"))?;
+        .map_err(|e| {
+            tracing::warn!("Dropbox token revoke request failed: {e}");
+            "provider_revoke_request_failed".to_string()
+        })?;
     if !response.status().is_success() {
         let status = response.status();
         tracing::warn!("Dropbox token revoke rejected: {status}");
-        return Err(format!("provider_revoke_status_{status}"));
+        return Err(format!("provider_revoke_status_{}", status.as_u16()));
     }
     Ok(())
 }
