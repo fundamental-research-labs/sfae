@@ -583,13 +583,15 @@ mod tests {
 
     #[test]
     fn example_2_multi_field() {
-        let spec: PromptSpec = serde_json::from_str(r#"{
+        let spec: PromptSpec = serde_json::from_str(
+            r#"{
             "fields": [
-                {"name": "HOST", "label": "Server URL", "default": "https://clickhouse.example.com:8443"},
+                {"name": "HOST", "label": "Server URL", "default": "db.example.com"},
                 {"name": "USERNAME", "label": "Database User"},
                 {"name": "PASSWORD"}
             ]
-        }"#)
+        }"#,
+        )
         .unwrap();
         spec.validate().unwrap();
         let fields = spec.fields.unwrap();

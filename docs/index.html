@@ -147,6 +147,19 @@
       font-weight: 300;
     }
 
+    .features a {
+      color: var(--text);
+      text-decoration: none;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .features a:hover,
+    .features a:focus-visible {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      outline: none;
+    }
+
     /* Install */
     .install-methods {
       list-style: none;
@@ -552,7 +565,30 @@
         </li>
         <li>
           <strong>Communication protocols</strong><br>
-          <span>HTTP, Postgres, ClickHouse, and Redis today, with more integrations planned.</span>
+          <span>HTTP by default, plus Postgres and Redis with protocol-aware execution.</span>
+        </li>
+      </ul>
+    </section>
+
+    <!-- Roadmap -->
+    <section>
+      <h2 class="section-title">Roadmap</h2>
+      <ul class="features">
+        <li>
+          <strong><a href="https://github.com/fundamental-research-labs/sfae/issues/60">MySQL / MariaDB</a></strong><br>
+          <span>Native queries for MySQL-compatible production databases.</span>
+        </li>
+        <li>
+          <strong><a href="https://github.com/fundamental-research-labs/sfae/issues/62">MongoDB</a></strong><br>
+          <span>Document and aggregation workflows with credential-safe connection strings.</span>
+        </li>
+        <li>
+          <strong><a href="https://github.com/fundamental-research-labs/sfae/issues/61">Microsoft SQL Server / TDS</a></strong><br>
+          <span>Enterprise SQL Server and Azure SQL access through the trusted runtime.</span>
+        </li>
+        <li>
+          <strong><a href="https://github.com/fundamental-research-labs/sfae/issues/31">ClickHouse</a></strong><br>
+          <span>Analytics queries without exposing database credentials to agents.</span>
         </li>
       </ul>
     </section>
