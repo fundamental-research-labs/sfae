@@ -67,6 +67,7 @@ impl ExpectedRequest {
         }
     }
 
+    // xtask: allow-multi-param - compact fixture helper
     fn error(path: String, status: u16, body: &'static str) -> Self {
         Self {
             path,

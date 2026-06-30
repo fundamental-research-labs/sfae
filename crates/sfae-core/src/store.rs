@@ -537,6 +537,7 @@ mod keyring_store {
         }
     }
 
+    // xtask: allow-multi-param - pairs an operation label with the backend error
     fn keychain_store_error(action: &str, error: security_framework::base::Error) -> SfaeError {
         SfaeError::StoreError(format!(
             "macOS Keychain {action} failed (OSStatus {}: {error})",
@@ -544,12 +545,14 @@ mod keyring_store {
         ))
     }
 
+    // xtask: allow-multi-param - keychain write wrapper needs key, value, and operation label
     fn keychain_set(account: &str, value: &[u8], action: &str) -> Result<(), SfaeError> {
         validate_keychain_account(account)?;
         with_keychain_retry(|| set_generic_password(KEYRING_SERVICE, account, value))
             .map_err(|e| keychain_store_error(action, e))
     }
 
+    // xtask: allow-multi-param - keychain read wrapper needs key and operation label
     fn keychain_get(account: &str, action: &str) -> Result<Vec<u8>, SfaeError> {
         validate_keychain_account(account)?;
         match with_keychain_retry(|| get_generic_password(KEYRING_SERVICE, account)) {
@@ -788,6 +791,7 @@ mod keyring_store {
         }
     }
 
+    // xtask: allow-multi-param - pairs an operation label with the backend error
     fn keyring_store_error(action: &str, error: keyring::Error) -> SfaeError {
         SfaeError::StoreError(format!("OS credential store {action} failed: {error}"))
     }
