@@ -3,6 +3,8 @@
 //! Used by client builds that talk to a remote SFAE store.
 
 use std::collections::HashMap;
+use std::thread;
+use std::time::Duration;
 
 use crate::error::SfaeError;
 use crate::store::{CredentialSetInfo, CredentialSetInput, SecretStore, StoreEntry};
@@ -18,6 +20,12 @@ pub struct ApiStore {
     token: String,
     agent: ureq::Agent,
 }
+
+const API_STORE_RETRY_DELAYS: &[Duration] = &[
+    Duration::from_millis(100),
+    Duration::from_millis(500),
+    Duration::from_millis(1500),
+];
 
 impl ApiStore {
     /// Create from environment variables. Returns None if SFAE_STORE_URL is not set.
@@ -85,20 +93,41 @@ impl ApiStore {
         format!("Bearer {}", self.token)
     }
 
-    fn run_request(
+    fn run_request<B>(
         &self,
-        req: ureq::http::Request<impl ureq::AsSendBody>,
-    ) -> Result<ureq::http::Response<ureq::Body>, SfaeError> {
-        let response = self.agent.run(req).map_err(|e| match e {
-            ureq::Error::StatusCode(_) => {
-                unreachable!("http_status_as_error is false")
+        req: ureq::http::Request<B>,
+    ) -> Result<ureq::http::Response<ureq::Body>, SfaeError>
+    where
+        B: ureq::AsSendBody + Clone,
+    {
+        let mut attempt = 0;
+        let response = loop {
+            match self.agent.run(req.clone()) {
+                Ok(response)
+                    if response.status().as_u16() >= 500
+                        && attempt < API_STORE_RETRY_DELAYS.len() =>
+                {
+                    thread::sleep(API_STORE_RETRY_DELAYS[attempt]);
+                    attempt += 1;
+                }
+                Ok(response) => break response,
+                Err(ureq::Error::StatusCode(_)) => {
+                    unreachable!("http_status_as_error is false")
+                }
+                Err(error) if attempt < API_STORE_RETRY_DELAYS.len() => {
+                    thread::sleep(API_STORE_RETRY_DELAYS[attempt]);
+                    attempt += 1;
+                    let _ = error;
+                }
+                Err(other) => {
+                    return Err(SfaeError::StoreError(format!(
+                        "Failed to connect to credential store at {}: {other}. \
+                         The SFAE server may be down.",
+                        self.base_url
+                    )));
+                }
             }
-            other => SfaeError::StoreError(format!(
-                "Failed to connect to credential store at {}: {other}. \
-                 The SFAE server may be down.",
-                self.base_url
-            )),
-        })?;
+        };
 
         let status = response.status().as_u16();
         if status == 401 || status == 403 {

@@ -41,3 +41,14 @@ impl From<serde_json::Error> for SfaeError {
         SfaeError::ConfigError(err.to_string())
     }
 }
+
+impl SfaeError {
+    /// True when the failure happened while selecting, reading, or resolving
+    /// credentials before the downstream request can be built.
+    pub fn is_credential_resolution_error(&self) -> bool {
+        matches!(
+            self,
+            SfaeError::CredentialNotFound(_) | SfaeError::StoreError(_)
+        )
+    }
+}

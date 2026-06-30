@@ -114,6 +114,17 @@ EXAMPLES:
   Show non-secret metadata for one credential set:
     sfae show 550e8400-e29b-41d4-a716-446655440000"#;
 
+const DOCTOR_AFTER_HELP: &str = r#"OUTPUT:
+  Prints credential-store backend and availability checks without printing secrets, domains, labels, field names, or credential metadata.
+  By default this command does not read secret blobs. Pass --cred only when you explicitly want to verify that one credential blob can be read and parsed.
+
+EXAMPLES:
+  Check selected credential-store backend:
+    sfae doctor
+
+  Check that one credential blob can be read without printing it:
+    sfae doctor --cred 550e8400-e29b-41d4-a716-446655440000"#;
+
 const REQUEST_AFTER_HELP: &str = r#"AGENT RULES:
   Use this command for HTTP API calls by default. Read the target service's official API docs for methods, URLs, headers, bodies, and auth scheme.
   Use `--protocol postgres` for Postgres SQL queries over the Postgres wire protocol; put the SQL in `--data` and use QUERY as the request method.
@@ -412,6 +423,13 @@ enum Command {
         /// Credential set UUID from `sfae credentials`
         id: String,
     },
+    /// Check SFAE credential-store availability without printing secrets
+    #[command(after_help = DOCTOR_AFTER_HELP)]
+    Doctor {
+        /// Verify one credential blob can be read and parsed without printing it
+        #[arg(long)]
+        cred: Option<String>,
+    },
     /// Send a request, resolving {KEY} placeholders from stored credentials
     #[command(after_help = REQUEST_AFTER_HELP)]
     Request {
@@ -586,6 +604,11 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Show { id } => {
             commands::show::run(commands::show::RunArgs { id: &id })?;
+        }
+        Command::Doctor { cred } => {
+            commands::doctor::run(commands::doctor::RunArgs {
+                cred_id: cred.as_deref(),
+            })?;
         }
         Command::Request {
             protocol,

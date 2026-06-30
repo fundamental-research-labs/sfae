@@ -234,6 +234,35 @@ fn show_help_explains_metadata_without_secret_blob_access() {
 }
 
 #[test]
+fn doctor_help_explains_private_diagnostics() {
+    let stdout = help_output(&["doctor", "--help"]);
+    assert!(stdout.contains("credential-store availability"));
+    assert!(stdout.contains("without printing secrets"));
+    assert!(stdout.contains("does not read secret blobs"));
+    assert!(stdout.contains("--cred"));
+    assert!(stdout.contains("without printing it"));
+}
+
+#[test]
+fn doctor_reports_incomplete_remote_store_without_secret_details() {
+    let assert = Command::cargo_bin("sfae")
+        .unwrap()
+        .args(["doctor"])
+        .env("SFAE_STORE_URL", "http://127.0.0.1:9")
+        .env_remove("SFAE_STORE_TOKEN")
+        .assert()
+        .failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stdout.contains("Store backend: remote credential store"));
+    assert!(stdout.contains("Remote store URL: set"));
+    assert!(stdout.contains("Remote store token: missing"));
+    assert!(stderr.contains("credential-store configuration is incomplete"));
+    assert!(!stdout.contains("127.0.0.1"));
+    assert!(!stderr.contains("127.0.0.1"));
+}
+
+#[test]
 fn request_help_explains_placeholders_lookup_and_output() {
     let stdout = help_output(&["request", "--help"]);
     assert!(stdout.contains("--label <LABEL>"));

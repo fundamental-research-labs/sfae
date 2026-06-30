@@ -4,6 +4,7 @@
 
 use std::time::Instant;
 
+use sfae_core::SfaeError;
 use sfae_core::proxy::{
     CredentialLookup, PlaceholderMap, ProxyRequest, ProxyResponse, extract_host,
     find_dynamic_placeholders,
@@ -112,16 +113,16 @@ fn run_http(args: RunArgs<'_>) -> anyhow::Result<()> {
             username: opts.user,
             cred_id: opts.cred_id,
         };
-        let credentials = lookup.fetch()?;
+        let credentials = before_request(lookup.fetch())?;
         let placeholders = PlaceholderMap(&credentials);
-        let masked_url = placeholders.mask(&request.url)?;
+        let masked_url = before_request(placeholders.mask(&request.url))?;
         println!("{} {}", request.method, masked_url);
         for (k, v) in &request.headers {
-            let masked_v = placeholders.mask(v)?;
+            let masked_v = before_request(placeholders.mask(v))?;
             println!("{k}: {masked_v}");
         }
         if let Some(b) = &request.body {
-            let masked_body = placeholders.mask(b)?;
+            let masked_body = before_request(placeholders.mask(b))?;
             println!();
             println!("{masked_body}");
         }
@@ -129,13 +130,15 @@ fn run_http(args: RunArgs<'_>) -> anyhow::Result<()> {
     }
 
     let start = Instant::now();
-    let response = CredentialLookup {
-        store: &*store,
-        domain: &domain,
-        username: opts.user,
-        cred_id: opts.cred_id,
-    }
-    .execute(&request)?;
+    let response = before_request(
+        CredentialLookup {
+            store: &*store,
+            domain: &domain,
+            username: opts.user,
+            cred_id: opts.cred_id,
+        }
+        .execute(&request),
+    )?;
     let elapsed = start.elapsed();
 
     if opts.verbose {
@@ -196,10 +199,12 @@ fn run_postgres(args: RunArgs<'_>) -> anyhow::Result<()> {
     };
 
     if opts.dry_run {
-        let masked = sfae_core::postgres::mask(sfae_core::postgres::PostgresRequestCtx {
-            lookup: &lookup,
-            request: &request,
-        })?;
+        let masked = before_request(sfae_core::postgres::mask(
+            sfae_core::postgres::PostgresRequestCtx {
+                lookup: &lookup,
+                request: &request,
+            },
+        ))?;
         println!("POSTGRES QUERY {}", masked.url);
         println!();
         println!("{}", masked.query);
@@ -213,10 +218,12 @@ fn run_postgres(args: RunArgs<'_>) -> anyhow::Result<()> {
     }
 
     let start = Instant::now();
-    let response = sfae_core::postgres::execute(sfae_core::postgres::PostgresRequestCtx {
-        lookup: &lookup,
-        request: &request,
-    })?;
+    let response = before_request(sfae_core::postgres::execute(
+        sfae_core::postgres::PostgresRequestCtx {
+            lookup: &lookup,
+            request: &request,
+        },
+    ))?;
     let elapsed = start.elapsed();
 
     if opts.verbose {
@@ -265,10 +272,10 @@ fn run_redis(args: RunArgs<'_>) -> anyhow::Result<()> {
     };
 
     if opts.dry_run {
-        let masked = sfae_core::redis::mask(sfae_core::redis::RedisRequestCtx {
+        let masked = before_request(sfae_core::redis::mask(sfae_core::redis::RedisRequestCtx {
             lookup: &lookup,
             request: &request,
-        })?;
+        }))?;
         println!("REDIS {} {}", masked.command, masked.url);
         if !masked.args.is_empty() {
             println!();
@@ -286,10 +293,12 @@ fn run_redis(args: RunArgs<'_>) -> anyhow::Result<()> {
     }
 
     let start = Instant::now();
-    let response = sfae_core::redis::execute(sfae_core::redis::RedisRequestCtx {
-        lookup: &lookup,
-        request: &request,
-    })?;
+    let response = before_request(sfae_core::redis::execute(
+        sfae_core::redis::RedisRequestCtx {
+            lookup: &lookup,
+            request: &request,
+        },
+    ))?;
     let elapsed = start.elapsed();
 
     if opts.verbose {
@@ -306,6 +315,20 @@ fn parse_redis_args(body: Option<&str>) -> anyhow::Result<Vec<String>> {
     };
     serde_json::from_str::<Vec<String>>(body)
         .map_err(|e| anyhow::anyhow!("Redis requests require --data as a JSON string array: {e}"))
+}
+
+fn before_request<T>(result: Result<T, SfaeError>) -> anyhow::Result<T> {
+    result.map_err(|error| match error {
+        SfaeError::CredentialNotFound(_) => {
+            anyhow::anyhow!(
+                "credential resolution failed before request was sent: credential not found"
+            )
+        }
+        SfaeError::StoreError(message) => {
+            anyhow::anyhow!("credential resolution failed before request was sent: {message}")
+        }
+        other => anyhow::anyhow!(other),
+    })
 }
 
 /// Check whether any part of the request contains an `{OAUTH_ACCESS_TOKEN}` placeholder.

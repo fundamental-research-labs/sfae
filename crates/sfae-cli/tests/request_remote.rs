@@ -13,6 +13,7 @@ struct ExpectedRequest {
 }
 
 struct MockResponse {
+    status: u16,
     content_type: &'static str,
     body: String,
 }
@@ -48,6 +49,7 @@ impl ExpectedRequest {
         Self {
             path: args.path,
             response: MockResponse {
+                status: 200,
                 content_type: "application/json",
                 body: args.body.to_string(),
             },
@@ -58,8 +60,20 @@ impl ExpectedRequest {
         Self {
             path: args.path,
             response: MockResponse {
+                status: 200,
                 content_type: "text/plain",
                 body: args.body,
+            },
+        }
+    }
+
+    fn error(path: String, status: u16, body: &'static str) -> Self {
+        Self {
+            path,
+            response: MockResponse {
+                status,
+                content_type: "text/plain",
+                body: body.to_string(),
             },
         }
     }
@@ -139,13 +153,93 @@ fn read_request(stream: &mut TcpStream) -> ParsedRequest {
 fn send_response(args: SendResponse<'_>) {
     let SendResponse { stream, response } = args;
     let http = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        response.status,
+        if response.status == 200 {
+            "OK"
+        } else {
+            "Error"
+        },
         response.content_type,
         response.body.len(),
         response.body
     );
     stream.write_all(http.as_bytes()).unwrap();
     stream.flush().unwrap();
+}
+
+#[test]
+fn request_reports_private_credential_resolution_failure_before_send() {
+    let credential_id = "00000000-0000-4000-8000-000000000099";
+    let mock = spawn_mock_store(vec![ExpectedRequest::error(
+        format!("/credentials/{credential_id}/blob"),
+        500,
+        "temporary store failure",
+    )]);
+
+    let mut command = Command::cargo_bin("sfae").unwrap();
+    remove_proxy_env(&mut command);
+    let assert = command
+        .env("SFAE_STORE_URL", &mock.base_url)
+        .env("SFAE_STORE_TOKEN", "test-token")
+        .args([
+            "request",
+            "GET",
+            "https://discord.com/api/v10/users/@me",
+            "--domain",
+            "discord.com",
+            "--cred",
+            credential_id,
+            "-H",
+            "Authorization: Bearer {OAUTH_ACCESS_TOKEN}",
+            "--dry-run",
+        ])
+        .assert()
+        .failure();
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("credential resolution failed before request was sent"));
+    assert!(!stderr.contains(credential_id));
+    assert!(!stderr.contains("discord.com"));
+    assert!(!stderr.contains("OAUTH_ACCESS_TOKEN"));
+    mock.finish();
+}
+
+#[test]
+fn request_does_not_echo_missing_credential_identifier() {
+    let credential_id = "00000000-0000-4000-8000-000000000100";
+    let mock = spawn_mock_store(vec![ExpectedRequest::error(
+        format!("/credentials/{credential_id}/blob"),
+        404,
+        "not found",
+    )]);
+
+    let mut command = Command::cargo_bin("sfae").unwrap();
+    remove_proxy_env(&mut command);
+    let assert = command
+        .env("SFAE_STORE_URL", &mock.base_url)
+        .env("SFAE_STORE_TOKEN", "test-token")
+        .args([
+            "request",
+            "GET",
+            "https://discord.com/api/v10/users/@me",
+            "--domain",
+            "discord.com",
+            "--cred",
+            credential_id,
+            "-H",
+            "Authorization: Bearer {OAUTH_ACCESS_TOKEN}",
+            "--dry-run",
+        ])
+        .assert()
+        .failure();
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("credential resolution failed before request was sent"));
+    assert!(stderr.contains("credential not found"));
+    assert!(!stderr.contains(credential_id));
+    assert!(!stderr.contains("OAUTH_ACCESS_TOKEN"));
+    mock.finish();
 }
 
 fn remove_proxy_env(command: &mut Command) {

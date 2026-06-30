@@ -456,11 +456,19 @@ fn forget_index_credential_set(id: &str) -> Result<(), SfaeError> {
 #[cfg(all(feature = "native-keychain", target_os = "macos"))]
 mod keyring_store {
     use super::*;
+    use std::thread;
+    use std::time::Duration;
+
     use security_framework::passwords::{
         delete_generic_password, get_generic_password, set_generic_password,
     };
 
     const KEYRING_SERVICE: &str = "sfae";
+    const KEYCHAIN_RETRY_DELAYS: &[Duration] = &[
+        Duration::from_millis(100),
+        Duration::from_millis(500),
+        Duration::from_millis(1500),
+    ];
 
     /// Secret store backed by the macOS login keychain via modern SecItem APIs.
     ///
@@ -483,16 +491,84 @@ mod keyring_store {
 
     /// `errSecItemNotFound` (-25300)
     const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+    /// `errSecParam` (-50)
+    const ERR_SEC_PARAM: i32 = -50;
+    /// `errSecNotAvailable` (-25291)
+    const ERR_SEC_NOT_AVAILABLE: i32 = -25291;
+    /// `errSecInteractionNotAllowed` (-25308)
+    const ERR_SEC_INTERACTION_NOT_ALLOWED: i32 = -25308;
 
     fn is_not_found(e: &security_framework::base::Error) -> bool {
         e.code() == ERR_SEC_ITEM_NOT_FOUND
     }
 
+    fn is_retryable_keychain_error(e: &security_framework::base::Error) -> bool {
+        matches!(
+            e.code(),
+            ERR_SEC_PARAM | ERR_SEC_NOT_AVAILABLE | ERR_SEC_INTERACTION_NOT_ALLOWED
+        )
+    }
+
+    fn validate_keychain_account(account: &str) -> Result<(), SfaeError> {
+        if account.is_empty() || account.contains('\0') {
+            return Err(SfaeError::StoreError(
+                "macOS Keychain rejected an invalid credential key".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn with_keychain_retry<T>(
+        mut operation: impl FnMut() -> security_framework::base::Result<T>,
+    ) -> security_framework::base::Result<T> {
+        let mut attempt = 0;
+        loop {
+            match operation() {
+                Ok(value) => return Ok(value),
+                Err(error)
+                    if is_retryable_keychain_error(&error)
+                        && attempt < KEYCHAIN_RETRY_DELAYS.len() =>
+                {
+                    thread::sleep(KEYCHAIN_RETRY_DELAYS[attempt]);
+                    attempt += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn keychain_store_error(action: &str, error: security_framework::base::Error) -> SfaeError {
+        SfaeError::StoreError(format!(
+            "macOS Keychain {action} failed (OSStatus {}: {error})",
+            error.code()
+        ))
+    }
+
+    fn keychain_set(account: &str, value: &[u8], action: &str) -> Result<(), SfaeError> {
+        validate_keychain_account(account)?;
+        with_keychain_retry(|| set_generic_password(KEYRING_SERVICE, account, value))
+            .map_err(|e| keychain_store_error(action, e))
+    }
+
+    fn keychain_get(account: &str, action: &str) -> Result<Vec<u8>, SfaeError> {
+        validate_keychain_account(account)?;
+        match with_keychain_retry(|| get_generic_password(KEYRING_SERVICE, account)) {
+            Ok(bytes) => Ok(bytes),
+            Err(e) if is_not_found(&e) => Err(SfaeError::CredentialNotFound(account.to_string())),
+            Err(e) => Err(keychain_store_error(action, e)),
+        }
+    }
+
+    fn keychain_delete(account: &str) -> security_framework::base::Result<()> {
+        validate_keychain_account(account)
+            .map_err(|_| security_framework::base::Error::from_code(ERR_SEC_PARAM))?;
+        with_keychain_retry(|| delete_generic_password(KEYRING_SERVICE, account))
+    }
+
     impl SecretStore for KeyringStore {
         fn set(&mut self, entry: StoreEntry<'_>) -> Result<(), SfaeError> {
             let StoreEntry { key, value } = entry;
-            set_generic_password(KEYRING_SERVICE, key, value.as_bytes())
-                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+            keychain_set(key, value.as_bytes(), "write")?;
 
             let mut keys = read_index()?;
             if !keys.contains(&key.to_string()) {
@@ -504,16 +580,13 @@ mod keyring_store {
         }
 
         fn get(&self, key: &str) -> Result<String, SfaeError> {
-            match get_generic_password(KEYRING_SERVICE, key) {
-                Ok(bytes) => String::from_utf8(bytes)
-                    .map_err(|e| SfaeError::StoreError(format!("invalid UTF-8: {e}"))),
-                Err(e) if is_not_found(&e) => Err(SfaeError::CredentialNotFound(key.to_string())),
-                Err(e) => Err(SfaeError::StoreError(e.to_string())),
-            }
+            let bytes = keychain_get(key, "read")?;
+            String::from_utf8(bytes)
+                .map_err(|e| SfaeError::StoreError(format!("invalid UTF-8: {e}")))
         }
 
         fn delete(&mut self, key: &str) -> Result<(), SfaeError> {
-            let keychain_result = delete_generic_password(KEYRING_SERVICE, key);
+            let keychain_result = keychain_delete(key);
 
             // Always clean the index, even if the keychain entry is already gone.
             let mut keys = read_index()?;
@@ -526,7 +599,7 @@ mod keyring_store {
             match keychain_result {
                 Ok(()) => Ok(()),
                 Err(e) if is_not_found(&e) => Err(SfaeError::CredentialNotFound(key.to_string())),
-                Err(e) => Err(SfaeError::StoreError(e.to_string())),
+                Err(e) => Err(keychain_store_error("delete", e)),
             }
         }
 
@@ -557,8 +630,7 @@ mod keyring_store {
 
             let json = serde_json::to_string(values)
                 .map_err(|e| SfaeError::StoreError(format!("failed to serialize: {e}")))?;
-            set_generic_password(KEYRING_SERVICE, &id, json.as_bytes())
-                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+            keychain_set(&id, json.as_bytes(), "write")?;
 
             let mut index = read_credential_index()?;
             index.sets.push(CredentialSetInfo {
@@ -583,8 +655,7 @@ mod keyring_store {
             keys.sort();
 
             let json = serialize_structured_credential_set(&input)?;
-            set_generic_password(KEYRING_SERVICE, &id, json.as_bytes())
-                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+            keychain_set(&id, json.as_bytes(), "write")?;
 
             let mut index = read_credential_index()?;
             index.sets.push(CredentialSetInfo {
@@ -604,13 +675,7 @@ mod keyring_store {
             &mut self,
             input: StructuredCredentialSetUpdate<'_>,
         ) -> Result<(), SfaeError> {
-            let bytes = match get_generic_password(KEYRING_SERVICE, input.id) {
-                Ok(bytes) => bytes,
-                Err(e) if is_not_found(&e) => {
-                    return Err(SfaeError::CredentialNotFound(input.id.to_string()));
-                }
-                Err(e) => return Err(SfaeError::StoreError(e.to_string())),
-            };
+            let bytes = keychain_get(input.id, "read for update")?;
             let blob = String::from_utf8(bytes)
                 .map_err(|e| SfaeError::StoreError(format!("invalid UTF-8: {e}")))?;
             let mut data = parse_structured_credential_set(&blob)?;
@@ -620,8 +685,7 @@ mod keyring_store {
             let Some(set_index) = index.sets.iter().position(|s| s.id == input.id) else {
                 return Err(SfaeError::CredentialNotFound(input.id.to_string()));
             };
-            set_generic_password(KEYRING_SERVICE, input.id, json.as_bytes())
-                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+            keychain_set(input.id, json.as_bytes(), "update")?;
 
             index.sets[set_index].keys = data.values.keys().cloned().collect();
             index.sets[set_index].keys.sort();
@@ -650,7 +714,7 @@ mod keyring_store {
             }
 
             // Remove from keychain (ignore if already gone)
-            let _ = delete_generic_password(KEYRING_SERVICE, id);
+            let _ = keychain_delete(id);
 
             index.sets.retain(|s| s.id != id);
             index.version = 2;
@@ -670,8 +734,15 @@ mod keyring_store {
 #[cfg(all(feature = "native-keychain", not(target_os = "macos")))]
 mod keyring_store {
     use super::*;
+    use std::thread;
+    use std::time::Duration;
 
     const KEYRING_SERVICE: &str = "sfae";
+    const KEYRING_RETRY_DELAYS: &[Duration] = &[
+        Duration::from_millis(100),
+        Duration::from_millis(500),
+        Duration::from_millis(1500),
+    ];
 
     /// Secret store backed by the OS keychain via the `keyring` crate.
     ///
@@ -687,17 +758,46 @@ mod keyring_store {
         }
 
         fn entry(key: &str) -> Result<keyring::Entry, SfaeError> {
-            keyring::Entry::new(KEYRING_SERVICE, key)
-                .map_err(|e| SfaeError::StoreError(e.to_string()))
+            keyring::Entry::new(KEYRING_SERVICE, key).map_err(|e| keyring_store_error("prepare", e))
         }
+    }
+
+    fn is_retryable_keyring_error(error: &keyring::Error) -> bool {
+        matches!(
+            error,
+            keyring::Error::PlatformFailure(_) | keyring::Error::NoStorageAccess(_)
+        )
+    }
+
+    fn with_keyring_retry<T>(
+        mut operation: impl FnMut() -> keyring::Result<T>,
+    ) -> keyring::Result<T> {
+        let mut attempt = 0;
+        loop {
+            match operation() {
+                Ok(value) => return Ok(value),
+                Err(error)
+                    if is_retryable_keyring_error(&error)
+                        && attempt < KEYRING_RETRY_DELAYS.len() =>
+                {
+                    thread::sleep(KEYRING_RETRY_DELAYS[attempt]);
+                    attempt += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn keyring_store_error(action: &str, error: keyring::Error) -> SfaeError {
+        SfaeError::StoreError(format!("OS credential store {action} failed: {error}"))
     }
 
     impl SecretStore for KeyringStore {
         fn set(&mut self, entry: StoreEntry<'_>) -> Result<(), SfaeError> {
             let StoreEntry { key, value } = entry;
             let kr = Self::entry(key)?;
-            kr.set_password(value)
-                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+            with_keyring_retry(|| kr.set_password(value))
+                .map_err(|e| keyring_store_error("write", e))?;
 
             let mut keys = read_index()?;
             if !keys.contains(&key.to_string()) {
@@ -710,15 +810,15 @@ mod keyring_store {
 
         fn get(&self, key: &str) -> Result<String, SfaeError> {
             let entry = Self::entry(key)?;
-            entry.get_password().map_err(|e| match e {
+            with_keyring_retry(|| entry.get_password()).map_err(|e| match e {
                 keyring::Error::NoEntry => SfaeError::CredentialNotFound(key.to_string()),
-                other => SfaeError::StoreError(other.to_string()),
+                other => keyring_store_error("read", other),
             })
         }
 
         fn delete(&mut self, key: &str) -> Result<(), SfaeError> {
             let entry = Self::entry(key)?;
-            let keychain_result = entry.delete_credential();
+            let keychain_result = with_keyring_retry(|| entry.delete_credential());
 
             // Always clean the index, even if the keychain entry is already gone.
             let mut keys = read_index()?;
@@ -730,7 +830,7 @@ mod keyring_store {
 
             keychain_result.map_err(|e| match e {
                 keyring::Error::NoEntry => SfaeError::CredentialNotFound(key.to_string()),
-                other => SfaeError::StoreError(other.to_string()),
+                other => keyring_store_error("delete", other),
             })?;
             Ok(())
         }
@@ -763,9 +863,8 @@ mod keyring_store {
             let json = serde_json::to_string(values)
                 .map_err(|e| SfaeError::StoreError(format!("failed to serialize: {e}")))?;
             let entry = Self::entry(&id)?;
-            entry
-                .set_password(&json)
-                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+            with_keyring_retry(|| entry.set_password(&json))
+                .map_err(|e| keyring_store_error("write", e))?;
 
             let mut index = read_credential_index()?;
             index.sets.push(CredentialSetInfo {
@@ -791,9 +890,8 @@ mod keyring_store {
 
             let json = serialize_structured_credential_set(&input)?;
             let entry = Self::entry(&id)?;
-            entry
-                .set_password(&json)
-                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+            with_keyring_retry(|| entry.set_password(&json))
+                .map_err(|e| keyring_store_error("write", e))?;
 
             let mut index = read_credential_index()?;
             index.sets.push(CredentialSetInfo {
@@ -822,9 +920,8 @@ mod keyring_store {
                 return Err(SfaeError::CredentialNotFound(input.id.to_string()));
             };
             let entry = Self::entry(input.id)?;
-            entry
-                .set_password(&json)
-                .map_err(|e| SfaeError::StoreError(e.to_string()))?;
+            with_keyring_retry(|| entry.set_password(&json))
+                .map_err(|e| keyring_store_error("update", e))?;
 
             index.sets[set_index].keys = data.values.keys().cloned().collect();
             index.sets[set_index].keys.sort();
@@ -854,7 +951,7 @@ mod keyring_store {
 
             // Remove from keychain (ignore if already gone)
             let entry = Self::entry(id)?;
-            let _ = entry.delete_credential();
+            let _ = with_keyring_retry(|| entry.delete_credential());
 
             index.sets.retain(|s| s.id != id);
             index.version = 2;
