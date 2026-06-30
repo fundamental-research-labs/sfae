@@ -149,7 +149,7 @@ fn redis_request_uses_stored_credentials_until_deleted() {
     assert!(
         String::from_utf8(failure)
             .unwrap()
-            .contains("credential not found: PASSWORD")
+            .contains("credential resolution failed before request was sent: credential not found")
     );
 }
 

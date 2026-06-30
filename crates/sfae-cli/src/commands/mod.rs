@@ -4,6 +4,7 @@ pub mod code;
 pub mod credentials;
 #[cfg(feature = "native-keychain")]
 pub mod delete;
+pub mod doctor;
 pub mod embedded_skill;
 pub mod install_skill;
 #[cfg(feature = "native-keychain")]
