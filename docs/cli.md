@@ -199,6 +199,8 @@ sfae code github.com --label Work --message "Enter the 6-digit GitHub authentica
 - `sfae delete <uuid>` forgets one credential set from SFAE's index; add `--purge` only when keychain/password prompts are acceptable.
 - `sfae delete --all --dry-run` previews forgetting every indexed credential; `sfae delete --all --purge` also removes local secret-store material where possible.
 
+When deleting local SFAE-hosted OAuth credentials for Discord, Google, GitHub, or Dropbox, the CLI asks the OAuth broker to revoke the provider grant before removing the local entry. Manual, legacy, non-OAuth, or remote-store credentials are removed from SFAE only; the local CLI does not provider-revoke remote-store credentials today. Provider revoke failures are reported, but local deletion still proceeds.
+
 `--user` is still accepted as a compatibility alias for `--label`.
 
 ## Storage
